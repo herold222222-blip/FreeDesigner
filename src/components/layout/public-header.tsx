@@ -168,7 +168,7 @@ export function PublicHeader() {
                 <Link href="/login">登录</Link>
               </Button>
               <Button asChild size="sm">
-                <Link href="/login?register=1">立即入驻222</Link>
+                <Link href="/login?register=1">立即入驻333</Link>
               </Button>
             </>
           ) : null}
