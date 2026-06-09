@@ -81,6 +81,8 @@ npm run dev
 | `npm run db:reset` | 重置数据库并重新迁移 + 播种 |
 | `npm run db:studio` | 打开 Prisma Studio 可视化查看数据 |
 | `npm run db:deploy` | 生产环境应用迁移 |
+
+**数据库表说明（22 张表字段与业务含义）** → [docs/DATABASE-TABLES.md](docs/DATABASE-TABLES.md)
 | `npm run verify:flow` | 委托全流程 API 自检（`BASE_URL` 指向内测地址） |
 | `npm run verify:preflight` | 部署前检查 `.env` 是否填全 |
 | `scripts/cron-order-timeouts.sh` | 服务器 crontab 调用，处理订单超时 |
