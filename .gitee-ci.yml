@@ -1,0 +1,15 @@
+version: 1.0
+stages:
+  - deploy
+
+deploy_to_ecs:
+  stage: deploy
+  image: ubuntu:22.04
+  script:
+    - apt update && apt install openssh-client -y
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh -o StrictHostKeyChecking=no $ECS_USER@$ECS_HOST "/opt/lezyou/pipeline_deploy.sh"
+  only:
+    - main
