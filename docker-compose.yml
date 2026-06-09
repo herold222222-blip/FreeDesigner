@@ -25,6 +25,9 @@ services:
       context: .
       args:
         NEXT_PUBLIC_DEMO_MODE: ${NEXT_PUBLIC_DEMO_MODE:-on}
+      cache_from:
+        - lezyou-app:latest
+    image: lezyou-app:latest
     restart: always
     depends_on:
       db:

@@ -42,10 +42,14 @@ else
 fi
 
 echo "[deploy] 构建并启动容器（模式: $MODE）..."
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
 if [ "$MODE" = "internal" ]; then
-  docker compose -f docker-compose.yml -f docker-compose.internal.yml up -d --build
+  docker compose -f docker-compose.yml -f docker-compose.internal.yml build
+  docker compose -f docker-compose.yml -f docker-compose.internal.yml up -d
 else
-  docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+  docker compose -f docker-compose.yml -f docker-compose.production.yml build
+  docker compose -f docker-compose.yml -f docker-compose.production.yml up -d
 fi
 
 echo "[deploy] 等待应用就绪..."

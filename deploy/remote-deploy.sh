@@ -11,6 +11,10 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
+# BuildKit：npm / .next 层缓存，显著缩短 ECS 二次构建时间
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
+
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.production.yml"
 if grep -q "^COOKIE_SECURE=false" .env 2>/dev/null; then
   COMPOSE_FILES="-f docker-compose.yml -f docker-compose.internal.yml"
@@ -19,11 +23,14 @@ else
   echo "[remote-deploy] 正式模式（127.0.0.1:3000）"
 fi
 
-echo "[remote-deploy] 构建并启动..."
-docker compose $COMPOSE_FILES up -d --build
+echo "[remote-deploy] 构建镜像（复用上次 lezyou-app:latest 层缓存）..."
+docker compose $COMPOSE_FILES build
+
+echo "[remote-deploy] 启动容器（数据库迁移由 entrypoint 执行）..."
+docker compose $COMPOSE_FILES up -d
 
 echo "[remote-deploy] 同步数据库结构..."
-docker compose exec -T app npm run prod:db:push
+docker compose $COMPOSE_FILES exec -T app npm run prod:db:push
 
 echo "[remote-deploy] 完成 ✓"
 docker compose ps

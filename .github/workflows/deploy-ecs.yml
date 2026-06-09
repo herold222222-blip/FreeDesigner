@@ -38,6 +38,9 @@ jobs:
           if [ -f /tmp/lezyou.env.bak ]; then cp -f /tmp/lezyou.env.bak "$APP_DIR/.env"; fi
 
       - name: Deploy
+        env:
+          DOCKER_BUILDKIT: 1
+          COMPOSE_DOCKER_CLI_BUILD: 1
         run: |
           cd /opt/lezyou
           chmod +x deploy/*.sh scripts/cron-order-timeouts.sh 2>/dev/null || true
