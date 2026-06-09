@@ -1,0 +1,8 @@
+# ECS 上 Postgres 仅绑定本机 127.0.0.1，供 SSH 隧道转发（不对外暴露 5432）
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.internal.yml -f docker-compose.remote-db.yml up -d
+
+services:
+  db:
+    ports:
+      - "127.0.0.1:5432:5432"
