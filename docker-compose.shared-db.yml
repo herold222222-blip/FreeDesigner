@@ -1,0 +1,9 @@
+# 本地 + ECS 共用同一 Postgres：将 5432 映射到宿主机（供本地直连 ECS 公网 IP）
+# 用法（内测）：
+#   docker compose -f docker-compose.yml -f docker-compose.internal.yml -f docker-compose.shared-db.yml up -d --build
+# 安全提示：请在阿里云安全组仅放行你的办公/家庭公网 IP 访问 5432，不要对 0.0.0.0/0 开放。
+
+services:
+  db:
+    ports:
+      - "0.0.0.0:5432:5432"

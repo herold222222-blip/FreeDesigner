@@ -1,0 +1,137 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Tailwind theme 引用该变量；未定义会导致 font-family 回退不完整 */
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, "Noto Sans", "PingFang SC", "Microsoft YaHei",
+      sans-serif;
+    --background: 0 0% 100%;
+    --foreground: 0 0% 4%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 4%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 4%;
+
+    --primary: 0 0% 4%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 0 0% 96%;
+    --secondary-foreground: 0 0% 9%;
+
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 45%;
+
+    --accent: 0 0% 96%;
+    --accent-foreground: 0 0% 9%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 0 0% 90%;
+    --input: 0 0% 90%;
+    --ring: 0 0% 4%;
+
+    --radius: 0.6rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  ::selection {
+    @apply bg-brand text-white;
+  }
+}
+
+@layer components {
+  .container-page {
+    @apply mx-auto w-full max-w-[1280px] px-6;
+  }
+
+  .surface {
+    @apply rounded-2xl border border-ink-20 bg-white;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .gradient-hero {
+    background:
+      radial-gradient(circle at 20% 0%, rgba(225, 29, 72, 0.08), transparent 40%),
+      radial-gradient(circle at 90% 10%, rgba(10, 10, 10, 0.06), transparent 50%),
+      linear-gradient(180deg, #fafafa 0%, #ffffff 100%);
+  }
+}
+
+@layer utilities {
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .console-sidebar-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(10, 10, 10, 0.2) transparent;
+  }
+  .console-sidebar-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+  .console-sidebar-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .console-sidebar-scroll::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: rgba(10, 10, 10, 0.18);
+  }
+  .console-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(10, 10, 10, 0.28);
+  }
+
+  @keyframes accepting-glow {
+    0%,
+    100% {
+      box-shadow:
+        0 0 0 0 rgba(16, 185, 129, 0.35),
+        0 0 12px rgba(16, 185, 129, 0.08);
+    }
+    50% {
+      box-shadow:
+        0 0 0 4px rgba(16, 185, 129, 0.12),
+        0 0 20px rgba(16, 185, 129, 0.18);
+    }
+  }
+
+  @keyframes accepting-dot {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.55;
+      transform: scale(1.35);
+    }
+  }
+
+  .animate-accepting-glow {
+    animation: accepting-glow 2s ease-in-out infinite;
+  }
+
+  .animate-accepting-dot {
+    animation: accepting-dot 1.4s ease-in-out infinite;
+  }
+}

@@ -1,0 +1,56 @@
+# 乐自由平台 · Nginx 反向代理示例
+# 放到 /etc/nginx/conf.d/lezyou.conf，将 your-domain.com 改为你的域名后：
+#   nginx -t && systemctl reload nginx
+#
+# HTTPS 证书推荐：
+#   - 阿里云免费 SSL 证书（控制台申请后下载 Nginx 格式，填到下方 ssl_certificate）
+#   - 或 certbot：certbot --nginx -d your-domain.com
+
+# HTTP：用于跳转 HTTPS（证书就绪后启用整段）
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    # 申请 certbot 证书时需放行该路径
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    # 证书就绪后取消下行注释，强制跳转 HTTPS
+    # return 301 https://$host$request_uri;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 50m;
+    }
+}
+
+# HTTPS：证书就绪后启用
+# server {
+#     listen 443 ssl http2;
+#     server_name your-domain.com;
+#
+#     ssl_certificate     /etc/nginx/ssl/your-domain.com.pem;
+#     ssl_certificate_key /etc/nginx/ssl/your-domain.com.key;
+#     ssl_protocols       TLSv1.2 TLSv1.3;
+#     ssl_ciphers         HIGH:!aNULL:!MD5;
+#
+#     location / {
+#         proxy_pass http://127.0.0.1:3000;
+#         proxy_http_version 1.1;
+#         proxy_set_header Upgrade $http_upgrade;
+#         proxy_set_header Connection "upgrade";
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto $scheme;
+#         client_max_body_size 50m;
+#     }
+# }

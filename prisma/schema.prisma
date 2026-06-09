@@ -1,0 +1,321 @@
+// 乐自由平台 · Prisma 数据库 schema
+// 本地开发使用 SQLite（零配置），生产可切换为 PostgreSQL：
+//   1. 将 provider 改为 "postgresql"
+//   2. 设置 DATABASE_URL 为 Postgres 连接串
+//   3. 重新执行 prisma migrate
+//
+// 设计说明：核心实体保留可查询的索引列（用于筛选/排序/关联），
+// 其余富领域字段以 Json `data` 形式整体存取，最大化复用既有前端类型。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// 平台账号（手机号唯一）。一个账号可拥有 designer / client 资料。
+model User {
+  id           String   @id @default(cuid())
+  phone        String   @unique
+  /// 管理员 / 超级管理员登录名（委托人、设计师用手机号）
+  loginName    String?  @unique
+  passwordHash String?
+  name         String
+  avatar       String?
+  role         String   @default("client") // client | designer | admin | super_admin
+  status       String   @default("active") // active | pending | disabled
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  designer Designer?
+  client   Client?
+  sessions Session[]
+
+  @@index([role])
+}
+
+/// 登录会话（httpOnly cookie token）
+model Session {
+  id         String   @id @default(cuid())
+  token      String   @unique
+  userId     String
+  role       String
+  identityId String // 当前生效的业务身份 id（designer/client/admin 等）
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// 手机验证码（注册/登录）
+model VerificationCode {
+  id        String   @id @default(cuid())
+  phone     String
+  code      String
+  purpose   String // login | register
+  consumed  Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([phone, purpose])
+}
+
+/// 设计师（个人/团队/公司）
+model Designer {
+  id              String   @id
+  userId          String?  @unique
+  name            String
+  avatar          String?
+  subjectType     String? // individual | team | company
+  specialty       String
+  level           String?
+  regionTier      String?
+  location        String?
+  acceptingOrders Boolean  @default(true)
+  rating          Float    @default(0)
+  dailyRate       Int      @default(0)
+  monthlyRate     Int      @default(0)
+  reviewStatus    String   @default("approved") // pending | approved | rejected
+  code            String?  @unique // 对外编号，如 DS000001
+  data            String // JSON: 完整 Designer 对象
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([specialty])
+  @@index([level])
+  @@index([acceptingOrders])
+}
+
+/// 委托人（个人/企业）
+model Client {
+  id        String   @id
+  userId    String?  @unique
+  name      String
+  avatar    String?
+  type      String   @default("individual") // individual | enterprise
+  verified  Boolean  @default(false)
+  level     String?
+  data      String // JSON: 完整 Client 对象
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+/// 服务方（审图师 / 施工图项目管理员）
+model ServiceProvider {
+  id        String   @id
+  name      String
+  role      String // auditor | project_manager
+  data      String // JSON: 完整 ServiceProvider 对象
+  createdAt DateTime @default(now())
+}
+
+/// 订单
+model Order {
+  id          String   @id
+  code        String   @unique
+  title       String
+  clientId    String
+  designerId  String?
+  status      String
+  orderSource String?
+  specialty   String?
+  totalAmount Int      @default(0)
+  data        String // JSON: 完整 Order 对象（stages/messages/revisions/分工等）
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([designerId])
+  @@index([status])
+}
+
+/// 悬赏
+model Bounty {
+  id          String   @id
+  code        String   @unique
+  title       String
+  publisherId String
+  status      String
+  specialty   String?
+  reward      Int      @default(0)
+  data        String // JSON: 完整 Bounty 对象（applicants 等）
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([publisherId])
+  @@index([status])
+}
+
+/// 设计师历史项目评价
+model DesignerReview {
+  id         String   @id
+  designerId String
+  orderCode  String?
+  overall    Float    @default(0)
+  data       String // JSON: 完整 DesignerProjectReview
+  createdAt  DateTime @default(now())
+
+  @@index([designerId])
+}
+
+/// 钱包流水（设计师 / 委托人）
+model WalletTransaction {
+  id         String   @id
+  ownerId    String
+  ownerType  String // designer | client
+  type       String // income | withdraw | fee | refund
+  amount     Int
+  status     String // frozen | available | withdrawn
+  data       String // JSON: 完整 WalletTransaction
+  occurredAt DateTime @default(now())
+
+  @@index([ownerId, ownerType])
+}
+
+/// 入驻审核工单
+model ReviewItem {
+  id          String   @id
+  type        String // designer | enterprise
+  name        String
+  status      String   @default("pending")
+  submittedAt DateTime @default(now())
+  data        String // JSON: 完整 ReviewItem
+}
+
+/// 档期申请
+model ScheduleRequest {
+  id          String   @id
+  orderId     String?
+  designerId  String
+  clientId    String
+  status      String   @default("pending")
+  data        String // JSON: 完整 ScheduleRequest
+  submittedAt DateTime @default(now())
+
+  @@index([designerId])
+  @@index([clientId])
+}
+
+/// 扫码下单
+model ScanOrder {
+  id         String   @id
+  designerId String
+  clientId   String?
+  status     String
+  data       String // JSON: 完整 ScanOrder
+  createdAt  DateTime @default(now())
+
+  @@index([designerId])
+}
+
+/// 平台计价参数（单例，id 固定为 "default"）
+model PlatformPricing {
+  id        String   @id @default("default")
+  data      String // JSON: PlatformPricingConfig
+  updatedAt DateTime @updatedAt
+}
+
+/// 等级管理配置（单例 id=default）
+model LevelManagement {
+  id        String   @id @default("default")
+  data      String // JSON: LevelManagementConfig
+  updatedAt DateTime @updatedAt
+}
+
+/// 平台内容（FAQ、入驻协议、关于我们等，单例 id=default）
+model PlatformContent {
+  id        String   @id @default("default")
+  data      String // JSON: PlatformContentConfig
+  updatedAt DateTime @updatedAt
+}
+
+/// 合同模板配置（单例 id=default）
+model ContractTemplates {
+  id        String   @id @default("default")
+  data      String // JSON: ContractTemplatesConfig
+  updatedAt DateTime @updatedAt
+}
+
+/// 设计主体提现申请
+model WithdrawalRequest {
+  id          String   @id
+  status      String   @default("pending")
+  submittedAt DateTime @default(now())
+  data        String // JSON: WithdrawalRequest
+}
+
+/// 联系客服 · 在线留言
+model FeedbackMessage {
+  id         String    @id @default(cuid())
+  audience   String // client | designer
+  userId     String?
+  identityId String?
+  userName   String
+  phone      String?
+  message    String
+  status     String    @default("pending") // pending | replied | closed
+  replyNote  String?
+  createdAt  DateTime  @default(now())
+  repliedAt  DateTime?
+
+  @@index([status])
+  @@index([audience])
+  @@index([createdAt])
+}
+
+/// 订单纠纷（平台介入）
+model Dispute {
+  id         String   @id
+  orderId    String
+  orderCode  String
+  clientId   String
+  designerId String
+  status     String   @default("open") // open | in_review | resolved
+  raisedAt   DateTime @default(now())
+  data       String // JSON: 完整 Dispute 对象
+
+  @@index([orderId])
+  @@index([clientId])
+  @@index([designerId])
+  @@index([status])
+}
+
+/// 支付单（某订单某付款阶段的一次收款）
+model Payment {
+  id            String    @id @default(cuid())
+  orderId       String
+  stageId       String
+  clientId      String
+  provider      String // sandbox | wechat | alipay
+  amount        Int // 金额（分）
+  status        String    @default("pending") // pending | paid | failed | canceled
+  outTradeNo    String    @unique // 商户订单号
+  transactionId String? // 支付网关交易号
+  data          String? // JSON: 网关返回/回调原文
+  createdAt     DateTime  @default(now())
+  paidAt        DateTime?
+
+  @@index([orderId])
+  @@index([status])
+}
+
+/// 委托人电子发票（支付完成后自助开具）
+model InvoiceRequest {
+  id                  String   @id @default(cuid())
+  invoiceNo           String   @unique
+  clientId            String
+  walletTransactionId String   @unique
+  data                String // JSON: 完整 InvoiceRequest
+  issuedAt            DateTime @default(now())
+
+  @@index([clientId])
+}

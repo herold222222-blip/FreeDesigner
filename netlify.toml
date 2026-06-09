@@ -1,0 +1,16 @@
+# 全栈 Next.js（含 API Routes / 服务端鉴权 / 数据库）部署配置
+# Netlify 通过官方 Next.js Runtime 运行服务端，不再发布静态 dist 目录。
+#
+# 注意：SQLite（本地 dev.db）不适用于无状态的 Serverless 环境，
+# 生产环境请在 Netlify 环境变量中将 DATABASE_URL 指向托管的 PostgreSQL，
+# 并把 prisma/schema.prisma 的 provider 改为 "postgresql"。
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"

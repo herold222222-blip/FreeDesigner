@@ -1,0 +1,7 @@
+# 正式：仅本机 3000，由 Nginx 反代对外
+# docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+
+services:
+  app:
+    ports:
+      - "127.0.0.1:3000:3000"

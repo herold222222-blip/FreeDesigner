@@ -1,0 +1,44 @@
+# Self-hosted Runner 部署（ECS 本机执行，无需外网 SSH）
+# 前置：在 ECS 运行 deploy/setup-github-runner.sh 注册 runner
+
+name: Deploy to ECS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ecs
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync to app directory
+        run: |
+          APP_DIR=/opt/lezyou
+          mkdir -p "$APP_DIR"
+          if [ -f "$APP_DIR/.env" ]; then cp -f "$APP_DIR/.env" /tmp/lezyou.env.bak; fi
+          rsync -a --delete \
+            --exclude node_modules \
+            --exclude .next \
+            --exclude prisma/dev.db \
+            --exclude .git \
+            --exclude .env \
+            --exclude backups \
+            --exclude pgdata \
+            ./ "$APP_DIR/"
+          if [ -f /tmp/lezyou.env.bak ]; then cp -f /tmp/lezyou.env.bak "$APP_DIR/.env"; fi
+
+      - name: Deploy
+        run: |
+          cd /opt/lezyou
+          chmod +x deploy/*.sh scripts/cron-order-timeouts.sh 2>/dev/null || true
+          bash deploy/remote-deploy.sh

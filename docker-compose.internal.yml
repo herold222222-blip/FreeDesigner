@@ -1,0 +1,7 @@
+# 内测：直接暴露 3000，http://公网IP:3000 访问
+# docker compose -f docker-compose.yml -f docker-compose.internal.yml up -d --build
+
+services:
+  app:
+    ports:
+      - "0.0.0.0:3000:3000"
