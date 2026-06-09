@@ -44,13 +44,18 @@ fi
 echo "[deploy] 构建并启动容器（模式: $MODE）..."
 export DOCKER_BUILDKIT=1
 export COMPOSE_DOCKER_CLI_BUILD=1
+COMPOSE_FILES=(-f docker-compose.yml)
 if [ "$MODE" = "internal" ]; then
-  docker compose -f docker-compose.yml -f docker-compose.internal.yml build
-  docker compose -f docker-compose.yml -f docker-compose.internal.yml up -d
+  COMPOSE_FILES+=(-f docker-compose.internal.yml)
 else
-  docker compose -f docker-compose.yml -f docker-compose.production.yml build
-  docker compose -f docker-compose.yml -f docker-compose.production.yml up -d
+  COMPOSE_FILES+=(-f docker-compose.production.yml)
 fi
+if grep -q "^EXPOSE_DB_PUBLIC=true" .env 2>/dev/null; then
+  COMPOSE_FILES+=(-f docker-compose.shared-db.yml)
+  echo "[deploy] 5432 公网映射已启用"
+fi
+docker compose "${COMPOSE_FILES[@]}" build
+docker compose "${COMPOSE_FILES[@]}" up -d
 
 echo "[deploy] 等待应用就绪..."
 sleep 5
