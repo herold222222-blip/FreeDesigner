@@ -165,7 +165,7 @@ export function PublicHeader() {
           ) : authReady ? (
             <>
               <Button asChild variant="ghost" size="sm">
-                <Link href="/login">登录</Link>
+                <Link href="/login">登录11</Link>
               </Button>
               <Button asChild size="sm">
                 <Link href="/login?register=1">立即入驻</Link>
