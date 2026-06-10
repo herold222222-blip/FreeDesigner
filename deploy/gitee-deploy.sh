@@ -30,6 +30,7 @@ log "执行 remote-deploy（输出写入 $LOG）..."
 if bash deploy/remote-deploy.sh >> "$LOG" 2>&1; then
   log "部署完成 ✓"
 else
-  log "ERROR: remote-deploy 失败，见上方日志"
+  rc=$?
+  log "ERROR: remote-deploy 失败 (exit=${rc})，请执行: tail -50 ${LOG}"
   exit 1
 fi
