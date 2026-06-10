@@ -10,14 +10,22 @@ resolve_demo_env() {
     echo "[deploy] 右下角演示身份切换：关"
   fi
 
-  if grep -qE '^DEMO_CODE_ENABLED=off' .env 2>/dev/null; then
+  local sms_provider
+  sms_provider="$(grep -E '^SMS_PROVIDER=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | xargs)"
+
+  # 仅当 .env 显式 off 且已配置短信渠道时，才关闭固定验证码
+  if grep -qE '^DEMO_CODE_ENABLED=off' .env 2>/dev/null && [ -n "$sms_provider" ]; then
     export DEMO_CODE_ENABLED=off
-    echo "[deploy] 登录验证码：真实短信（DEMO_CODE_ENABLED=off，需配置 SMS_*）"
+    echo "[deploy] 登录验证码：真实短信（SMS_PROVIDER=${sms_provider}）"
   else
     export DEMO_CODE_ENABLED=on
     local code
     code="$(grep -E '^DEMO_VERIFICATION_CODE=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")"
     export DEMO_VERIFICATION_CODE="${code:-888888}"
-    echo "[deploy] 登录验证码：固定演示码 ${DEMO_VERIFICATION_CODE}（DEMO_CODE_ENABLED=on）"
+    if grep -qE '^DEMO_CODE_ENABLED=off' .env 2>/dev/null; then
+      echo "[deploy] 登录验证码：固定演示码 ${DEMO_VERIFICATION_CODE}（.env 为 off 但未配 SMS_PROVIDER，已自动回退）"
+    else
+      echo "[deploy] 登录验证码：固定演示码 ${DEMO_VERIFICATION_CODE}（DEMO_CODE_ENABLED=on）"
+    fi
   fi
 }
