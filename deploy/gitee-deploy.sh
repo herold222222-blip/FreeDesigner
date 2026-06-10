@@ -26,6 +26,10 @@ git fetch origin "$BRANCH"
 git reset --hard "origin/$BRANCH"
 
 chmod +x deploy/*.sh scripts/cron-order-timeouts.sh 2>/dev/null || true
-bash deploy/remote-deploy.sh
-
-log "部署完成 ✓"
+log "执行 remote-deploy（输出写入 $LOG）..."
+if bash deploy/remote-deploy.sh >> "$LOG" 2>&1; then
+  log "部署完成 ✓"
+else
+  log "ERROR: remote-deploy 失败，见上方日志"
+  exit 1
+fi

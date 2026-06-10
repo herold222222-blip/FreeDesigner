@@ -82,11 +82,12 @@ class Handler(BaseHTTPRequestHandler):
             log(f"ERROR: 找不到 {DEPLOY_SCRIPT}")
             return
 
+        log_fd = open(LOG_FILE, "a", encoding="utf-8")
         subprocess.Popen(
             ["/bin/bash", DEPLOY_SCRIPT],
             cwd=APP_DIR,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_fd,
+            stderr=log_fd,
             start_new_session=True,
         )
 
