@@ -7,7 +7,11 @@ import os
 import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
+
+MAX_BODY_BYTES = 1_000_000
+REQUEST_TIMEOUT_SEC = 15
 
 PORT = int(os.environ.get("GITEE_WEBHOOK_PORT", "9000"))
 SECRET = os.environ.get("GITEE_WEBHOOK_SECRET", "").strip()
@@ -39,6 +43,8 @@ def authorized(path: str, headers: dict[str, str]) -> bool:
 
 
 class Handler(BaseHTTPRequestHandler):
+    timeout = REQUEST_TIMEOUT_SEC
+
     def log_message(self, fmt: str, *args) -> None:
         log(fmt % args)
 
@@ -50,7 +56,7 @@ class Handler(BaseHTTPRequestHandler):
             log("拒绝：token 不匹配")
             return
 
-        length = int(self.headers.get("Content-Length", 0))
+        length = min(int(self.headers.get("Content-Length", 0)), MAX_BODY_BYTES)
         body = self.rfile.read(length) if length else b""
         try:
             payload = json.loads(body.decode("utf-8") or "{}")
@@ -98,11 +104,16 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+
 def main() -> None:
     if not SECRET:
         sys.stderr.write("请设置环境变量 GITEE_WEBHOOK_SECRET\n")
         sys.exit(1)
-    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    server = ThreadedHTTPServer(("0.0.0.0", PORT), Handler)
+    server.timeout = REQUEST_TIMEOUT_SEC
     log(f"监听 0.0.0.0:{PORT} app={APP_DIR}")
     server.serve_forever()
 
