@@ -45,8 +45,11 @@ fi
 log "无缓存重建镜像（确保前端 NEXT_PUBLIC_DEMO_MODE 写入新包）..."
 docker compose "${COMPOSE_FILES[@]}" build --no-cache
 
-log "启动容器..."
-docker compose "${COMPOSE_FILES[@]}" up -d
+log "启动容器（强制重建以应用环境变量）..."
+docker compose "${COMPOSE_FILES[@]}" up -d --force-recreate
+
+log "等待 entrypoint 完成（db push / seed）..."
+sleep 15
 
 log "同步数据库结构..."
 docker compose "${COMPOSE_FILES[@]}" exec -T app npm run prod:db:push

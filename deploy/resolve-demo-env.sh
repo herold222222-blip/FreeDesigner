@@ -27,5 +27,16 @@ resolve_demo_env() {
     else
       echo "[deploy] 登录验证码：固定演示码 ${DEMO_VERIFICATION_CODE}（DEMO_CODE_ENABLED=on）"
     fi
+    # 同步写回 .env，避免 compose 下次启动仍读旧值 off
+    if grep -qE '^DEMO_CODE_ENABLED=' .env 2>/dev/null; then
+      sed -i.bak -E 's/^DEMO_CODE_ENABLED=.*/DEMO_CODE_ENABLED=on/' .env
+    else
+      echo "DEMO_CODE_ENABLED=on" >> .env
+    fi
+    if grep -qE '^DEMO_VERIFICATION_CODE=' .env 2>/dev/null; then
+      sed -i.bak2 -E "s/^DEMO_VERIFICATION_CODE=.*/DEMO_VERIFICATION_CODE=${DEMO_VERIFICATION_CODE}/" .env
+    else
+      echo "DEMO_VERIFICATION_CODE=${DEMO_VERIFICATION_CODE}" >> .env
+    fi
   fi
 }

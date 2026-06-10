@@ -22,13 +22,22 @@ if ! docker compose ps --status running 2>/dev/null | grep -q app; then
   exit 1
 fi
 
-echo "[health] 检查 API: GET ${LOCAL}/api/auth/me"
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${LOCAL}/api/auth/me" || echo "000")
+echo "[health] 等待应用就绪: GET ${LOCAL}/api/auth/me（最多 120 秒）..."
+HTTP_CODE="000"
+for i in $(seq 1 60); do
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "${LOCAL}/api/auth/me" 2>/dev/null || echo "000")
+  if [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "200" ]; then
+    echo "[health] ✓ API 响应正常 (HTTP $HTTP_CODE，第 ${i} 次尝试)"
+    break
+  fi
+  if [ "$i" -lt 60 ]; then
+    sleep 2
+  fi
+done
 
-if [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "200" ]; then
-  echo "[health] ✓ API 响应正常 (HTTP $HTTP_CODE)"
-else
+if [ "$HTTP_CODE" != "401" ] && [ "$HTTP_CODE" != "200" ]; then
   echo "[health] ❌ API 异常 (HTTP $HTTP_CODE)"
+  echo "[health] 提示: docker compose logs app --tail=80"
   exit 1
 fi
 
