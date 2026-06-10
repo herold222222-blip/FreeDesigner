@@ -24,7 +24,7 @@ services:
     build:
       context: .
       args:
-        NEXT_PUBLIC_DEMO_MODE: ${NEXT_PUBLIC_DEMO_MODE:-on}
+        NEXT_PUBLIC_DEMO_MODE: ${NEXT_PUBLIC_DEMO_MODE:-off}
       cache_from:
         - lezyou-app:latest
     image: lezyou-app:latest

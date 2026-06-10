@@ -28,6 +28,10 @@ if grep -q "^EXPOSE_DB_PUBLIC=true" .env 2>/dev/null; then
   echo "[remote-deploy] 5432 公网映射已启用（本地 / 图形工具直连）"
 fi
 
+# shellcheck source=deploy/resolve-demo-env.sh
+source "$ROOT/deploy/resolve-demo-env.sh"
+resolve_demo_env
+
 echo "[remote-deploy] 构建镜像（复用上次 lezyou-app:latest 层缓存）..."
 docker compose "${COMPOSE_FILES[@]}" build
 

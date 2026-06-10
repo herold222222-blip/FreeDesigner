@@ -21,7 +21,7 @@ RUN npx prisma generate
 
 FROM base AS builder
 
-ARG NEXT_PUBLIC_DEMO_MODE=on
+ARG NEXT_PUBLIC_DEMO_MODE=off
 ENV NEXT_PUBLIC_DEMO_MODE=$NEXT_PUBLIC_DEMO_MODE
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build?schema=public"
 
