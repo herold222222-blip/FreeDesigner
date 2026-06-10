@@ -185,7 +185,7 @@ openssl rand -base64 32    # 用于 CRON_SECRET、POSTGRES_PASSWORD
 | `AUTH_SECRET` | 随机 48 字节 | 随机 48 字节 |
 | `PUBLIC_BASE_URL` | `http://1.2.3.4:3000` | `https://your-domain.com` |
 | `COOKIE_SECURE` | `false` | `true` |
-| `DEMO_CODE_ENABLED` | `on` | `off` |
+| `DEMO_CODE_ENABLED` | `on`（固定 888888） | `off`（需 SMS） |
 | `NEXT_PUBLIC_DEMO_MODE` | `on` | `off` |
 | `CRON_SECRET` | 随机字符串 | 随机字符串 |
 
@@ -445,7 +445,7 @@ docker compose down && docker compose up -d --build
 
 ## 11. 生产上线检查清单
 
-- [ ] `DEMO_CODE_ENABLED=off`
+- [ ] 接入短信后 `DEMO_CODE_ENABLED=off`
 - [ ] `NEXT_PUBLIC_DEMO_MODE=off`（需重新 build）
 - [ ] `COOKIE_SECURE=true`
 - [ ] `PUBLIC_BASE_URL` 为 HTTPS 域名

@@ -4,7 +4,7 @@
 > 委托人定向下单或悬赏招标，设计师在线交付，资金由平台分阶段托管。
 
 本项目为 **可部署的全栈应用**（Next.js + Prisma + API）。委托下单、签约、支付、验收、评价等核心业务数据均持久化到数据库。
-生产环境请设置 `DEMO_CODE_ENABLED=off` 与 `NEXT_PUBLIC_DEMO_MODE=off`（见 `.env.production.example`）；演示模式下验证码仍为 `888888`，支付可走沙箱通道。
+生产环境默认 `NEXT_PUBLIC_DEMO_MODE=off`（隐藏右下角身份切换）；上线初期可保持 `DEMO_CODE_ENABLED=on` 使用固定验证码 `888888`，接入短信后再改为 `off`（见 `.env.production.example`）。
 
 ---
 

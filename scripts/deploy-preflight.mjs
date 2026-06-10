@@ -41,7 +41,9 @@ for (const key of required) {
 }
 
 if (production && env.DEMO_CODE_ENABLED !== "off") {
-  warns.push("正式环境建议 DEMO_CODE_ENABLED=off");
+  warns.push(
+    "正式环境当前使用固定验证码（DEMO_CODE_ENABLED=on）；接入短信后请改为 off",
+  );
 }
 if (production && env.NEXT_PUBLIC_DEMO_MODE !== "off") {
   warns.push("正式环境建议 NEXT_PUBLIC_DEMO_MODE=off（需重新 docker compose build）");
