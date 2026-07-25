@@ -30,7 +30,7 @@ import { ChevronRight, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function DesignerPricingBaseSidebarCard() {
-  const identityId = useRoleStore((s) => s.identityId) || "designer_chen";
+  const identityId = useRoleStore((s) => s.identityId) || "";
   const { data: designer } = useDesigner(identityId);
   const pricingConfig = usePlatformPricingStore((s) => s.config);
   const savedByDesigner = useDesignerRateSettingsStore((s) => s.byDesigner);

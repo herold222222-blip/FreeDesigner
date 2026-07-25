@@ -39,8 +39,8 @@ export default function DesignerLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const identityId = useRoleStore((s) => s.identityId) || "designer_chen";
-  const { data: designer } = useDesigner(identityId);
+  const identityId = useRoleStore((s) => s.identityId);
+  const { data: designer } = useDesigner(identityId || null);
 
   return (
     <ConsoleShell

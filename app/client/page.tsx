@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { OrderRow } from "@/components/domain/order-row";
-import { useOrders, useBounties } from "@/lib/use-data";
+import { useClient, useOrders, useBounties } from "@/lib/use-data";
 import { useRoleStore } from "@/store/role-store";
 import {
   buildClientDashboardSummary,
@@ -42,19 +42,25 @@ const DASHBOARD_CARDS: {
 
 export default function ClientDashboardPage() {
   const identityId = useRoleStore((s) => s.identityId);
-  const clientId = identityId || "client_lin";
+  const clientId = identityId || "";
+  const { data: client } = useClient(clientId || null);
   const { data: orders } = useOrders();
   const { data: allBounties } = useBounties();
 
   const myBounties = useMemo(
-    () => allBounties.filter((b) => b.publisherId === clientId),
+    () =>
+      clientId
+        ? allBounties.filter((b) => b.publisherId === clientId)
+        : [],
     [allBounties, clientId],
   );
   const platformOrders = useMemo(
     () =>
-      orders.filter(
-        (o) => o.clientId === clientId && o.orderSource !== "bounty",
-      ),
+      clientId
+        ? orders.filter(
+            (o) => o.clientId === clientId && o.orderSource !== "bounty",
+          )
+        : [],
     [orders, clientId],
   );
   const myOrders = platformOrders.slice(0, 3);
@@ -63,15 +69,39 @@ export default function ClientDashboardPage() {
     [platformOrders],
   );
 
+  const monthlyOrders = useMemo(
+    () =>
+      platformOrders.filter(
+        (o) =>
+          o.billingMode === "monthly" &&
+          (o.status === "in_progress" ||
+            o.status === "awaiting_payment" ||
+            o.status === "contract_pending"),
+      ),
+    [platformOrders],
+  );
+  const activeMonthly = monthlyOrders[0];
+
+  const greetingName = client?.name?.trim() || "委托人";
+  const todayLabel = useMemo(
+    () =>
+      new Date().toLocaleDateString("zh-CN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }),
+    [],
+  );
+
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-ink">
-            林先生,你好 👋
+            {greetingName},你好 👋
           </h2>
           <p className="mt-1 text-sm text-ink-60">
-            今天是 2026-05-01。{summary}
+            今天是 {todayLabel}。{summary}
           </p>
         </div>
         <div className="flex gap-2">
@@ -238,35 +268,42 @@ export default function ClientDashboardPage() {
         </Card>
       </div>
 
-      <Card className="overflow-hidden bg-ink p-7 text-white">
-        <div className="flex flex-wrap items-center justify-between gap-5">
-          <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand/20">
-              <CalendarRange className="h-5 w-5 text-brand-200" />
+      {activeMonthly ? (
+        <Card className="overflow-hidden bg-ink p-7 text-white">
+          <div className="flex flex-wrap items-center justify-between gap-5">
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand/20">
+                <CalendarRange className="h-5 w-5 text-brand-200" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 text-sm text-white/80">
+                  <Sparkles className="h-3.5 w-3.5" /> 按月雇佣 · 续约提醒
+                </div>
+                <div className="mt-1 text-base font-semibold">
+                  你有进行中的按月雇佣订单
+                </div>
+                <div className="mt-1 text-xs text-white/60">
+                  请按时完成续约与付款，避免服务中断。
+                </div>
+              </div>
             </div>
-            <div>
-              <div className="flex items-center gap-2 text-sm text-white/80">
-                <Sparkles className="h-3.5 w-3.5" /> 按月雇佣 · 续约提醒
-              </div>
-              <div className="mt-1 text-base font-semibold">
-                你正在按月雇佣设计师 <strong>李然</strong>(室内设计)
-              </div>
-              <div className="mt-1 text-xs text-white/60">
-                本月雇佣周期至 2026-05-31。请在每月 25 号前支付下月服务费,
-                未按时续费将自动终止。
-              </div>
+            <div className="flex gap-2">
+              <Button
+                asChild
+                variant="outline"
+                className="border-white/30 bg-transparent text-white hover:bg-white/10"
+              >
+                <Link href="/client/monthly">查看续约</Link>
+              </Button>
+              <Button asChild variant="brand">
+                <Link href={`/client/orders/${activeMonthly.id}`}>
+                  查看订单
+                </Link>
+              </Button>
             </div>
           </div>
-          <div className="flex gap-2">
-            <Button asChild variant="outline" className="border-white/30 bg-transparent text-white hover:bg-white/10">
-              <Link href="/client/monthly">查看续约</Link>
-            </Button>
-            <Button asChild variant="brand">
-              <Link href="/client/monthly">立即续约下月</Link>
-            </Button>
-          </div>
-        </div>
-      </Card>
+        </Card>
+      ) : null}
     </div>
   );
 }

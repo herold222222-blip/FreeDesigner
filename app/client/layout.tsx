@@ -27,8 +27,8 @@ export default function ClientLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const identityId = useRoleStore((s) => s.identityId) || "client_lin";
-  const { data: client } = useClient(identityId);
+  const identityId = useRoleStore((s) => s.identityId);
+  const { data: client } = useClient(identityId || null);
 
   return (
     <ConsoleShell

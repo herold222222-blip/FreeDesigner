@@ -86,7 +86,8 @@ export function ConsoleSidebarActions({ consoleKind }: ConsoleSidebarActionsProp
   }, [aboutOpen, refreshPlatformContent]);
 
   const profile = useMemo(() => {
-    const id = identityId || (consoleKind === "client" ? "client_lin" : "designer_chen");
+    const id = identityId || "";
+    if (!id) return null;
     if (consoleKind === "client") {
       const client = getClientById(id);
       if (!client) return null;

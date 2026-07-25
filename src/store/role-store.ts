@@ -26,10 +26,10 @@ interface RoleState {
 
 const DEFAULT_IDENTITY_BY_ROLE: Record<Role, string> = {
   guest: "",
-  client: "client_lin",
-  designer: "designer_chen",
-  admin: "admin_root",
-  super_admin: "admin_super_root",
+  client: "",
+  designer: "",
+  admin: "",
+  super_admin: "",
 };
 
 export const useRoleStore = create<RoleState>()(
