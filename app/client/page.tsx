@@ -75,8 +75,8 @@ export default function ClientDashboardPage() {
         (o) =>
           o.billingMode === "monthly" &&
           (o.status === "in_progress" ||
-            o.status === "awaiting_payment" ||
-            o.status === "contract_pending"),
+            o.status === "pending_contract" ||
+            o.status === "pending_schedule"),
       ),
     [platformOrders],
   );
