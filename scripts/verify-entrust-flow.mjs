@@ -1,9 +1,20 @@
 /**
  * 委托下单全流程 API 自检（需已 db:seed 且 dev 服务运行在 BASE_URL）
- * 用法：node scripts/verify-entrust-flow.mjs
+ * 用法：需临时开启固定验证码后再跑，例如：
+ *   DEMO_CODE_ENABLED=on DEMO_VERIFICATION_CODE=888888 node scripts/verify-entrust-flow.mjs
  */
 const BASE = process.env.BASE_URL || "http://localhost:3000";
-const CODE = process.env.DEMO_VERIFICATION_CODE || "888888";
+const CODE = process.env.DEMO_VERIFICATION_CODE;
+const DEMO_ON = process.env.DEMO_CODE_ENABLED === "on";
+
+if (!DEMO_ON || !CODE) {
+  console.error(
+    "\nverify:flow 需要临时开启演示验证码：\n" +
+      "  设置 DEMO_CODE_ENABLED=on 与 DEMO_VERIFICATION_CODE，且服务端 .env 同步后重启。\n" +
+      "正式环境 DEMO_CODE_ENABLED=off 时请用真实短信登录验收，勿依赖本脚本。\n",
+  );
+  process.exit(1);
+}
 
 async function json(path, init) {
   const res = await fetch(`${BASE}${path}`, {

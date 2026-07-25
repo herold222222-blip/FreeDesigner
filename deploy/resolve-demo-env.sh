@@ -1,6 +1,6 @@
 # 供 deploy/*.sh source：演示相关环境变量（shell export 优先于 .env）
-# - 右下角身份切换：默认关
-# - 登录验证码 888888：默认开（上线初期）；接入短信后在 .env 设 DEMO_CODE_ENABLED=off + SMS_PROVIDER
+# - 右下角身份切换：默认关；.env 设 ENABLE_DEMO_UI=true 时开
+# - 固定验证码：默认关；仅当 .env 显式 DEMO_CODE_ENABLED=on 时开
 resolve_demo_env() {
   if grep -qE '^ENABLE_DEMO_UI=true' .env 2>/dev/null; then
     export NEXT_PUBLIC_DEMO_MODE=on
@@ -17,11 +17,8 @@ resolve_demo_env() {
     sms_provider="${sms_provider%"${sms_provider##*[![:space:]]}"}"
   fi
 
-  # 仅当 .env 显式 off 且已配置短信渠道时，才关闭固定验证码
-  if grep -qE '^DEMO_CODE_ENABLED=off' .env 2>/dev/null && [ -n "$sms_provider" ]; then
-    export DEMO_CODE_ENABLED=off
-    echo "[deploy] 登录验证码：真实短信（SMS_PROVIDER=${sms_provider}）"
-  else
+  # 仅当 .env 显式 on 时启用固定验证码；默认 off（需短信）
+  if grep -qE '^DEMO_CODE_ENABLED=on' .env 2>/dev/null; then
     export DEMO_CODE_ENABLED=on
     local code="888888"
     if grep -qE '^DEMO_VERIFICATION_CODE=' .env 2>/dev/null; then
@@ -29,21 +26,13 @@ resolve_demo_env() {
       code="${code:-888888}"
     fi
     export DEMO_VERIFICATION_CODE="$code"
-    if grep -qE '^DEMO_CODE_ENABLED=off' .env 2>/dev/null; then
-      echo "[deploy] 登录验证码：固定演示码 ${DEMO_VERIFICATION_CODE}（.env 为 off 但未配 SMS_PROVIDER，已自动回退）"
+    echo "[deploy] 登录验证码：固定演示码 ${DEMO_VERIFICATION_CODE}（.env 显式 DEMO_CODE_ENABLED=on）"
+  else
+    export DEMO_CODE_ENABLED=off
+    if [ -n "$sms_provider" ]; then
+      echo "[deploy] 登录验证码：真实短信（SMS_PROVIDER=${sms_provider}）"
     else
-      echo "[deploy] 登录验证码：固定演示码 ${DEMO_VERIFICATION_CODE}（DEMO_CODE_ENABLED=on）"
-    fi
-    # 同步写回 .env，避免 compose 下次启动仍读旧值 off
-    if grep -qE '^DEMO_CODE_ENABLED=' .env 2>/dev/null; then
-      sed -i.bak -E 's/^DEMO_CODE_ENABLED=.*/DEMO_CODE_ENABLED=on/' .env
-    else
-      echo "DEMO_CODE_ENABLED=on" >> .env
-    fi
-    if grep -qE '^DEMO_VERIFICATION_CODE=' .env 2>/dev/null; then
-      sed -i.bak2 -E "s/^DEMO_VERIFICATION_CODE=.*/DEMO_VERIFICATION_CODE=${DEMO_VERIFICATION_CODE}/" .env
-    else
-      echo "DEMO_VERIFICATION_CODE=${DEMO_VERIFICATION_CODE}" >> .env
+      echo "[deploy] 登录验证码：已关闭固定码，但未配置 SMS_PROVIDER（用户将无法收验证码）"
     fi
   fi
 }

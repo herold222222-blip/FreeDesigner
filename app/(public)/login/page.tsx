@@ -529,10 +529,8 @@ function LoginInner() {
           </h1>
           <p className="max-w-xl text-sm text-ink-60">
             {isRegister
-              ? "支持个人委托人、企业委托人、个人设计师、设计团队、设计公司五类主体入驻。平台管理员账号由内部开通。原型阶段任意手机号 + 验证码 "
-              : "手机号 + 短信验证码即可登录。原型阶段任意手机号 + 验证码 "}
-            <code className="rounded bg-ink-20/40 px-1.5 py-0.5 text-xs">888888</code>{" "}
-            即可。
+              ? "支持个人委托人、企业委托人、个人设计师、设计团队、设计公司五类主体入驻。平台管理员账号由内部开通。使用手机号收取短信验证码完成注册。"
+              : "手机号 + 短信验证码即可登录。请先点击获取验证码，查收短信后完成登录。"}
           </p>
           <div className="grid gap-3 pt-2">
             <Card className="flex items-start gap-3 p-4">

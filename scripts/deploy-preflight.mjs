@@ -40,13 +40,17 @@ for (const key of required) {
   }
 }
 
-if (production && env.DEMO_CODE_ENABLED !== "off") {
-  warns.push(
-    "正式环境当前使用固定验证码（DEMO_CODE_ENABLED=on）；接入短信后请改为 off",
-  );
+if (env.DEMO_CODE_ENABLED !== "off") {
+  const msg =
+    "DEMO_CODE_ENABLED 未设为 off（固定验证码仍开启）；正式/公开部署请改为 off 并配置短信";
+  if (production) errors.push(msg);
+  else warns.push(msg);
 }
-if (production && env.NEXT_PUBLIC_DEMO_MODE !== "off") {
-  warns.push("正式环境建议 NEXT_PUBLIC_DEMO_MODE=off（需重新 docker compose build）");
+if (env.NEXT_PUBLIC_DEMO_MODE !== "off") {
+  const msg =
+    "NEXT_PUBLIC_DEMO_MODE 未设为 off（右下角身份切换可能可见）；需重新 docker compose build";
+  if (production) errors.push(msg);
+  else warns.push(msg);
 }
 if (production && env.COOKIE_SECURE !== "true") {
   warns.push("正式环境建议 COOKIE_SECURE=true");

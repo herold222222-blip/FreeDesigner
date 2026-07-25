@@ -385,7 +385,7 @@ SELECT code, title, status FROM "Order" WHERE "designerId" = 'designer_chen';
 
 ---
 
-## 演示账号（seed 后）
+## 种子账号（seed 后）
 
 | 角色 | 手机号 |
 |------|--------|
@@ -394,7 +394,7 @@ SELECT code, title, status FROM "Order" WHERE "designerId" = 'designer_chen';
 | 管理员 | 13700000000 |
 | 超级管理员 | 13700000001 |
 
-验证码（演示模式）：`888888`
+登录默认走短信验证码（`DEMO_CODE_ENABLED=off`）。仅本地临时调试时可开启固定码。
 
 ---
 

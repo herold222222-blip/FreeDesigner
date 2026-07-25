@@ -185,8 +185,9 @@ openssl rand -base64 32    # 用于 CRON_SECRET、POSTGRES_PASSWORD
 | `AUTH_SECRET` | 随机 48 字节 | 随机 48 字节 |
 | `PUBLIC_BASE_URL` | `http://1.2.3.4:3000` | `https://your-domain.com` |
 | `COOKIE_SECURE` | `false` | `true` |
-| `DEMO_CODE_ENABLED` | `on`（固定 888888） | `off`（需 SMS） |
-| `NEXT_PUBLIC_DEMO_MODE` | `on` | `off` |
+| `DEMO_CODE_ENABLED` | `off`（需 SMS） | `off`（需 SMS） |
+| `NEXT_PUBLIC_DEMO_MODE` | `off` | `off` |
+| `SMS_PROVIDER` | `aliyun` + 密钥 | `aliyun` + 密钥 |
 | `CRON_SECRET` | 随机字符串 | 随机字符串 |
 
 ### 4.3 部署前预检
@@ -238,13 +239,13 @@ docker compose logs -f app
 # 健康检查
 bash deploy/health-check.sh
 
-# API 全流程自检（内测）
-BASE_URL=http://你的公网IP:3000 npm run verify:flow
+# API 全流程自检需临时开演示码（见 scripts/verify-entrust-flow.mjs）
+# DEMO_CODE_ENABLED=on DEMO_VERIFICATION_CODE=xxx BASE_URL=http://你的公网IP:3000 npm run verify:flow
 ```
 
-浏览器访问 `PUBLIC_BASE_URL`，内测验证码为 `888888`。
+浏览器访问 `PUBLIC_BASE_URL`，使用**短信验证码**登录（须配置 `SMS_*`；`sms.ts` 当前为接入占位）。
 
-**演示账号：**
+**种子账号（seed 后）：**
 
 | 角色 | 手机号 |
 |------|--------|
@@ -445,17 +446,17 @@ docker compose down && docker compose up -d --build
 
 ## 11. 生产上线检查清单
 
-- [ ] 接入短信后 `DEMO_CODE_ENABLED=off`
+- [ ] `DEMO_CODE_ENABLED=off`
 - [ ] `NEXT_PUBLIC_DEMO_MODE=off`（需重新 build）
 - [ ] `COOKIE_SECURE=true`
 - [ ] `PUBLIC_BASE_URL` 为 HTTPS 域名
 - [ ] `AUTH_SECRET`、`POSTGRES_PASSWORD`、`CRON_SECRET` 均为强随机值
-- [ ] 已接入阿里云短信（`SMS_*` 变量）
+- [ ] 已配置并接通阿里云短信（`SMS_*`；补全 `sms.ts` 真实发送）
 - [ ] Nginx + SSL 已配置
 - [ ] 安全组已关闭 3000 对外端口
 - [ ] 数据库自动备份 crontab 已安装
 - [ ] 订单超时 crontab 已安装
-- [ ] `npm run verify:flow` 自检通过
+- [ ] 用真实短信登录完成核心流程验收
 
 ---
 

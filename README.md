@@ -4,7 +4,8 @@
 > 委托人定向下单或悬赏招标，设计师在线交付，资金由平台分阶段托管。
 
 本项目为 **可部署的全栈应用**（Next.js + Prisma + API）。委托下单、签约、支付、验收、评价等核心业务数据均持久化到数据库。
-生产环境默认 `NEXT_PUBLIC_DEMO_MODE=off`（隐藏右下角身份切换）；上线初期可保持 `DEMO_CODE_ENABLED=on` 使用固定验证码 `888888`，接入短信后再改为 `off`（见 `.env.production.example`）。
+仓库默认关闭演示：`NEXT_PUBLIC_DEMO_MODE=off`（隐藏右下角身份切换）、`DEMO_CODE_ENABLED=off`（登录必须走短信，需配置 `SMS_*`；见 `.env.example` / `.env.production.example`）。  
+说明：`src/lib/server/sms.ts` 中阿里云发送目前为接入占位，需补全 dysmsapi 调用后用户才能真正收到短信。
 
 ---
 
@@ -60,7 +61,7 @@ npm run dev
 
 环境要求：Node.js ≥ 18（已在 Node 22 + Windows 11 + npm 11 验证通过）。
 
-### 演示账号（验证码统一为 `888888`）
+### 种子测试账号（`npm run db:seed` 后）
 
 | 角色 | 手机号 |
 |------|--------|
@@ -69,8 +70,8 @@ npm run dev
 | 管理员 | `13700000000` |
 | 超级管理员 | `13700000001` |
 
-> 右下角「演示身份切换器」会以对应角色的真实账号建立会话，可一键切换四种身份。
-> 也可在 `/login?register=1` 用任意手机号 + `888888` 注册新账号（数据真实持久化）。
+> 登录默认使用**短信验证码**。也可在 `/login?register=1` 用任意手机号注册（数据真实持久化）。  
+> 本地临时调试可在 `.env` 设 `DEMO_CODE_ENABLED=on` + `DEMO_VERIFICATION_CODE`，并设 `NEXT_PUBLIC_DEMO_MODE=on` 显示右下角身份切换（勿用于公开部署）。
 
 ### 常用脚本
 
@@ -99,7 +100,7 @@ npm run dev
 
 ### 内测部署（阿里云 ECS · 约 15 分钟）
 
-适合团队内测：**固定验证码 `888888`、沙箱支付、右下角身份切换、空库自动播种**。
+适合团队内测：**沙箱支付、空库自动播种**；演示开关默认关闭，需配置短信后登录。
 
 **1. ECS 安全组**：放行 TCP `3000`（直连内测）或 `80`/`443`（Nginx）。
 
@@ -110,7 +111,7 @@ npm run dev
 ```bash
 cd /opt/lezyou
 cp .env.internal.example .env
-vi .env   # 改 POSTGRES_PASSWORD、AUTH_SECRET、PUBLIC_BASE_URL、CRON_SECRET
+vi .env   # 改 POSTGRES_PASSWORD、AUTH_SECRET、PUBLIC_BASE_URL、CRON_SECRET、SMS_*
 node scripts/deploy-preflight.mjs
 
 # 直连 IP:3000（无需 Nginx）
@@ -121,8 +122,8 @@ docker compose logs -f app   # 看到 Ready 且 [entrypoint] 播种完成即可
 **4. 访问与验收**
 
 - 浏览器打开 `PUBLIC_BASE_URL`（如 `http://公网IP:3000`）
-- 登录验证码 `888888`；或用右下角切换委托人 / 设计师 / 管理员
-- 服务器上自检：`BASE_URL=http://公网IP:3000 npm run verify:flow`
+- 使用短信验证码登录（管理员亦可用登录名 + 密码）
+- API 全流程自检需临时开演示码：见 `scripts/verify-entrust-flow.mjs` 说明
 
 **5. 可选：订单超时 crontab**
 
@@ -132,7 +133,7 @@ chmod +x scripts/cron-order-timeouts.sh
 # 0 * * * * /opt/lezyou/scripts/cron-order-timeouts.sh >> /var/log/lezyou-cron.log 2>&1
 ```
 
-内测通过后，再切 `.env.production.example`、关演示开关、配 Nginx + HTTPS 即可进入正式环境。
+内测通过后，再切 `.env.production.example`、配 Nginx + HTTPS 即可进入正式环境。
 
 ### 部署到阿里云服务器（国内使用 · 推荐 Docker）
 
@@ -168,7 +169,7 @@ vi .env                      # 填写 POSTGRES_PASSWORD、AUTH_SECRET 等
 - `POSTGRES_PASSWORD`：数据库密码（务必改强密码）
 - `AUTH_SECRET`：会话签名密钥（`openssl rand -base64 48`）
 - `COOKIE_SECURE`：配好 HTTPS 后设 `true`；仅用 `http://公网IP` 临时测试时设 `false`，否则无法登录
-- `DEMO_CODE_ENABLED`：试用期可保持 `on`（验证码固定为 `DEMO_VERIFICATION_CODE`）；正式运营设 `off` 并接入短信
+- `DEMO_CODE_ENABLED`：正式默认 `off`；须配置 `SMS_PROVIDER` 及短信密钥。仅本地调试可临时 `on`
 
 **3. 构建并启动**
 
@@ -209,7 +210,7 @@ docker compose exec app npm run prod:db:push   # 模型有变更时同步表结�
 
 #### 上线前须知（国内环境）
 
-- **登录验证码**：当前为演示码（默认 `888888`）。正式运营请在 `src/lib/server/verification.ts` 的 `TODO` 处接入**阿里云短信服务**（`.env` 已预留 `SMS_*` 变量），并将 `DEMO_CODE_ENABLED=off`。
+- **登录验证码**：仓库默认 `DEMO_CODE_ENABLED=off`，须配置 `SMS_*`。请在 `src/lib/server/sms.ts` 补全**阿里云短信** dysmsapi 调用（当前为占位日志）。
 - **支付**：已内置「沙箱 / 微信支付 / 支付宝」三渠道，默认 `sandbox`（免凭证即可走通下单→扫码→托管→验收）。接入真实渠道见下方「支付渠道接入」。
 - **图片**：演示头像/作品图来自 `dicebear`、`unsplash` 等境外站点，国内访问可能较慢或失败；正式上线建议将素材迁移到**阿里云 OSS**，并更新 `next.config.mjs` 的 `images.remotePatterns`。
 - **用阿里云 RDS**（而非内置 db 容器）：删除 `docker-compose.yml` 的 `db` 服务，在 `app.environment` 直接写 `DATABASE_URL=postgresql://...rds-host:5432/lezyou?schema=public` 即可。
@@ -320,12 +321,11 @@ docker compose exec app npm run prod:db:push   # 模型有变更时同步表结�
 
 ---
 
-## 演示用辅助功能
+## 本地调试辅助（默认关闭，勿用于公开部署）
 
-- **右下角浮动按钮 · 演示身份切换器**:一键在「访客 / 委托人 / 设计师 / 管理员」之间切换,
-  无需输密码即可查看同一份订单在不同视角下的呈现。
-- **登录页 mock 验证码**:任意手机号 + 验证码 `888888` 即可登录。
-- **本地状态持久化**:身份选择 / 新建草稿订单 / 通知队列均存于浏览器 localStorage。
+- **右下角身份切换器**：仅当 `NEXT_PUBLIC_DEMO_MODE=on`（或部署时 `ENABLE_DEMO_UI=true`）时显示。
+- **固定验证码**：仅当 `DEMO_CODE_ENABLED=on` 时启用（配合 `DEMO_VERIFICATION_CODE`）。
+- **本地状态持久化**：部分 UI 状态存于浏览器 localStorage。
 
 ---
 

@@ -2,14 +2,14 @@
  * 种子脚本：将既有 mock 数据导入数据库。
  * 运行：npm run db:seed
  *
- * 演示账号（验证码统一为 .env 中的 DEMO_VERIFICATION_CODE，默认 888888）：
+ * 种子测试账号（登录默认走短信；仅当 DEMO_CODE_ENABLED=on 时可用固定验证码）：
  *   - 个人设计师（陈牧之）：13900010000
  *   - 设计团队（王舒景观施工图团队）：13900040000
  *   - 设计公司（远境建筑设计有限公司）：13900090000
  *   - 委托人：手机号 138 + 4 位序号（首个为 client_lin → 13800010000）
- *   - 管理员：登录名 FDmanage / 密码 FD4006801230（亦可用手机 13700000000 + 验证码）
+ *   - 管理员：登录名 FDmanage / 密码 FD4006801230（亦可用手机 13700000000 + 短信验证码）
  *   - 超级管理员：登录名 FDadmin / 密码 FD4006801231
- * 控制台会打印完整账号清单；右下角演示身份切换器与 src/lib/demo-accounts.ts 保持一致。
+ * 控制台会打印完整账号清单；演示身份切换器见 src/lib/demo-accounts.ts（需 NEXT_PUBLIC_DEMO_MODE=on）。
  */
 import { PrismaClient } from "@prisma/client";
 import { designers } from "../src/mocks/designers";
@@ -364,7 +364,7 @@ async function main() {
     });
   }
 
-  console.log("\n播种完成！演示账号清单（验证码统一为 888888）：");
+  console.log("\n播种完成！种子账号清单（登录请使用短信验证码；演示固定码需显式开启 DEMO_CODE_ENABLED=on）：");
   console.table(accountList);
 }
 
