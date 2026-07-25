@@ -2,14 +2,12 @@
  * 种子脚本：将既有 mock 数据导入数据库。
  * 运行：npm run db:seed
  *
- * 种子测试账号（登录默认走短信；仅当 DEMO_CODE_ENABLED=on 时可用固定验证码）：
- *   - 个人设计师（陈牧之）：13900010000
- *   - 设计团队（王舒景观施工图团队）：13900040000
- *   - 设计公司（远境建筑设计有限公司）：13900090000
- *   - 委托人：手机号 138 + 4 位序号（首个为 client_lin → 13800010000）
- *   - 管理员：登录名 FDmanage / 密码 FD4006801230（亦可用手机 13700000000 + 短信验证码）
- *   - 超级管理员：登录名 FDadmin / 密码 FD4006801231
- * 控制台会打印完整账号清单；演示身份切换器见 src/lib/demo-accounts.ts（需 NEXT_PUBLIC_DEMO_MODE=on）。
+ * 种子测试账号：
+ *   - 个人设计师（陈牧之）：13900010000（短信登录）
+ *   - 设计团队 / 设计公司 / 委托人：见 mock 手机号
+ *   - 预设账号密码登录：
+ *       FD001 超管 FD19076652 · FD002–FD004 管理员 FD4006801231 · FD005–FD010 普通账号 4006801231
+ * 控制台会打印完整账号清单。
  */
 import { PrismaClient } from "@prisma/client";
 import { designers } from "../src/mocks/designers";
@@ -31,12 +29,7 @@ import { cloneDefaultPlatformContent } from "../src/lib/platform-content";
 import { cloneDefaultLevelManagement } from "../src/lib/level-management";
 import { demoFeedbackMessages } from "../src/mocks/feedback-messages";
 import { demoDisputes } from "../src/mocks/disputes";
-import {
-  PLATFORM_ADMIN_DEFAULT_PASSWORD,
-  PLATFORM_ADMIN_LOGIN_NAME,
-  SUPER_ADMIN_DEFAULT_PASSWORD,
-  SUPER_ADMIN_LOGIN_NAME,
-} from "../src/lib/admin-accounts";
+import { PRESET_ACCOUNTS } from "../src/lib/admin-accounts";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
@@ -260,44 +253,35 @@ async function main() {
     });
   }
 
-  // 平台管理员
-  await prisma.user.create({
-    data: {
-      phone: "13700000000",
-      loginName: PLATFORM_ADMIN_LOGIN_NAME,
-      passwordHash: await hashPassword(PLATFORM_ADMIN_DEFAULT_PASSWORD),
-      name: "平台管理员",
-      role: "admin",
-      status: "active",
-      avatar:
-        "https://api.dicebear.com/7.x/initials/png?seed=管理员&backgroundColor=1f2937&textColor=ffffff",
-    },
-  });
-  accountList.push({
-    role: "管理员",
-    phone: `${PLATFORM_ADMIN_LOGIN_NAME} / 13700000000`,
-    name: "平台管理员",
-    id: "-",
-  });
-
-  await prisma.user.create({
-    data: {
-      phone: "13700000001",
-      loginName: SUPER_ADMIN_LOGIN_NAME,
-      passwordHash: await hashPassword(SUPER_ADMIN_DEFAULT_PASSWORD),
-      name: "超级管理员",
-      role: "super_admin",
-      status: "active",
-      avatar:
-        "https://api.dicebear.com/7.x/initials/png?seed=超管&backgroundColor=7c2d12&textColor=ffffff",
-    },
-  });
-  accountList.push({
-    role: "超级管理员",
-    phone: `${SUPER_ADMIN_LOGIN_NAME} / 13700000001`,
-    name: "超级管理员",
-    id: "-",
-  });
+  // 预设账号 FD001–FD010（各账号独立密码）
+  for (let i = 0; i < PRESET_ACCOUNTS.length; i++) {
+    const preset = PRESET_ACCOUNTS[i];
+    const phone = `1370000${String(i + 1).padStart(4, "0")}`;
+    await prisma.user.create({
+      data: {
+        phone,
+        loginName: preset.loginName,
+        passwordHash: await hashPassword(preset.password),
+        name: preset.name,
+        role: preset.role,
+        status: "active",
+        avatar: `https://api.dicebear.com/7.x/initials/png?seed=${encodeURIComponent(
+          preset.loginName,
+        )}&backgroundColor=1f2937&textColor=ffffff`,
+      },
+    });
+    accountList.push({
+      role:
+        preset.role === "super_admin"
+          ? "超级管理员"
+          : preset.role === "admin"
+            ? "管理员"
+            : "普通账号",
+      phone: `${preset.loginName} / ${preset.password}`,
+      name: preset.name,
+      id: "-",
+    });
+  }
 
   // 平台计价参数
   await prisma.platformPricing.create({
@@ -364,7 +348,7 @@ async function main() {
     });
   }
 
-  console.log("\n播种完成！种子账号清单（登录请使用短信验证码；演示固定码需显式开启 DEMO_CODE_ENABLED=on）：");
+  console.log("\n播种完成！预设账号见下表（账号 / 密码）；手机号账号可用短信登录。");
   console.table(accountList);
 }
 

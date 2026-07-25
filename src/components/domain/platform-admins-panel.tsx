@@ -276,7 +276,7 @@ export function PlatformAdminsPanel({
             <div className="space-y-2">
               <Label>登录账号</Label>
               <Input
-                placeholder="如 FDmanage"
+                placeholder="如 FD002"
                 value={addForm.loginName}
                 onChange={(e) =>
                   setAddForm((f) => ({ ...f, loginName: e.target.value }))

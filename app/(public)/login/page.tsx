@@ -8,11 +8,21 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useRoleStore } from "@/store/role-store";
 import { useSessionStore } from "@/store/session-store";
 import {
   sendCode as sendCodeApi,
   loginRequest,
+  switchRoleRequest,
+  claimRoleRequest,
+  type SessionUserDTO,
 } from "@/lib/api-client";
 import {
   Sparkles,
@@ -20,17 +30,13 @@ import {
   User,
   Building2,
   ArrowRight,
-  Crown,
   Users,
+  KeyRound,
+  Smartphone,
 } from "lucide-react";
 import type { Role, SubjectType } from "@/lib/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-
-/** 对外开放入驻的身份（不含平台管理员） */
-const REGISTER_ROLES = ["client", "designer"] as const satisfies readonly Role[];
-
-type RegisterRole = (typeof REGISTER_ROLES)[number];
 
 /** 入驻页提前展示的五种主体 */
 type RegisterKind =
@@ -87,16 +93,6 @@ const REGISTER_KIND_META: Record<
   },
 };
 
-const ROLE_TAB_META: Record<
-  RegisterRole | "admin" | "super_admin",
-  { label: string; icon: typeof User }
-> = {
-  client: { label: "委托人", icon: User },
-  designer: { label: "设计师", icon: Sparkles },
-  admin: { label: "管理员", icon: ShieldCheck },
-  super_admin: { label: "超级管理员", icon: Crown },
-};
-
 function parseRegisterKind(param: string | null): RegisterKind {
   if (param && REGISTER_KINDS.includes(param as RegisterKind)) {
     return param as RegisterKind;
@@ -106,9 +102,29 @@ function parseRegisterKind(param: string | null): RegisterKind {
   return "client_individual";
 }
 
+function roleHome(role: Role) {
+  if (role === "client") return "/client";
+  if (role === "designer") return "/designer";
+  if (role === "admin") return "/admin";
+  return "/super-admin";
+}
+
+function roleLabel(role: Role) {
+  if (role === "client") return "委托人";
+  if (role === "designer") return "设计师";
+  if (role === "admin") return "管理员";
+  return "超级管理员";
+}
+
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="container-page py-20 text-center text-ink-60">加载中...</div>}>
+    <Suspense
+      fallback={
+        <div className="container-page py-20 text-center text-ink-60">
+          加载中...
+        </div>
+      }
+    >
       <LoginInner />
     </Suspense>
   );
@@ -118,36 +134,27 @@ function LoginInner() {
   const router = useRouter();
   const params = useSearchParams();
   const isRegister = params.get("register") === "1";
-  const isAdminConsole = params.get("console") === "admin";
-  const roleParam = params.get("role") as Role | null;
   const kindParam = params.get("kind");
-
-  const initialRole: Role =
-    isRegister
-      ? "client"
-      : isAdminConsole
-        ? "super_admin"
-        : roleParam && ["client", "designer", "admin", "super_admin"].includes(roleParam)
-          ? roleParam
-          : "client";
 
   const setRole = useRoleStore((s) => s.setRole);
   const push = useSessionStore((s) => s.pushNotification);
+
+  const [loginMethod, setLoginMethod] = useState<"code" | "password">("password");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [loginName, setLoginName] = useState("");
   const [password, setPassword] = useState("");
   const [seconds, setSeconds] = useState(0);
-  const [activeRole, setActiveRole] = useState<Role>(initialRole);
+  const [submitting, setSubmitting] = useState(false);
   const [registerKind, setRegisterKind] = useState<RegisterKind>(() =>
     parseRegisterKind(kindParam),
   );
 
-  const tabRoles: Role[] = isRegister
-    ? [...REGISTER_ROLES]
-    : isAdminConsole
-      ? ["admin", "super_admin"]
-      : ["client", "designer"];
+  const [rolePickOpen, setRolePickOpen] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [pendingSession, setPendingSession] = useState<SessionUserDTO | null>(
+    null,
+  );
 
   useEffect(() => {
     if (isRegister && kindParam) {
@@ -156,18 +163,10 @@ function LoginInner() {
   }, [isRegister, kindParam]);
 
   useEffect(() => {
-    if (isRegister && !REGISTER_ROLES.includes(activeRole as RegisterRole)) {
-      setActiveRole("client");
-    }
-  }, [isRegister, activeRole]);
-
-  useEffect(() => {
     if (seconds <= 0) return;
     const t = setTimeout(() => setSeconds(seconds - 1), 1000);
     return () => clearTimeout(t);
   }, [seconds]);
-
-  const [submitting, setSubmitting] = useState(false);
 
   const sendCode = async () => {
     if (!/^1\d{10}$/.test(phone)) {
@@ -175,7 +174,7 @@ function LoginInner() {
       return;
     }
     try {
-      const res = await sendCodeApi(phone, isRegister ? "register" : "login");
+      const res = await sendCodeApi(phone, "login");
       setSeconds(60);
       push({
         title: "验证码已发送",
@@ -190,35 +189,55 @@ function LoginInner() {
     }
   };
 
-  const registerKindLabel = REGISTER_KIND_META[registerKind].label;
-
-  const designerOnboardingHref = (() => {
-    const subject = REGISTER_KIND_META[registerKind].subjectType ?? "individual";
-    return `/onboarding/designer?subject=${subject}`;
-  })();
-
-  const roleHome = (role: Role) =>
-    role === "client"
-      ? "/client"
-      : role === "designer"
-        ? "/designer"
-        : role === "admin"
-          ? "/admin"
-          : "/super-admin";
-
-  const handleRegisterContinue = () => {
-    if (registerKind === "client_individual") {
-      router.push("/onboarding/client");
-      return;
-    }
-    if (registerKind === "client_enterprise") {
-      router.push("/onboarding/enterprise");
-      return;
-    }
-    router.push(designerOnboardingHref);
+  const applySession = (res: SessionUserDTO) => {
+    setRole(res.role, res.identityId);
   };
 
-  const handleAdminSubmit = async () => {
+  const finishLogin = (res: SessionUserDTO) => {
+    applySession(res);
+    if (res.needsRolePick) {
+      setPendingSession(res);
+      setRolePickOpen(true);
+      return;
+    }
+    if (res.needsOnboarding) {
+      setPendingSession(res);
+      setOnboardingOpen(true);
+      return;
+    }
+    push({
+      title: `欢迎回来 · ${roleLabel(res.role)}`,
+      variant: "success",
+    });
+    router.push(res.redirectTo ?? roleHome(res.role));
+  };
+
+  const handleCodeLogin = async () => {
+    if (submitting) return;
+    if (!/^1\d{10}$/.test(phone)) {
+      push({ title: "请输入正确的手机号", variant: "destructive" });
+      return;
+    }
+    if (!code) {
+      push({ title: "请输入验证码", variant: "destructive" });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await loginRequest({ phone, code });
+      finishLogin(res);
+    } catch (e) {
+      push({
+        title: "登录失败",
+        description: e instanceof Error ? e.message : undefined,
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handlePasswordLogin = async () => {
     if (submitting) return;
     if (!loginName.trim()) {
       push({ title: "请输入登录账号", variant: "destructive" });
@@ -233,16 +252,8 @@ function LoginInner() {
       const res = await loginRequest({
         loginName: loginName.trim(),
         password,
-        role: activeRole,
       });
-      setRole(res.role, res.identityId);
-      push({
-        title: `欢迎回来 · ${
-          res.role === "super_admin" ? "超级管理员" : "管理员"
-        }`,
-        variant: "success",
-      });
-      router.push(roleHome(res.role));
+      finishLogin(res);
     } catch (e) {
       push({
         title: "登录失败",
@@ -254,42 +265,74 @@ function LoginInner() {
     }
   };
 
-  const handleSubmit = async () => {
+  const handlePickRole = async (role: "client" | "designer") => {
     if (submitting) return;
-    if (!/^1\d{10}$/.test(phone)) {
-      push({ title: "请输入正确的手机号", variant: "destructive" });
-      return;
-    }
-    if (!code) {
-      push({ title: "请输入验证码", variant: "destructive" });
-      return;
-    }
     setSubmitting(true);
     try {
-      const res = await loginRequest({ phone, code, role: activeRole });
-      setRole(res.role, res.identityId);
+      const switched = await switchRoleRequest(role);
+      setRole(switched.role, switched.identityId);
+      setRolePickOpen(false);
+      setPendingSession(null);
       push({
-        title: `欢迎回来 · ${
-          res.role === "client"
-            ? "委托人"
-            : res.role === "designer"
-              ? "设计师"
-              : res.role === "admin"
-                ? "管理员"
-                : "超级管理员"
-        }`,
+        title: `已进入${roleLabel(switched.role)}工作台`,
         variant: "success",
       });
-      router.push(roleHome(res.role));
+      router.push(roleHome(switched.role));
     } catch (e) {
       push({
-        title: "操作失败",
+        title: "切换身份失败",
         description: e instanceof Error ? e.message : undefined,
         variant: "destructive",
       });
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleClaimRole = async (role: "client" | "designer") => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const claimed = await claimRoleRequest(role);
+      setRole(claimed.role, claimed.identityId);
+      setOnboardingOpen(false);
+      setPendingSession(null);
+      push({
+        title:
+          role === "client"
+            ? "已开通委托人身份"
+            : "已开通设计师身份（资料待完善）",
+        variant: "success",
+      });
+      router.push(claimed.redirectTo);
+    } catch (e) {
+      push({
+        title: "开通身份失败",
+        description: e instanceof Error ? e.message : undefined,
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const registerKindLabel = REGISTER_KIND_META[registerKind].label;
+
+  const designerOnboardingHref = (() => {
+    const subject = REGISTER_KIND_META[registerKind].subjectType ?? "individual";
+    return `/onboarding/designer?subject=${subject}`;
+  })();
+
+  const handleRegisterContinue = () => {
+    if (registerKind === "client_individual") {
+      router.push("/onboarding/client");
+      return;
+    }
+    if (registerKind === "client_enterprise") {
+      router.push("/onboarding/enterprise");
+      return;
+    }
+    router.push(designerOnboardingHref);
   };
 
   const registerForm = (
@@ -336,7 +379,9 @@ function LoginInner() {
       ) : registerKind === "client_enterprise" ? (
         <div className="rounded-xl border border-brand/30 bg-brand/5 p-4 text-xs text-ink-60">
           企业委托人注册后可登录，但需完善
-          <strong className="text-ink">企业名称、统一社会信用代码、营业执照</strong>
+          <strong className="text-ink">
+            企业名称、统一社会信用代码、营业执照
+          </strong>
           并等待审核通过后，方可发布常规委托与悬赏委托。
         </div>
       ) : (
@@ -365,143 +410,121 @@ function LoginInner() {
     </div>
   );
 
-  const loginCard = (
-        <Card className="p-8">
-          {isRegister ? (
-            registerForm
-          ) : (
-            <Tabs value={activeRole} onValueChange={(v) => setActiveRole(v as Role)}>
-              <TabsList className="w-full">
-                {tabRoles.map((role) => {
-                  const meta = ROLE_TAB_META[role as keyof typeof ROLE_TAB_META];
-                  const Icon = meta.icon;
-                  return (
-                    <TabsTrigger key={role} value={role} className="flex-1">
-                      <Icon className="h-3.5 w-3.5" /> {meta.label}
-                    </TabsTrigger>
-                  );
-                })}
-              </TabsList>
+  const loginForm = (
+    <Tabs
+      value={loginMethod}
+      onValueChange={(v) => setLoginMethod(v as "code" | "password")}
+    >
+      <TabsList className="w-full">
+        <TabsTrigger value="password" className="flex-1">
+          <KeyRound className="h-3.5 w-3.5" /> 账号密码
+        </TabsTrigger>
+        <TabsTrigger value="code" className="flex-1">
+          <Smartphone className="h-3.5 w-3.5" /> 手机验证码
+        </TabsTrigger>
+      </TabsList>
 
-              <TabsContent value={activeRole}>
-                {isAdminConsole ? (
-                  <div className="space-y-5">
-                    <div className="space-y-2">
-                      <Label>登录账号</Label>
-                      <Input
-                        placeholder="请输入管理员账号"
-                        value={loginName}
-                        onChange={(e) => setLoginName(e.target.value)}
-                        autoComplete="username"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>密码</Label>
-                      <Input
-                        type="password"
-                        placeholder="请输入密码"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        autoComplete="current-password"
-                      />
-                    </div>
-
-                    <Button
-                      size="lg"
-                      variant="brand"
-                      className="w-full"
-                      disabled={submitting}
-                      onClick={handleAdminSubmit}
-                    >
-                      {submitting ? "登录中..." : "登录后台"}
-                      <ArrowRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-5">
-                    <div className="space-y-2">
-                      <Label>手机号</Label>
-                      <Input
-                        placeholder="请输入手机号"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>短信验证码</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          placeholder="6 位数字"
-                          value={code}
-                          onChange={(e) => setCode(e.target.value)}
-                        />
-                        <Button
-                          variant="outline"
-                          onClick={sendCode}
-                          disabled={seconds > 0}
-                        >
-                          {seconds > 0 ? `${seconds} 秒` : "获取验证码"}
-                        </Button>
-                      </div>
-                    </div>
-
-                    <Button
-                      size="lg"
-                      variant="brand"
-                      className="w-full"
-                      disabled={submitting}
-                      onClick={handleSubmit}
-                    >
-                      {submitting ? "登录中..." : "登录"}
-                      <ArrowRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                )}
-              </TabsContent>
-            </Tabs>
-          )}
-
-          <div className="mt-6 flex items-center justify-between text-xs text-ink-60">
-            {isRegister ? (
-              <Link href="/login" className="hover:text-ink">
-                已有账号 → 立即登录
-              </Link>
-            ) : isAdminConsole ? (
-              <Link href="/login" className="hover:text-ink">
-                委托人 / 设计师登录
-              </Link>
-            ) : (
-              <Link href="/login?register=1" className="hover:text-ink">
-                还没有账号 → 立即入驻
-              </Link>
-            )}
-            <Link href="/" className="hover:text-ink">
-              返回首页
-            </Link>
+      <TabsContent value="password">
+        <div className="space-y-5">
+          <div className="space-y-2">
+            <Label>登录账号</Label>
+            <Input
+              placeholder="如 FD001"
+              value={loginName}
+              onChange={(e) => setLoginName(e.target.value)}
+              autoComplete="username"
+            />
           </div>
-        </Card>
+          <div className="space-y-2">
+            <Label>密码</Label>
+            <Input
+              type="password"
+              placeholder="请输入密码"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+          </div>
+          <Button
+            size="lg"
+            variant="brand"
+            className="w-full"
+            disabled={submitting}
+            onClick={handlePasswordLogin}
+          >
+            {submitting ? "登录中..." : "登录"}
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </TabsContent>
+
+      <TabsContent value="code">
+        <div className="space-y-5">
+          <div className="space-y-2">
+            <Label>手机号</Label>
+            <Input
+              placeholder="请输入手机号"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>短信验证码</Label>
+            <div className="flex gap-2">
+              <Input
+                placeholder="6 位数字"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+              />
+              <Button
+                variant="outline"
+                onClick={sendCode}
+                disabled={seconds > 0}
+              >
+                {seconds > 0 ? `${seconds} 秒` : "获取验证码"}
+              </Button>
+            </div>
+          </div>
+          <Button
+            size="lg"
+            variant="brand"
+            className="w-full"
+            disabled={submitting}
+            onClick={handleCodeLogin}
+          >
+            {submitting ? "登录中..." : "登录"}
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </TabsContent>
+    </Tabs>
   );
 
-  if (isAdminConsole) {
-    return (
-      <div className="container-page py-16">
-        <div className="mx-auto max-w-md space-y-8">
-          <div className="space-y-4 text-center">
-            <Badge variant="muted" className="gap-1">
-              <ShieldCheck className="h-3 w-3 text-brand" />
-              平台管理
-            </Badge>
-            <h1 className="text-balance text-3xl font-semibold leading-tight tracking-tight text-ink">
-              管理员后台
-              <br />
-              <span className="text-brand">安全登录</span>
-            </h1>
-          </div>
-          {loginCard}
-        </div>
+  const loginCard = (
+    <Card className="p-8">
+      {isRegister ? registerForm : loginForm}
+
+      <div className="mt-6 flex items-center justify-between text-xs text-ink-60">
+        {isRegister ? (
+          <Link href="/login" className="hover:text-ink">
+            已有账号 → 立即登录
+          </Link>
+        ) : (
+          <Link href="/login?register=1" className="hover:text-ink">
+            还没有账号 → 立即注册
+          </Link>
+        )}
+        <Link href="/" className="hover:text-ink">
+          返回首页
+        </Link>
       </div>
-    );
-  }
+    </Card>
+  );
+
+  const pickRoles =
+    (pendingSession?.availableRoles?.filter(
+      (r): r is "client" | "designer" => r === "client" || r === "designer",
+    ) ?? ["client", "designer"]) as Array<"client" | "designer">;
 
   return (
     <div className="container-page py-16">
@@ -509,7 +532,7 @@ function LoginInner() {
         <div className="space-y-6">
           <Badge variant="muted" className="gap-1">
             <Sparkles className="h-3 w-3 text-brand" />
-            {isRegister ? "立即入驻" : "欢迎回来"}
+            {isRegister ? "立即注册" : "登录 / 注册"}
           </Badge>
           <h1 className="text-balance text-4xl font-semibold leading-tight tracking-tight text-ink">
             {isRegister ? (
@@ -529,8 +552,8 @@ function LoginInner() {
           </h1>
           <p className="max-w-xl text-sm text-ink-60">
             {isRegister
-              ? "支持个人委托人、企业委托人、个人设计师、设计团队、设计公司五类主体入驻。平台管理员账号由内部开通。使用手机号收取短信验证码完成注册。"
-              : "手机号 + 短信验证码即可登录。请先点击获取验证码，查收短信后完成登录。"}
+              ? "支持个人委托人、企业委托人、个人设计师、设计团队、设计公司五类主体入驻。平台管理员账号由内部开通。"
+              : "支持账号密码或手机验证码登录。登录时无需选择身份；若账号同时具备委托人与设计师身份，登录后将提示选择进入哪一端。"}
           </p>
           <div className="grid gap-3 pt-2">
             <Card className="flex items-start gap-3 p-4">
@@ -556,6 +579,91 @@ function LoginInner() {
 
         {loginCard}
       </div>
+
+      <Dialog open={rolePickOpen} onOpenChange={setRolePickOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>选择登录身份</DialogTitle>
+            <DialogDescription>
+              当前账号同时具备委托人与设计师身份，请选择本次进入的工作台。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 pt-2">
+            {pickRoles.map((role) => (
+              <Button
+                key={role}
+                size="lg"
+                variant={role === "client" ? "brand" : "outline"}
+                className="h-auto justify-start gap-3 py-4"
+                disabled={submitting}
+                onClick={() => handlePickRole(role)}
+              >
+                {role === "client" ? (
+                  <User className="h-5 w-5" />
+                ) : (
+                  <Sparkles className="h-5 w-5" />
+                )}
+                <span className="text-left">
+                  <span className="block font-medium">
+                    以{roleLabel(role)}身份进入
+                  </span>
+                  <span className="block text-xs font-normal opacity-70">
+                    {role === "client"
+                      ? "发布委托、悬赏与验收付款"
+                      : "接单、交付与提现"}
+                  </span>
+                </span>
+              </Button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={onboardingOpen} onOpenChange={setOnboardingOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>完善账号身份</DialogTitle>
+            <DialogDescription>
+              {pendingSession?.name
+                ? `「${pendingSession.name}」`
+                : "当前账号"}
+              尚未注册业务身份。请选择注册为委托人还是设计师。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 pt-2">
+            <Button
+              size="lg"
+              variant="brand"
+              className="h-auto justify-start gap-3 py-4"
+              disabled={submitting}
+              onClick={() => handleClaimRole("client")}
+            >
+              <User className="h-5 w-5" />
+              <span className="text-left">
+                <span className="block font-medium">注册为委托人</span>
+                <span className="block text-xs font-normal opacity-70">
+                  发布项目、下单与托管付款
+                </span>
+              </span>
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className="h-auto justify-start gap-3 py-4"
+              disabled={submitting}
+              onClick={() => handleClaimRole("designer")}
+            >
+              <Sparkles className="h-5 w-5" />
+              <span className="text-left">
+                <span className="block font-medium">注册为设计师</span>
+                <span className="block text-xs font-normal opacity-70">
+                  开通后可在工作台完善资料并接单
+                </span>
+              </span>
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -65,6 +65,14 @@ export interface SessionUserDTO {
   name: string;
   avatar?: string | null;
   phone?: string;
+  /** 登录后可用的业务身份（委托人 / 设计师），不含管理员 */
+  availableRoles?: Role[];
+  /** 同时具备委托+设计身份时需弹窗选择 */
+  needsRolePick?: boolean;
+  /** 无业务资料，需引导注册委托人/设计师 */
+  needsOnboarding?: boolean;
+  /** 可直接跳转的工作台路径；需选择身份时为 null */
+  redirectTo?: string | null;
 }
 
 export function sendCode(phone: string, purpose: "login" | "register") {
@@ -147,6 +155,17 @@ export function switchRoleRequest(role: Role, identityId?: string) {
     method: "POST",
     body: JSON.stringify({ role, identityId }),
   });
+}
+
+/** 已登录普通账号认领委托人 / 设计师身份 */
+export function claimRoleRequest(role: "client" | "designer") {
+  return apiFetch<{ role: Role; identityId: string; redirectTo: string }>(
+    "/api/auth/claim-role",
+    {
+      method: "POST",
+      body: JSON.stringify({ role }),
+    },
+  );
 }
 
 /* --------------- 订单写操作 --------------- */

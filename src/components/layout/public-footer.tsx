@@ -35,7 +35,7 @@ export function PublicFooter() {
         <div className="space-y-2 text-sm">
           <div className="font-medium text-ink">关于平台</div>
           <Link
-            href="/login?console=admin"
+            href="/login"
             className="block text-ink-60 hover:text-ink"
           >
             管理员后台

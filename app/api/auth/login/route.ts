@@ -14,13 +14,13 @@ const schema = z
     loginName: z.string().optional(),
     code: z.string().optional(),
     password: z.string().optional(),
+    /** 可选：仅在双重身份选择后由前端传入，登录时不要传 */
     role: z.enum(["client", "designer", "admin", "super_admin"]).optional(),
   })
   .refine((data) => Boolean(data.phone || data.loginName), {
     message: "请提供手机号或登录账号",
   });
 
-/** 根据账号已有资料，推导该角色对应的业务身份 id */
 async function resolveIdentity(userId: string, role: Role): Promise<string | null> {
   if (role === "designer") {
     const d = await prisma.designer.findUnique({ where: { userId } });
@@ -45,6 +45,25 @@ async function findUserByCredential(phone?: string, loginName?: string) {
   return null;
 }
 
+/** 根据资料推导可用业务身份（不含管理员） */
+async function listBusinessRoles(userId: string): Promise<Array<"client" | "designer">> {
+  const [client, designer] = await Promise.all([
+    prisma.client.findUnique({ where: { userId }, select: { id: true } }),
+    prisma.designer.findUnique({ where: { userId }, select: { id: true } }),
+  ]);
+  const roles: Array<"client" | "designer"> = [];
+  if (client) roles.push("client");
+  if (designer) roles.push("designer");
+  return roles;
+}
+
+function roleHome(role: Role) {
+  if (role === "client") return "/client";
+  if (role === "designer") return "/designer";
+  if (role === "admin") return "/admin";
+  return "/super-admin";
+}
+
 export async function POST(req: NextRequest) {
   return handle(async () => {
     const body = await req.json().catch(() => ({}));
@@ -62,12 +81,8 @@ export async function POST(req: NextRequest) {
       return fail(403, "账号已被禁用");
     }
 
-    if (loginName) {
+    if (loginName || password) {
       if (!password) return fail(400, "请输入密码");
-      if (!user.passwordHash || !(await verifyPassword(password, user.passwordHash))) {
-        return fail(401, "密码错误");
-      }
-    } else if (password) {
       if (!user.passwordHash || !(await verifyPassword(password, user.passwordHash))) {
         return fail(401, "密码错误");
       }
@@ -78,15 +93,49 @@ export async function POST(req: NextRequest) {
       return fail(400, "请提供验证码或密码");
     }
 
-    const targetRole = (role ?? (user.role as Role)) as Role;
+    const isAdmin =
+      user.role === "admin" || user.role === "super_admin";
+    const businessRoles = isAdmin ? [] : await listBusinessRoles(user.id);
 
-    if (loginName) {
-      if (targetRole === "admin" && user.role !== "admin" && user.role !== "super_admin") {
+    let targetRole: Role;
+    let needsRolePick = false;
+    let needsOnboarding = false;
+    const availableRoles: Role[] = [];
+
+    if (isAdmin) {
+      // 管理员不允许用「选委托人/设计师」覆盖权限
+      if (role === "client" || role === "designer") {
+        return fail(403, "管理员账号请使用管理后台身份登录");
+      }
+      if (role === "admin" && user.role !== "admin" && user.role !== "super_admin") {
         return fail(403, "该账号无管理员权限");
       }
-      if (targetRole === "super_admin" && user.role !== "super_admin") {
+      if (role === "super_admin" && user.role !== "super_admin") {
         return fail(403, "该账号无超级管理员权限");
       }
+      targetRole = (role ?? (user.role as Role)) as Role;
+      availableRoles.push(targetRole);
+    } else if (role === "client" || role === "designer") {
+      if (!businessRoles.includes(role)) {
+        return fail(400, "当前账号未具备该角色身份");
+      }
+      targetRole = role;
+      availableRoles.push(...businessRoles);
+    } else if (businessRoles.length === 0) {
+      // 普通空账号：登录后引导注册委托人/设计师
+      targetRole = "client";
+      needsOnboarding = true;
+    } else if (businessRoles.length === 1) {
+      targetRole = businessRoles[0];
+      availableRoles.push(...businessRoles);
+    } else {
+      // 双重身份：先建会话，前端弹窗选择
+      targetRole =
+        user.role === "designer" && businessRoles.includes("designer")
+          ? "designer"
+          : "client";
+      availableRoles.push(...businessRoles);
+      needsRolePick = true;
     }
 
     const identityId = (await resolveIdentity(user.id, targetRole)) ?? user.id;
@@ -99,6 +148,11 @@ export async function POST(req: NextRequest) {
       identityId,
       name: user.name,
       avatar: user.avatar,
+      phone: user.phone,
+      availableRoles,
+      needsRolePick,
+      needsOnboarding,
+      redirectTo: needsRolePick || needsOnboarding ? null : roleHome(targetRole),
     });
   });
 }

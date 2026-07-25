@@ -163,14 +163,9 @@ export function PublicHeader() {
               </Button>
             </div>
           ) : authReady ? (
-            <>
-              <Button asChild variant="ghost" size="sm">
-                <Link href="/login">登录</Link>
-              </Button>
-              <Button asChild size="sm">
-                <Link href="/login?register=1">立即入驻</Link>
-              </Button>
-            </>
+            <Button asChild size="sm">
+              <Link href="/login">登录/注册</Link>
+            </Button>
           ) : null}
         </div>
       </div>
