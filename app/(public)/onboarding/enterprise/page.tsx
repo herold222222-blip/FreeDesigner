@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ const AUTHORIZATION_STATEMENT_HINT =
   "本公司委托上述联系人作为企业代表，代为处理在乐自由平台上的下单、付款及相关业务事宜。本声明须加盖企业公章。";
 import { ProfileImageUpload } from "@/components/domain/profile-image-upload";
 import {
+  fetchMe,
   registerRequest,
   sendCode as sendCodeApi,
 } from "@/lib/api-client";
@@ -34,7 +35,23 @@ import { useSessionStore } from "@/store/session-store";
 import { useRoleStore } from "@/store/role-store";
 
 export default function EnterpriseOnboardingPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="container-page py-20 text-center text-ink-60">
+          加载中...
+        </div>
+      }
+    >
+      <EnterpriseOnboardingInner />
+    </Suspense>
+  );
+}
+
+function EnterpriseOnboardingInner() {
   const router = useRouter();
+  const params = useSearchParams();
+  const attachMode = params.get("attach") === "1";
   const push = useSessionStore((s) => s.pushNotification);
   const setRole = useRoleStore((s) => s.setRole);
 
@@ -44,6 +61,7 @@ export default function EnterpriseOnboardingPage() {
   const [legalRep, setLegalRep] = useState("");
   const [contactName, setContactName] = useState("");
   const [contactPhone, setContactPhone] = useState("");
+  const [accountPhone, setAccountPhone] = useState("");
   const [smsCode, setSmsCode] = useState("");
   const [codeSeconds, setCodeSeconds] = useState(0);
   const [scope, setScope] = useState("");
@@ -59,7 +77,30 @@ export default function EnterpriseOnboardingPage() {
     return () => clearTimeout(t);
   }, [codeSeconds]);
 
+  useEffect(() => {
+    if (!attachMode) return;
+    fetchMe()
+      .then(({ user }) => {
+        if (!user) {
+          push({ title: "请先登录后再完善身份", variant: "destructive" });
+          router.replace("/login");
+          return;
+        }
+        if (user.phone) {
+          setContactPhone(user.phone);
+          setAccountPhone(user.phone);
+        }
+        if (user.name) setContactName(user.name);
+      })
+      .catch(() => {
+        push({ title: "会话失效，请重新登录", variant: "destructive" });
+        router.replace("/login");
+      });
+  }, [attachMode, push, router]);
+
   const normalizedPhone = contactPhone.replace(/\s/g, "");
+  const reuseAccountPhone =
+    attachMode && accountPhone && normalizedPhone === accountPhone;
 
   const sendSmsCode = async () => {
     if (!/^1\d{10}$/.test(normalizedPhone)) {
@@ -91,7 +132,7 @@ export default function EnterpriseOnboardingPage() {
       push({ title: "请输入正确的联系人手机号", variant: "destructive" });
       return;
     }
-    if (!smsCode.trim()) {
+    if (!reuseAccountPhone && !smsCode.trim()) {
       push({ title: "请输入短信验证码", variant: "destructive" });
       return;
     }
@@ -112,7 +153,8 @@ export default function EnterpriseOnboardingPage() {
     try {
       const res = await registerRequest({
         phone: normalizedPhone,
-        code: smsCode.trim(),
+        code: reuseAccountPhone ? undefined : smsCode.trim(),
+        attach: attachMode,
         kind: "client",
         clientType: "enterprise",
         name: contactName.trim(),
@@ -121,15 +163,15 @@ export default function EnterpriseOnboardingPage() {
       });
       setRole(res.role, res.identityId);
       push({
-        title: "注册成功 · 企业委托人",
+        title: attachMode ? "企业委托人身份已开通" : "注册成功 · 企业委托人",
         description:
-          "已自动登录。企业资料审核通过前，暂不可发布常规委托与悬赏委托。",
+          "企业资料审核通过前，暂不可发布常规委托与悬赏委托。",
         variant: "success",
       });
       router.push("/client");
     } catch (e) {
       push({
-        title: "注册失败",
+        title: "提交失败",
         description: e instanceof Error ? e.message : undefined,
         variant: "destructive",
       });
@@ -138,10 +180,14 @@ export default function EnterpriseOnboardingPage() {
     }
   };
 
+  const backHref = attachMode
+    ? "/login?register=1&attach=1&focus=client"
+    : "/login?register=1&kind=client_enterprise";
+
   return (
     <div className="container-page py-10">
       <Link
-        href="/login?register=1&kind=client_enterprise"
+        href={backHref}
         className="mb-4 inline-flex items-center gap-1 text-sm text-ink-60 hover:text-ink"
       >
         <ArrowLeft className="h-3.5 w-3.5" /> 返回入驻页
@@ -212,26 +258,32 @@ export default function EnterpriseOnboardingPage() {
               </div>
             </div>
 
-            <div>
-              <Label>短信验证码 *</Label>
-              <div className="mt-2 flex gap-2">
-                <Input
-                  placeholder="6 位数字"
-                  value={smsCode}
-                  onChange={(e) => setSmsCode(e.target.value)}
-                  className="flex-1"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="shrink-0"
-                  onClick={sendSmsCode}
-                  disabled={codeSeconds > 0}
-                >
-                  {codeSeconds > 0 ? `${codeSeconds} 秒` : "获取验证码"}
-                </Button>
+            {!reuseAccountPhone ? (
+              <div>
+                <Label>短信验证码 *</Label>
+                <div className="mt-2 flex gap-2">
+                  <Input
+                    placeholder="6 位数字"
+                    value={smsCode}
+                    onChange={(e) => setSmsCode(e.target.value)}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="shrink-0"
+                    onClick={sendSmsCode}
+                    disabled={codeSeconds > 0}
+                  >
+                    {codeSeconds > 0 ? `${codeSeconds} 秒` : "获取验证码"}
+                  </Button>
+                </div>
               </div>
-            </div>
+            ) : (
+              <p className="text-xs text-emerald-700">
+                已登录账号手机号可直接使用，无需再收验证码。
+              </p>
+            )}
 
             <div>
               <Label>主营经营范围</Label>

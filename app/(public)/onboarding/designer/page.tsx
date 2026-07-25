@@ -55,6 +55,7 @@ import { qualificationsFromKeys } from "@/lib/company-qualifications";
 import { useSessionStore } from "@/store/session-store";
 import { useRoleStore } from "@/store/role-store";
 import {
+  fetchMe,
   registerRequest,
   sendCode as sendCodeApi,
   verifyCodeRequest,
@@ -112,6 +113,7 @@ export default function DesignerOnboardingPage() {
 function DesignerOnboardingInner() {
   const router = useRouter();
   const params = useSearchParams();
+  const attachMode = params.get("attach") === "1";
   const subjectParam = params.get("subject");
   const subjectType: SubjectType =
     subjectParam === "team" || subjectParam === "company" ? subjectParam : "individual";
@@ -146,6 +148,7 @@ function DesignerOnboardingInner() {
     usesOrgLogo ? DEFAULT_ORG_LOGO_PATH : defaultAvatarForGender("male"),
   );
   const [phone, setPhone] = useState("");
+  const [accountPhone, setAccountPhone] = useState("");
   const [smsCode, setSmsCode] = useState("");
   const [codeSeconds, setCodeSeconds] = useState(0);
   const [phoneVerified, setPhoneVerified] = useState(false);
@@ -195,7 +198,33 @@ function DesignerOnboardingInner() {
     return () => clearTimeout(t);
   }, [codeSeconds]);
 
+  useEffect(() => {
+    if (!attachMode) return;
+    fetchMe()
+      .then(({ user }) => {
+        if (!user) {
+          push({ title: "请先登录后再完善身份", variant: "destructive" });
+          router.replace("/login");
+          return;
+        }
+        if (user.phone) {
+          setPhone(user.phone);
+          setAccountPhone(user.phone);
+          setPhoneVerified(true);
+        }
+        if (user.name && subjectType === "individual") {
+          setName(user.name);
+        }
+      })
+      .catch(() => {
+        push({ title: "会话失效，请重新登录", variant: "destructive" });
+        router.replace("/login");
+      });
+  }, [attachMode, push, router, subjectType]);
+
   const normalizedPhone = phone.replace(/\s/g, "");
+  const reuseAccountPhone =
+    attachMode && accountPhone && normalizedPhone === accountPhone;
 
   const sendSmsCode = async () => {
     if (!/^1\d{10}$/.test(normalizedPhone)) {
@@ -224,7 +253,10 @@ function DesignerOnboardingInner() {
       push({ title: "请输入正确的手机号", variant: "destructive" });
       return false;
     }
-    if (phoneVerified) return true;
+    if (reuseAccountPhone || phoneVerified) {
+      setPhoneVerified(true);
+      return true;
+    }
     if (!smsCode.trim()) {
       push({ title: "请输入短信验证码", variant: "destructive" });
       return false;
@@ -455,7 +487,7 @@ function DesignerOnboardingInner() {
   };
 
   const handleSubmit = async () => {
-    if (!phoneVerified) {
+    if (!(reuseAccountPhone || phoneVerified)) {
       push({ title: "请先完成手机号验证", variant: "destructive" });
       setStep(0);
       return;
@@ -468,7 +500,8 @@ function DesignerOnboardingInner() {
           : resolveAdministrativeTriple(locationTriple)?.fullLabel ?? "";
       const res = await registerRequest({
         phone: normalizedPhone,
-        code: smsCode.trim(),
+        code: reuseAccountPhone ? undefined : smsCode.trim(),
+        attach: attachMode,
         kind: registerKindBack,
         name:
           subjectType === "team"
@@ -582,7 +615,11 @@ function DesignerOnboardingInner() {
   return (
     <div className="container-page py-10">
       <Link
-        href={`/login?register=1&kind=${registerKindBack}`}
+        href={
+          attachMode
+            ? "/login?register=1&attach=1&focus=designer"
+            : `/login?register=1&kind=${registerKindBack}`
+        }
         className="mb-4 inline-flex items-center gap-1 text-sm text-ink-60 hover:text-ink"
       >
         <ArrowLeft className="h-3.5 w-3.5" /> 返回入驻页

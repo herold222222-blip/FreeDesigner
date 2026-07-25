@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,7 +21,6 @@ import {
   sendCode as sendCodeApi,
   loginRequest,
   switchRoleRequest,
-  claimRoleRequest,
   type SessionUserDTO,
 } from "@/lib/api-client";
 import {
@@ -135,6 +134,8 @@ function LoginInner() {
   const params = useSearchParams();
   const isRegister = params.get("register") === "1";
   const kindParam = params.get("kind");
+  const attachMode = params.get("attach") === "1";
+  const focusParam = params.get("focus"); // client | designer
 
   const setRole = useRoleStore((s) => s.setRole);
   const push = useSessionStore((s) => s.pushNotification);
@@ -289,47 +290,50 @@ function LoginInner() {
     }
   };
 
-  const handleClaimRole = async (role: "client" | "designer") => {
-    if (submitting) return;
-    setSubmitting(true);
-    try {
-      const claimed = await claimRoleRequest(role);
-      setRole(claimed.role, claimed.identityId);
-      setOnboardingOpen(false);
-      setPendingSession(null);
-      push({
-        title:
-          role === "client"
-            ? "已开通委托人身份"
-            : "已开通设计师身份（资料待完善）",
-        variant: "success",
-      });
-      router.push(claimed.redirectTo);
-    } catch (e) {
-      push({
-        title: "开通身份失败",
-        description: e instanceof Error ? e.message : undefined,
-        variant: "destructive",
-      });
-    } finally {
-      setSubmitting(false);
+  const goAttachOnboarding = (role: "client" | "designer") => {
+    setOnboardingOpen(false);
+    setPendingSession(null);
+    if (role === "client") {
+      router.push("/login?register=1&attach=1&focus=client");
+      return;
     }
+    router.push("/login?register=1&attach=1&focus=designer");
   };
+
+  const visibleRegisterKinds = useMemo(() => {
+    return REGISTER_KINDS.filter((kind) => {
+      if (!attachMode || !focusParam) return true;
+      if (focusParam === "client") return kind.startsWith("client_");
+      if (focusParam === "designer") return kind.startsWith("designer_");
+      return true;
+    });
+  }, [attachMode, focusParam]);
+
+  useEffect(() => {
+    if (!isRegister || !attachMode || !focusParam) return;
+    const first = visibleRegisterKinds[0];
+    if (first && !visibleRegisterKinds.includes(registerKind)) {
+      setRegisterKind(first);
+    }
+  }, [isRegister, attachMode, focusParam, registerKind, visibleRegisterKinds]);
 
   const registerKindLabel = REGISTER_KIND_META[registerKind].label;
 
   const designerOnboardingHref = (() => {
     const subject = REGISTER_KIND_META[registerKind].subjectType ?? "individual";
-    return `/onboarding/designer?subject=${subject}`;
+    const qs = new URLSearchParams({ subject });
+    if (attachMode) qs.set("attach", "1");
+    return `/onboarding/designer?${qs.toString()}`;
   })();
 
   const handleRegisterContinue = () => {
+    const attachQs = attachMode ? "?attach=1" : "";
     if (registerKind === "client_individual") {
-      router.push("/onboarding/client");
+      router.push(`/onboarding/client${attachQs}`);
       return;
     }
     if (registerKind === "client_enterprise") {
-      router.push("/onboarding/enterprise");
+      router.push(`/onboarding/enterprise${attachQs}`);
       return;
     }
     router.push(designerOnboardingHref);
@@ -342,7 +346,7 @@ function LoginInner() {
           选择入驻身份
         </Label>
         <div className="mt-2 grid grid-cols-2 gap-2">
-          {REGISTER_KINDS.map((kind) => {
+          {visibleRegisterKinds.map((kind) => {
             const meta = REGISTER_KIND_META[kind];
             const Icon = meta.icon;
             const selected = registerKind === kind;
@@ -552,8 +556,10 @@ function LoginInner() {
           </h1>
           <p className="max-w-xl text-sm text-ink-60">
             {isRegister
-              ? "支持个人委托人、企业委托人、个人设计师、设计团队、设计公司五类主体入驻。平台管理员账号由内部开通。"
-              : "支持账号密码或手机验证码登录。登录时无需选择身份；若账号同时具备委托人与设计师身份，登录后将提示选择进入哪一端。"}
+              ? attachMode
+                ? "请选择要完善的业务身份，并继续填写入驻资料。资料提交后即可进入对应工作台。"
+                : "支持个人委托人、企业委托人、个人设计师、设计团队、设计公司五类主体入驻。平台管理员账号由内部开通。"
+              : "支持账号密码或手机验证码登录。登录时无需选择身份；普通账号登录后可注册委托人/设计师并填写资料。"}
           </p>
           <div className="grid gap-3 pt-2">
             <Card className="flex items-start gap-3 p-4">
@@ -635,14 +641,13 @@ function LoginInner() {
               size="lg"
               variant="brand"
               className="h-auto justify-start gap-3 py-4"
-              disabled={submitting}
-              onClick={() => handleClaimRole("client")}
+              onClick={() => goAttachOnboarding("client")}
             >
               <User className="h-5 w-5" />
               <span className="text-left">
                 <span className="block font-medium">注册为委托人</span>
                 <span className="block text-xs font-normal opacity-70">
-                  发布项目、下单与托管付款
+                  进入资料填写，完成后可发布委托
                 </span>
               </span>
             </Button>
@@ -650,14 +655,13 @@ function LoginInner() {
               size="lg"
               variant="outline"
               className="h-auto justify-start gap-3 py-4"
-              disabled={submitting}
-              onClick={() => handleClaimRole("designer")}
+              onClick={() => goAttachOnboarding("designer")}
             >
               <Sparkles className="h-5 w-5" />
               <span className="text-left">
                 <span className="block font-medium">注册为设计师</span>
                 <span className="block text-xs font-normal opacity-70">
-                  开通后可在工作台完善资料并接单
+                  进入资料填写与审核流程后接单
                 </span>
               </span>
             </Button>

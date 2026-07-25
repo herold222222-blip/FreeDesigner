@@ -112,7 +112,9 @@ export function loginRequest(params: {
 
 export function registerRequest(params: {
   phone: string;
-  code: string;
+  code?: string;
+  /** 已登录普通账号挂载委托人/设计师身份 */
+  attach?: boolean;
   kind: "client" | "designer_individual" | "designer_team" | "designer_company";
   name?: string;
   clientType?: "individual" | "enterprise";
