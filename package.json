@@ -20,6 +20,7 @@
     "prod:db:seed": "tsx prisma/seed.ts",
     "prod:db:studio": "prisma studio --schema=prisma/schema.production.prisma",
     "prod:start": "next start -H 0.0.0.0 -p ${PORT:-3000}",
+    "netlify:build": "prisma generate --schema=prisma/schema.production.prisma && prisma db push --schema=prisma/schema.production.prisma --skip-generate && next build",
     "verify:flow": "node scripts/verify-entrust-flow.mjs",
     "verify:preflight": "node scripts/deploy-preflight.mjs"
   },

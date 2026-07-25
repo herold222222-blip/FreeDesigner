@@ -98,6 +98,16 @@ npm run dev
 
 **GitHub push 自动部署 ECS** 见 **[deploy/CI-CD.md](deploy/CI-CD.md)**。
 
+### Netlify 部署
+
+本仓库含 [`netlify.toml`](netlify.toml)，构建命令为 `npm run netlify:build`（PostgreSQL Prisma schema + `db push` + `next build`）。
+
+1. 准备托管 PostgreSQL（Neon / Supabase 等），拿到 `DATABASE_URL`（Serverless 建议连接池 URL）。
+2. 在 Netlify → Site configuration → Environment variables 按 [`.env.netlify.example`](.env.netlify.example) 填写至少：`DATABASE_URL`、`AUTH_SECRET`、`PUBLIC_BASE_URL`、`DEMO_CODE_ENABLED=off`、`NEXT_PUBLIC_DEMO_MODE=off`。
+3. 重新 Deploy。首次若页面无设计师数据，对本机执行一次：  
+   `DATABASE_URL=... npm run prod:generate && npm run prod:db:seed`
+4. **不要用本地 SQLite**：Netlify Serverless 无法读写 `file:./dev.db`。
+
 ### 内测部署（阿里云 ECS · 约 15 分钟）
 
 适合团队内测：**沙箱支付、空库自动播种**；演示开关默认关闭，需配置短信后登录。

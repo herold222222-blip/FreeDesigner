@@ -1,12 +1,19 @@
-# 全栈 Next.js（含 API Routes / 服务端鉴权 / 数据库）部署配置
-# Netlify 通过官方 Next.js Runtime 运行服务端，不再发布静态 dist 目录。
+# 全栈 Next.js（API Routes / 服务端鉴权 / Prisma）→ Netlify
 #
-# 注意：SQLite（本地 dev.db）不适用于无状态的 Serverless 环境，
-# 生产环境请在 Netlify 环境变量中将 DATABASE_URL 指向托管的 PostgreSQL，
-# 并把 prisma/schema.prisma 的 provider 改为 "postgresql"。
+# 重要：SQLite 不能用于 Netlify Serverless。
+# 构建必须用 PostgreSQL schema（prod:build），并在 Netlify 环境变量中配置：
+#   DATABASE_URL   = postgresql://...（建议 Neon / Supabase 带连接池的 URL）
+#   AUTH_SECRET    = 随机长字符串（openssl rand -base64 48）
+#   PUBLIC_BASE_URL= https://你的站点.netlify.app
+#   DEMO_CODE_ENABLED=off
+#   NEXT_PUBLIC_DEMO_MODE=off
+#   COOKIE_SECURE=true
+#   SMS_PROVIDER / SMS_* （登录发短信）
+# 首次部署后需对数据库执行一次：npm run prod:db:push && npm run prod:db:seed
+# （或在本机指向同一 DATABASE_URL 执行）
 
 [build]
-  command = "npm run build"
+  command = "npm run netlify:build"
   publish = ".next"
 
 [build.environment]

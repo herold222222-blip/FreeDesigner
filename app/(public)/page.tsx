@@ -24,10 +24,17 @@ import {
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const [allDesigners, allBounties] = await Promise.all([
-    listDesigners(),
-    listBounties(),
-  ]);
+  let allDesigners: Awaited<ReturnType<typeof listDesigners>> = [];
+  let allBounties: Awaited<ReturnType<typeof listBounties>> = [];
+  try {
+    [allDesigners, allBounties] = await Promise.all([
+      listDesigners(),
+      listBounties(),
+    ]);
+  } catch (err) {
+    // Netlify 等环境若未配 DATABASE_URL / 表未初始化，避免整页 500
+    console.error("[HomePage] failed to load designers/bounties", err);
+  }
   const topDesigners = [...allDesigners]
     .sort((a, b) => {
       const ao = a.onlineStatus === "online" ? 1 : 0;

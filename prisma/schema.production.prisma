@@ -9,7 +9,9 @@
 // 因此两套 datasource 可共享同一份模型定义。
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // Netlify / AWS Lambda（Node 18+）需要 rhel-openssl-3.0.x；本地仍用 native
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
