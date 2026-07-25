@@ -32,6 +32,11 @@ export async function POST(req: NextRequest) {
     const user = await prisma.user.findUnique({ where: { id: session.userId } });
     if (!user) return fail(404, "用户不存在");
 
+    const displayName = user.name?.trim() || "新用户";
+    const avatar =
+      user.avatar?.trim() ||
+      `https://api.dicebear.com/7.x/initials/png?seed=${encodeURIComponent(displayName)}&backgroundColor=1f2937&textColor=ffffff`;
+
     let identityId: string;
 
     if (role === "client") {
@@ -45,8 +50,8 @@ export async function POST(req: NextRequest) {
         const clientData: Client = {
           id: `client_${user.id}`,
           code: clientCode,
-          name: user.name || "新委托人",
-          avatar: user.avatar ?? undefined,
+          name: user.name?.trim() || "新委托人",
+          avatar,
           type: "individual",
           verified: true,
           joinedAt: new Date().toISOString(),
@@ -58,7 +63,7 @@ export async function POST(req: NextRequest) {
             id: clientData.id,
             userId: user.id,
             name: clientData.name,
-            avatar: user.avatar,
+            avatar,
             type: "individual",
             verified: true,
             level: "normal",
@@ -78,8 +83,8 @@ export async function POST(req: NextRequest) {
         const designerData: Partial<Designer> = {
           id: `designer_${user.id}`,
           code: designerCode,
-          name: user.name || "新设计师",
-          avatar: user.avatar ?? undefined,
+          name: user.name?.trim() || "新设计师",
+          avatar,
           subjectType,
           location: "",
           level: "intern",
@@ -113,7 +118,7 @@ export async function POST(req: NextRequest) {
             id: designerData.id!,
             userId: user.id,
             name: designerData.name!,
-            avatar: user.avatar,
+            avatar,
             subjectType,
             level: "intern",
             specialty: "architecture",
