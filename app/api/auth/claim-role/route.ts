@@ -3,7 +3,11 @@ import { z } from "zod";
 import { handle, ok, fail } from "@/lib/server/api";
 import { prisma } from "@/lib/server/db";
 import { requireSession, switchSessionRole } from "@/lib/server/auth";
-import { allocateClientCode, allocateDesignerCode } from "@/lib/server/repo";
+import {
+  allocateClientCode,
+  allocateDesignerCode,
+  createDesignerOnboardingReview,
+} from "@/lib/server/repo";
 import type { Client, Designer, Role, SubjectType } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -113,11 +117,15 @@ export async function POST(req: NextRequest) {
           portfolio: [],
           calendar: [],
         };
+        const designerPayload: Designer = {
+          ...(designerData as Designer),
+          reviewStatus: "pending",
+        };
         const d = await prisma.designer.create({
           data: {
-            id: designerData.id!,
+            id: designerPayload.id,
             userId: user.id,
-            name: designerData.name!,
+            name: designerPayload.name,
             avatar,
             subjectType,
             level: "intern",
@@ -125,10 +133,14 @@ export async function POST(req: NextRequest) {
             acceptingOrders: false,
             reviewStatus: "pending",
             code: designerCode,
-            data: JSON.stringify(designerData),
+            data: JSON.stringify(designerPayload),
           },
         });
         identityId = d.id;
+        await createDesignerOnboardingReview(
+          designerPayload,
+          user.phone ?? undefined,
+        );
       }
     }
 

@@ -32,24 +32,27 @@ import {
   type LevelManagementConfig,
   type ManagedLevel,
 } from "@/lib/level-management";
-import { demoFeedbackMessages } from "@/mocks/feedback-messages";
-import type { ServiceProvider } from "@/mocks/service-providers";
+import type { ServiceProvider } from "@/lib/types";
 import {
   normalizePricingConfig,
   type PlatformPricingConfig,
 } from "@/lib/platform-pricing";
 import { formatClientCode } from "@/lib/client-code";
+import { resolveDesignerRegionTier } from "@/lib/constants";
 import { formatDesignerCode, normalizeDesignerCode } from "@/lib/designer-code";
-import { clients as mockClients } from "@/mocks/clients";
-import { designers as mockDesigners } from "@/mocks/designers";
-import { reviewQueue } from "@/mocks/reviews";
-import { demoDisputes } from "@/mocks/disputes";
-import { withdrawalRequests as demoWithdrawals } from "@/mocks/withdrawals";
+import { buildDesignerOnboardingReviewItem } from "@/lib/designer-onboarding-review";
+import {
+  notifyLevelUpgraded,
+  userIdForDesigner,
+} from "@/lib/server/inbox";
+import {
+  CLIENT_LEVEL_META,
+  DESIGNER_LEVEL_META,
+} from "@/lib/constants";
 import {
   normalizeContractTemplates,
   type ContractTemplatesConfig,
 } from "@/lib/contract-templates";
-import { demoDataEnabled } from "./demo-data";
 import type {
   WithdrawalRequest,
   WithdrawalRequestStatus,
@@ -59,12 +62,25 @@ function parse<T>(json: string): T {
   return JSON.parse(json) as T;
 }
 
-type DesignerRow = { data: string; code: string | null };
+type DesignerRow = {
+  data: string;
+  code: string | null;
+  reviewStatus?: string | null;
+};
 
 function mergeDesignerRow(row: DesignerRow): Designer {
   const d = parse<Designer>(row.data);
   const code = d.code || row.code || "";
-  return { ...d, code };
+  const portfolio = d.portfolio ?? [];
+  const projectTypeTags = [
+    ...new Set(portfolio.map((p) => p.category).filter(Boolean)),
+  ];
+  const regionTier = resolveDesignerRegionTier(d);
+  const reviewStatus =
+    (row.reviewStatus as Designer["reviewStatus"] | undefined) ??
+    d.reviewStatus ??
+    "approved";
+  return { ...d, code, portfolio, projectTypeTags, regionTier, reviewStatus };
 }
 
 function mergeDesignerContact(
@@ -131,13 +147,13 @@ const ONGOING_ORDER_STATUSES = new Set([
   "in_revision",
 ]);
 
-/** 管理员查看设计师列表（含注册手机号、账号状态、进行中订单数） */
+/** 管理员查看设计师列表（含注册手机号、账号名、账号状态、进行中订单数） */
 export async function listDesignersForAdmin() {
   const rows = await prisma.designer.findMany({
     where: { reviewStatus: "approved" },
     orderBy: { createdAt: "asc" },
     include: {
-      user: { select: { id: true, phone: true, status: true } },
+      user: { select: { id: true, phone: true, loginName: true, status: true } },
     },
   });
 
@@ -159,6 +175,7 @@ export async function listDesignersForAdmin() {
     ...mergeDesignerRow(r),
     phone: r.user?.phone,
     userId: r.user?.id,
+    loginName: r.user?.loginName ?? undefined,
     accountStatus: (r.user?.status ?? "active") as "active" | "disabled",
     ongoingOrdersCount: ongoingByDesigner.get(r.id) ?? 0,
     registeredAt: r.createdAt.toISOString(),
@@ -192,22 +209,24 @@ export async function getDesignerByCode(code: string): Promise<Designer | null> 
 }
 
 export async function saveDesigner(designer: Designer) {
+  const regionTier = resolveDesignerRegionTier(designer);
+  const payload: Designer = { ...designer, regionTier };
   await prisma.designer.update({
     where: { id: designer.id },
     data: {
-      name: designer.name,
-      avatar: designer.avatar,
-      subjectType: designer.subjectType ?? "individual",
-      specialty: designer.specialty,
-      level: designer.level,
-      regionTier: designer.regionTier,
-      location: designer.location,
-      acceptingOrders: designer.acceptingOrders ?? true,
-      rating: designer.rating,
-      dailyRate: designer.dailyRate,
-      monthlyRate: designer.monthlyRate,
-      code: designer.code || null,
-      data: JSON.stringify(designer),
+      name: payload.name,
+      avatar: payload.avatar,
+      subjectType: payload.subjectType ?? "individual",
+      specialty: payload.specialty,
+      level: payload.level,
+      regionTier: payload.regionTier,
+      location: payload.location,
+      acceptingOrders: payload.acceptingOrders ?? true,
+      rating: payload.rating,
+      dailyRate: payload.dailyRate,
+      monthlyRate: payload.monthlyRate,
+      code: payload.code || null,
+      data: JSON.stringify(payload),
     },
   });
 }
@@ -219,12 +238,67 @@ export async function updateDesignerLevel(
 ): Promise<Designer | null> {
   const designer = await getDesigner(id);
   if (!designer) return null;
+  const prevLevel = designer.level;
   designer.level = level;
   await prisma.designer.update({
     where: { id },
     data: { level, data: JSON.stringify(designer) },
   });
+  if (prevLevel !== level) {
+    const userId = await userIdForDesigner(id);
+    const levelLabel = DESIGNER_LEVEL_META[level]?.label ?? level;
+    await notifyLevelUpgraded({
+      userId,
+      subjectLabel: "设计师",
+      levelLabel,
+      linkHref: "/designer/profile",
+    });
+  }
   return designer;
+}
+
+/** 管理员设置入驻审核状态（同步列字段与 JSON） */
+export async function setDesignerReviewStatus(
+  id: string,
+  reviewStatus: NonNullable<Designer["reviewStatus"]>,
+): Promise<Designer | null> {
+  const designer = await getDesigner(id);
+  if (!designer) return null;
+  const next: Designer = { ...designer, reviewStatus };
+  await prisma.designer.update({
+    where: { id },
+    data: { reviewStatus, data: JSON.stringify(next) },
+  });
+  return next;
+}
+
+/** 创建设计师入驻审核工单（幂等：已有待审工单则跳过） */
+export async function createDesignerOnboardingReview(
+  designer: Designer,
+  phone?: string,
+): Promise<ReviewItem | null> {
+  const existing = await prisma.reviewItem.findUnique({
+    where: { id: `rv_designer_${designer.id}` },
+  });
+  if (existing) {
+    const item = parse<ReviewItem>(existing.data);
+    if (item.status === "pending") return item;
+    return null;
+  }
+  const item = buildDesignerOnboardingReviewItem(designer, phone);
+  return createReviewItem(item);
+}
+
+/** 为尚未建工单的待审设计师补齐入驻审核条目 */
+async function ensurePendingDesignerOnboardingReviews() {
+  const pendingRows = await prisma.designer.findMany({
+    where: { reviewStatus: "pending" },
+    include: { user: { select: { phone: true } } },
+  });
+  for (const row of pendingRows) {
+    const designer = mergeDesignerContact(row);
+    await createDesignerOnboardingReview(designer, row.user?.phone ?? undefined);
+  }
 }
 
 /** 冻结 / 解冻设计师关联账号 */
@@ -259,6 +333,8 @@ export async function updateDesignerForAdmin(
   });
   if (!row) return null;
 
+  const prev = await getDesigner(id);
+  const prevLevel = prev?.level;
   await saveDesigner(designer);
 
   if (row.userId) {
@@ -270,6 +346,17 @@ export async function updateDesignerForAdmin(
     if (Object.keys(userData).length > 0) {
       await prisma.user.update({ where: { id: row.userId }, data: userData });
     }
+  }
+
+  if (designer.level && prevLevel !== designer.level) {
+    const levelLabel =
+      DESIGNER_LEVEL_META[designer.level]?.label ?? designer.level;
+    await notifyLevelUpgraded({
+      userId: row.userId,
+      subjectLabel: "设计师",
+      levelLabel,
+      linkHref: "/designer/profile",
+    });
   }
 
   return getDesigner(id);
@@ -306,7 +393,9 @@ export async function listClients(): Promise<Client[]> {
 export async function listClientsForAdmin(): Promise<AdminClientRow[]> {
   const rows = await prisma.client.findMany({
     orderBy: { createdAt: "asc" },
-    include: { user: { select: { id: true, phone: true, status: true } } },
+    include: {
+      user: { select: { id: true, phone: true, loginName: true, status: true } },
+    },
   });
 
   const orderRows = await prisma.order.findMany({
@@ -345,6 +434,7 @@ export async function listClientsForAdmin(): Promise<AdminClientRow[]> {
       code,
       phone: r.user?.phone ?? client.phone,
       userId: r.user?.id,
+      loginName: r.user?.loginName ?? undefined,
       accountStatus: (r.user?.status ?? "active") as "active" | "disabled",
       ongoingOrdersCount: ongoingByClient.get(r.id) ?? 0,
       totalPaidAmount: paidByClient.get(r.id) ?? 0,
@@ -398,6 +488,8 @@ export async function updateClientForAdmin(
   });
   if (!row) return null;
 
+  const prev = await getClient(id);
+  const prevLevel = prev?.level;
   await saveClient(client);
 
   if (row.userId) {
@@ -409,6 +501,16 @@ export async function updateClientForAdmin(
     if (Object.keys(userData).length > 0) {
       await prisma.user.update({ where: { id: row.userId }, data: userData });
     }
+  }
+
+  if (client.level && prevLevel !== client.level) {
+    const levelLabel = CLIENT_LEVEL_META[client.level]?.label ?? client.level;
+    await notifyLevelUpgraded({
+      userId: row.userId,
+      subjectLabel: "委托人",
+      levelLabel,
+      linkHref: "/client/settings",
+    });
   }
 
   return getClient(id);
@@ -707,32 +809,22 @@ export async function countInvoicesIssuedToday() {
 
 /* ---------------- 审核工单 ---------------- */
 
-function mergeDemoReviewItems(dbItems: ReviewItem[]): ReviewItem[] {
-  const byId = new Map(dbItems.map((item) => [item.id, item]));
-  if (demoDataEnabled()) {
-    for (const demo of reviewQueue) {
-      if (!byId.has(demo.id)) byId.set(demo.id, demo);
-    }
-  }
-  return Array.from(byId.values()).sort(
-    (a, b) =>
-      new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
-  );
-}
-
 export async function listReviewItems(): Promise<ReviewItem[]> {
+  await ensurePendingDesignerOnboardingReviews();
   const rows = await prisma.reviewItem.findMany({
     orderBy: { submittedAt: "desc" },
   });
-  return mergeDemoReviewItems(rows.map((r) => parse<ReviewItem>(r.data)));
+  return rows
+    .map((r) => parse<ReviewItem>(r.data))
+    .sort(
+      (a, b) =>
+        new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
+    );
 }
 
 export async function getReviewItem(id: string): Promise<ReviewItem | null> {
   const row = await prisma.reviewItem.findUnique({ where: { id } });
-  if (row) return parse<ReviewItem>(row.data);
-  return demoDataEnabled()
-    ? (reviewQueue.find((r) => r.id === id) ?? null)
-    : null;
+  return row ? parse<ReviewItem>(row.data) : null;
 }
 
 export async function createReviewItem(item: ReviewItem): Promise<ReviewItem> {
@@ -936,12 +1028,8 @@ export async function saveLevelManagement(config: LevelManagementConfig) {
 
 export async function getLevelManagementStats(): Promise<CategoryLevelStats[]> {
   const config = await getLevelManagement();
-  let designers: AdminDesignerRow[] = await listDesignersForAdmin();
-  let clients: AdminClientRow[] = await listClientsForAdmin();
-  if (demoDataEnabled()) {
-    if (designers.length === 0) designers = mockDesigners;
-    if (clients.length === 0) clients = mockClients;
-  }
+  const designers: AdminDesignerRow[] = await listDesignersForAdmin();
+  const clients: AdminClientRow[] = await listClientsForAdmin();
 
   return LEVEL_CATEGORIES.map((category) => {
     const levels = config[category.key];
@@ -1078,22 +1166,11 @@ function feedbackFromRow(row: {
   };
 }
 
-function mergeDemoFeedbackMessages(dbItems: FeedbackMessage[]): FeedbackMessage[] {
-  if (!demoDataEnabled()) {
-    return [...dbItems].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }
-  const ids = new Set(dbItems.map((item) => item.id));
-  const demo = demoFeedbackMessages.filter((item) => !ids.has(item.id));
-  return [...demo, ...dbItems].sort((a, b) =>
-    b.createdAt.localeCompare(a.createdAt),
-  );
-}
-
 export async function listFeedbackMessages(): Promise<FeedbackMessage[]> {
   const rows = await prisma.feedbackMessage.findMany({
     orderBy: { createdAt: "desc" },
   });
-  return mergeDemoFeedbackMessages(rows.map(feedbackFromRow));
+  return rows.map(feedbackFromRow);
 }
 
 export async function createFeedbackMessage(input: {
@@ -1141,38 +1218,23 @@ export async function updateFeedbackMessage(
 
 /* ---------------- 提现审批 ---------------- */
 
-function mergeDemoWithdrawalRequests(
-  dbItems: WithdrawalRequest[],
-): WithdrawalRequest[] {
-  const byId = new Map(dbItems.map((item) => [item.id, item]));
-  if (demoDataEnabled()) {
-    for (const demo of demoWithdrawals) {
-      if (!byId.has(demo.id)) byId.set(demo.id, demo);
-    }
-  }
-  return Array.from(byId.values()).sort(
-    (a, b) =>
-      new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
-  );
-}
-
 export async function listWithdrawalRequests(): Promise<WithdrawalRequest[]> {
   const rows = await prisma.withdrawalRequest.findMany({
     orderBy: { submittedAt: "desc" },
   });
-  return mergeDemoWithdrawalRequests(
-    rows.map((r) => parse<WithdrawalRequest>(r.data)),
-  );
+  return rows
+    .map((r) => parse<WithdrawalRequest>(r.data))
+    .sort(
+      (a, b) =>
+        new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
+    );
 }
 
 export async function getWithdrawalRequest(
   id: string,
 ): Promise<WithdrawalRequest | null> {
   const row = await prisma.withdrawalRequest.findUnique({ where: { id } });
-  if (row) return parse<WithdrawalRequest>(row.data);
-  return demoDataEnabled()
-    ? (demoWithdrawals.find((r) => r.id === id) ?? null)
-    : null;
+  return row ? parse<WithdrawalRequest>(row.data) : null;
 }
 
 export async function updateWithdrawalRequestStatus(
@@ -1212,18 +1274,6 @@ export async function updateWithdrawalRequestStatus(
 
 /* ---------------- 纠纷 ---------------- */
 
-function mergeDemoDisputes(dbItems: Dispute[]): Dispute[] {
-  const byId = new Map(dbItems.map((d) => [d.id, d]));
-  if (demoDataEnabled()) {
-    for (const demo of demoDisputes) {
-      if (!byId.has(demo.id)) byId.set(demo.id, demo);
-    }
-  }
-  return Array.from(byId.values()).sort(
-    (a, b) => new Date(b.raisedAt).getTime() - new Date(a.raisedAt).getTime(),
-  );
-}
-
 export async function listDisputes(filter?: {
   status?: Dispute["status"];
   orderId?: string;
@@ -1239,23 +1289,12 @@ export async function listDisputes(filter?: {
     },
     orderBy: { raisedAt: "desc" },
   });
-  const items = mergeDemoDisputes(rows.map((r) => parse<Dispute>(r.data)));
-  if (!filter) return items;
-  return items.filter((d) => {
-    if (filter.status && d.status !== filter.status) return false;
-    if (filter.orderId && d.orderId !== filter.orderId) return false;
-    if (filter.clientId && d.clientId !== filter.clientId) return false;
-    if (filter.designerId && d.designerId !== filter.designerId) return false;
-    return true;
-  });
+  return rows.map((r) => parse<Dispute>(r.data));
 }
 
 export async function getDispute(id: string): Promise<Dispute | null> {
   const row = await prisma.dispute.findUnique({ where: { id } });
-  if (row) return parse<Dispute>(row.data);
-  return demoDataEnabled()
-    ? (demoDisputes.find((d) => d.id === id) ?? null)
-    : null;
+  return row ? parse<Dispute>(row.data) : null;
 }
 
 export async function findOpenDisputeForOrder(
@@ -1265,15 +1304,6 @@ export async function findOpenDisputeForOrder(
     where: { orderId, status: { in: ["open", "in_review"] } },
   });
   if (rows.length > 0) return parse<Dispute>(rows[0]!.data);
-  if (demoDataEnabled()) {
-    return (
-      demoDisputes.find(
-        (d) =>
-          d.orderId === orderId &&
-          (d.status === "open" || d.status === "in_review"),
-      ) ?? null
-    );
-  }
   return null;
 }
 
@@ -1315,23 +1345,9 @@ export async function saveDispute(dispute: Dispute): Promise<Dispute> {
 }
 
 export async function countActiveDisputes(): Promise<number> {
-  const dbCount = await prisma.dispute.count({
+  return prisma.dispute.count({
     where: { status: { in: ["open", "in_review"] } },
   });
-  if (!demoDataEnabled()) return dbCount;
-  const dbIds = new Set(
-    (
-      await prisma.dispute.findMany({
-        where: { status: { in: ["open", "in_review"] } },
-        select: { id: true },
-      })
-    ).map((r) => r.id),
-  );
-  const demoExtra = demoDisputes.filter(
-    (d) =>
-      (d.status === "open" || d.status === "in_review") && !dbIds.has(d.id),
-  ).length;
-  return dbCount + demoExtra;
 }
 
 /* ---------------- 合同模板 ---------------- */

@@ -17,6 +17,7 @@ export const CLIENT_PLATFORM_STATUS_TABS: {
   label: string;
 }[] = [
   { value: "all", label: "全部状态" },
+  { value: "pending_quote", label: "待确认报价" },
   { value: "matching", label: "待匹配设计师" },
   { value: "pending_contract", label: "待签约" },
   { value: "pending_payment", label: "待支付" },
@@ -26,6 +27,7 @@ export const CLIENT_PLATFORM_STATUS_TABS: {
   { value: "in_revision", label: "返修修改中" },
   { value: "completed", label: "已完成" },
   { value: "terminated", label: "已终止" },
+  { value: "cancelled", label: "已取消" },
 ];
 
 /** 已完成但委托人尚未评价设计师 */

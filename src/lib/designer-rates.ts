@@ -3,6 +3,7 @@ import {
   LANDSCAPE_DAILY_RATE,
   LANDSCAPE_MONTHLY_RATE,
   REGION_TIER_META,
+  resolveDesignerRegionTier,
 } from "@/lib/constants";
 import type { Designer, DesignerLevel, RegionTier } from "@/lib/types";
 
@@ -26,6 +27,13 @@ const L3_TO_TRACK: Record<string, LandscapeTimeRateTrack> = {
   ls_electrical: "electrical",
   ls_struct: "structure",
 };
+
+/** 景观三级专业 → 按时间取费档位（园建 / 绿化 / …） */
+export function landscapeTimeTrackFromL3(
+  l3: string,
+): LandscapeTimeRateTrack | null {
+  return L3_TO_TRACK[l3] ?? null;
+}
 
 /**
  * 从设计师主航道推断景观按时间计费的档位（文档表行）。
@@ -60,7 +68,7 @@ export interface DesignerV11TimeRates {
 export function getDesignerV11TimeRates(designer: Designer): DesignerV11TimeRates {
   const track = inferDesignerLandscapeTimeTrack(designer);
   const level: DesignerLevel = designer.level ?? "mid_v1";
-  const tier: RegionTier = designer.regionTier ?? "tier6";
+  const tier: RegionTier = resolveDesignerRegionTier(designer);
 
   const levelCoeff = DESIGNER_LEVEL_META[level].coefficient;
   const regionCoeff = REGION_TIER_META[tier].coefficient;

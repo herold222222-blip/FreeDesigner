@@ -3,21 +3,19 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { submitFeedbackRequest } from "@/lib/api-client";
+import { submitFeedbackRequest, fetchMe } from "@/lib/api-client";
 import {
   CUSTOMER_SERVICE_CONTACTS,
   CUSTOMER_SERVICE_HOTLINE,
   CUSTOMER_SERVICE_HOTLINE_DISPLAY,
   formatCustomerServiceLine,
 } from "@/lib/customer-service";
-import { getClientById } from "@/mocks/clients";
-import { getDesignerById } from "@/mocks/designers";
 import {
   isValidMobilePhone,
   maskPhone,
   useAccountProfileStore,
 } from "@/store/account-profile-store";
-import { usePlatformContent } from "@/lib/use-data";
+import { useClient, useDesigner, usePlatformContent } from "@/lib/use-data";
 import { useRoleStore } from "@/store/role-store";
 import { useSessionStore } from "@/store/session-store";
 import { Button } from "@/components/ui/button";
@@ -39,17 +37,11 @@ import {
   Phone,
   Repeat,
   Smartphone,
-  Sparkles,
-  User,
+  UserPlus,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 type ConsoleKind = "client" | "designer";
-
-const DEFAULT_PHONES: Record<string, string> = {
-  client_lin: "13812348888",
-  designer_chen: "13912348821",
-};
+type BusinessRole = "client" | "designer";
 
 interface ConsoleSidebarActionsProps {
   consoleKind: ConsoleKind;
@@ -58,7 +50,7 @@ interface ConsoleSidebarActionsProps {
 export function ConsoleSidebarActions({ consoleKind }: ConsoleSidebarActionsProps) {
   const router = useRouter();
   const identityId = useRoleStore((s) => s.identityId);
-  const setRole = useRoleStore((s) => s.setRole);
+  const switchRole = useRoleStore((s) => s.switchRole);
   const push = useSessionStore((s) => s.pushNotification);
   const getPhone = useAccountProfileStore((s) => s.getPhone);
   const setPhone = useAccountProfileStore((s) => s.setPhone);
@@ -70,56 +62,99 @@ export function ConsoleSidebarActions({ consoleKind }: ConsoleSidebarActionsProp
   const [logoOpen, setLogoOpen] = useState(false);
   const [csOpen, setCsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [roleOpen, setRoleOpen] = useState(false);
   const { data: platformContent, refresh: refreshPlatformContent } =
     usePlatformContent();
   const [phoneDraft, setPhoneDraft] = useState("");
   const [logoDraft, setLogoDraft] = useState("");
   const [csMessage, setCsMessage] = useState("");
   const [csSubmitting, setCsSubmitting] = useState(false);
+  const [sessionName, setSessionName] = useState("");
+  const [sessionPhone, setSessionPhone] = useState("");
+  const [availableRoles, setAvailableRoles] = useState<BusinessRole[]>([]);
+  const [rolesLoaded, setRolesLoaded] = useState(false);
+  const [roleSwitching, setRoleSwitching] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const { data: clientProfile } = useClient(
+    consoleKind === "client" ? identityId : null,
+  );
+  const { data: designerProfile } = useDesigner(
+    consoleKind === "designer" ? identityId : null,
+  );
+
+  const targetRole: BusinessRole =
+    consoleKind === "client" ? "designer" : "client";
+  const hasTargetRole = availableRoles.includes(targetRole);
+
   useEffect(() => setHydrated(true), []);
+
+  useEffect(() => {
+    let active = true;
+    fetchMe()
+      .then(({ user }) => {
+        if (!active || !user) return;
+        setSessionName(user.name ?? "");
+        setSessionPhone(user.phone ?? "");
+        setAvailableRoles(
+          (user.availableRoles ?? []).filter(
+            (r): r is BusinessRole => r === "client" || r === "designer",
+          ),
+        );
+      })
+      .catch(() => {
+        /* ignore */
+      })
+      .finally(() => {
+        if (active) setRolesLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (aboutOpen) refreshPlatformContent();
   }, [aboutOpen, refreshPlatformContent]);
 
   const profile = useMemo(() => {
-    const id = identityId || "";
-    if (!id) return null;
+    const id = identityId || "session";
     if (consoleKind === "client") {
-      const client = getClientById(id);
-      if (!client) return null;
-      const usesLogo = client.type === "enterprise";
-      const fallbackPhone = DEFAULT_PHONES[id] ?? "13800000000";
-      const fallbackLogo = client.avatar;
+      const client = clientProfile;
+      const usesLogo = client?.type === "enterprise";
+      const fallbackLogo = client?.avatar ?? "";
+      const name = client?.name || sessionName || "委托人";
       return {
         identityId: id,
-        name: client.name,
-        usesLogo,
-        profileLabel: usesLogo ? "企业 Logo" : "绑定手机",
-        phone: getPhone(id, fallbackPhone),
+        name,
+        usesLogo: Boolean(usesLogo),
+        phone: getPhone(id, sessionPhone),
         logoUrl: getLogo(id, fallbackLogo),
       };
     }
-    const designer = getDesignerById(id);
-    if (!designer) return null;
+    const designer = designerProfile;
     const usesLogo =
-      designer.subjectType === "team" || designer.subjectType === "company";
-    const fallbackPhone = DEFAULT_PHONES[id] ?? "13900000000";
-    const fallbackLogo = designer.avatar;
+      designer?.subjectType === "team" || designer?.subjectType === "company";
+    const fallbackLogo = designer?.avatar ?? "";
+    const name = designer?.name || sessionName || "设计师";
     return {
       identityId: id,
-      name: designer.name,
-      usesLogo,
-      profileLabel: usesLogo ? "团队 / 公司 Logo" : "绑定手机",
-      phone: getPhone(id, fallbackPhone),
+      name,
+      usesLogo: Boolean(usesLogo),
+      phone: getPhone(id, sessionPhone),
       logoUrl: getLogo(id, fallbackLogo),
     };
-  }, [consoleKind, identityId, getPhone, getLogo]);
+  }, [
+    consoleKind,
+    identityId,
+    clientProfile,
+    designerProfile,
+    getPhone,
+    getLogo,
+    sessionName,
+    sessionPhone,
+  ]);
 
-  if (!hydrated || !profile) return null;
+  if (!hydrated) return null;
 
   const openPhoneDialog = () => {
     setPhoneDraft(profile.phone);
@@ -144,7 +179,7 @@ export function ConsoleSidebarActions({ consoleKind }: ConsoleSidebarActionsProp
     setPhone(profile.identityId, normalized);
     push({
       title: "手机号已更新",
-      description: `新号码 ${maskPhone(normalized)} 已保存（演示数据）。`,
+      description: `新号码 ${maskPhone(normalized)} 已保存。`,
       variant: "success",
     });
     setPhoneOpen(false);
@@ -162,7 +197,7 @@ export function ConsoleSidebarActions({ consoleKind }: ConsoleSidebarActionsProp
     setLogo(profile.identityId, logoDraft.trim());
     push({
       title: "Logo 已更新",
-      description: "主页与侧栏将展示新 Logo（演示数据）。",
+      description: "主页与侧栏将展示新 Logo。",
       variant: "success",
     });
     setLogoOpen(false);
@@ -219,15 +254,51 @@ export function ConsoleSidebarActions({ consoleKind }: ConsoleSidebarActionsProp
     }
   };
 
-  const switchTo = (target: "client" | "designer") => {
-    setRole(target);
-    setRoleOpen(false);
-    router.push(target === "client" ? "/client" : "/designer");
+  /** 已入驻双身份则切换；仅入驻当前身份则引导入驻另一身份 */
+  const handleRoleAction = async () => {
+    if (roleSwitching) return;
+    setRoleSwitching(true);
+    try {
+      let roles = availableRoles;
+      if (!rolesLoaded) {
+        const { user } = await fetchMe();
+        roles = (user?.availableRoles ?? []).filter(
+          (r): r is BusinessRole => r === "client" || r === "designer",
+        );
+        setAvailableRoles(roles);
+        setRolesLoaded(true);
+      }
+
+      if (roles.includes(targetRole)) {
+        await switchRole(targetRole);
+        router.push(targetRole === "client" ? "/client" : "/designer");
+        return;
+      }
+
+      router.push(
+        targetRole === "client"
+          ? "/login?register=1&attach=1&focus=client"
+          : "/login?register=1&attach=1&focus=designer",
+      );
+    } catch (e) {
+      push({
+        title: hasTargetRole ? "切换身份失败" : "无法前往入驻",
+        description: e instanceof Error ? e.message : "请稍后再试",
+        variant: "destructive",
+      });
+    } finally {
+      setRoleSwitching(false);
+    }
   };
+
+  const roleActionLabel = "切换入驻身份";
+  const roleActionHint =
+    consoleKind === "client" ? "当前身份：委托人" : "当前身份：设计师";
+  const RoleActionIcon = hasTargetRole ? Repeat : UserPlus;
 
   return (
     <>
-      <div className="space-y-1 border-t border-ink-20 px-3 py-3">
+      <div className="space-y-1 px-3 py-3">
         <p className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wider text-ink-40">
           账号与帮助
         </p>
@@ -275,10 +346,11 @@ export function ConsoleSidebarActions({ consoleKind }: ConsoleSidebarActionsProp
         />
 
         <SidebarActionButton
-          icon={Repeat}
-          label="切换身份"
-          hint={consoleKind === "client" ? "切至设计师" : "切至委托人"}
-          onClick={() => setRoleOpen(true)}
+          icon={RoleActionIcon}
+          label={roleActionLabel}
+          hint={roleActionHint}
+          onClick={handleRoleAction}
+          disabled={roleSwitching}
         />
       </div>
 
@@ -318,45 +390,45 @@ export function ConsoleSidebarActions({ consoleKind }: ConsoleSidebarActionsProp
           <DialogHeader>
             <DialogTitle>修改 Logo</DialogTitle>
             <DialogDescription>
-              {profile.name} 的企业 / 团队标识，将展示在主页与订单合同中。
+              上传图片或粘贴图片地址，将用于工作台与公开主页展示。
             </DialogDescription>
           </DialogHeader>
-          <div className="flex flex-col items-center gap-4">
-            <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-2xl border border-ink-20 bg-ink-20/20">
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
               {logoDraft ? (
                 <Image
                   src={logoDraft}
-                  alt="Logo 预览"
-                  width={96}
-                  height={96}
+                  alt=""
+                  width={56}
+                  height={56}
                   unoptimized
-                  className="h-full w-full object-cover"
+                  className="h-14 w-14 rounded-xl object-cover ring-1 ring-ink-20"
                 />
               ) : (
-                <ImagePlus className="h-8 w-8 text-ink-40" />
+                <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-ink-20/40 text-ink-40">
+                  <ImagePlus className="h-5 w-5" />
+                </div>
               )}
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => handleLogoFile(e.target.files?.[0])}
-            />
-            <div className="flex w-full gap-2">
               <Button
                 type="button"
                 variant="outline"
-                className="flex-1"
+                size="sm"
                 onClick={() => fileInputRef.current?.click()}
               >
-                上传图片
+                选择图片
               </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => handleLogoFile(e.target.files?.[0])}
+              />
             </div>
-            <div className="w-full space-y-2">
-              <Label htmlFor="sidebar-logo-url">或粘贴图片地址</Label>
+            <div className="space-y-2">
+              <Label htmlFor="sidebar-logo">或粘贴图片地址</Label>
               <Input
-                id="sidebar-logo-url"
+                id="sidebar-logo"
                 placeholder="https://..."
                 value={logoDraft.startsWith("data:") ? "" : logoDraft}
                 onChange={(e) => setLogoDraft(e.target.value)}
@@ -368,7 +440,7 @@ export function ConsoleSidebarActions({ consoleKind }: ConsoleSidebarActionsProp
               取消
             </Button>
             <Button variant="brand" onClick={saveLogo}>
-              保存 Logo
+              保存
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -415,7 +487,7 @@ export function ConsoleSidebarActions({ consoleKind }: ConsoleSidebarActionsProp
             <Label htmlFor="cs-message">在线留言</Label>
             <Textarea
               id="cs-message"
-              placeholder="请描述您的问题或需求，客服将尽快回复…"
+              placeholder="请描述您的问题或需求，客服将尽快回复。"
               rows={4}
               value={csMessage}
               onChange={(e) => setCsMessage(e.target.value)}
@@ -461,67 +533,6 @@ export function ConsoleSidebarActions({ consoleKind }: ConsoleSidebarActionsProp
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* 切换身份 */}
-      <Dialog open={roleOpen} onOpenChange={setRoleOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>切换身份</DialogTitle>
-            <DialogDescription>
-              在委托人与设计师工作台之间快速切换（演示账号）。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-2">
-            <button
-              type="button"
-              onClick={() => switchTo("client")}
-              className={cn(
-                "flex items-start gap-3 rounded-xl border p-4 text-left transition-colors",
-                consoleKind === "client"
-                  ? "border-ink bg-ink-20/30"
-                  : "border-ink-20 hover:border-ink/40 hover:bg-ink-20/10",
-              )}
-            >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink text-white">
-                <User className="h-4 w-4" />
-              </div>
-              <div>
-                <div className="text-sm font-semibold text-ink">委托人 · 林先生</div>
-                <div className="text-xs text-ink-60">查看平台订单、悬赏与收藏</div>
-              </div>
-              {consoleKind === "client" ? (
-                <span className="ml-auto text-xs font-medium text-brand">当前</span>
-              ) : null}
-            </button>
-            <button
-              type="button"
-              onClick={() => switchTo("designer")}
-              className={cn(
-                "flex items-start gap-3 rounded-xl border p-4 text-left transition-colors",
-                consoleKind === "designer"
-                  ? "border-ink bg-ink-20/30"
-                  : "border-ink-20 hover:border-ink/40 hover:bg-ink-20/10",
-              )}
-            >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink text-white">
-                <Sparkles className="h-4 w-4" />
-              </div>
-              <div>
-                <div className="text-sm font-semibold text-ink">设计师 · 陈牧之</div>
-                <div className="text-xs text-ink-60">管理项目、档期与取费基数</div>
-              </div>
-              {consoleKind === "designer" ? (
-                <span className="ml-auto text-xs font-medium text-brand">当前</span>
-              ) : null}
-            </button>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRoleOpen(false)}>
-              关闭
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }
@@ -532,18 +543,21 @@ function SidebarActionButton({
   hint,
   onClick,
   preview,
+  disabled,
 }: {
   icon: ComponentType<{ className?: string }>;
   label: string;
   hint?: string;
   onClick: () => void;
   preview?: ReactNode;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm transition-colors hover:bg-ink-20/40"
+      disabled={disabled}
+      className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm transition-colors hover:bg-ink-20/40 disabled:opacity-60"
     >
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-ink-20/50 text-ink-60">
         {preview ?? <Icon className="h-4 w-4" />}

@@ -26,6 +26,7 @@ export const ADMIN_ORDER_STATUS_FILTERS: {
   { value: "all", label: "全部" },
   { value: "ongoing", label: "进行中订单" },
   { value: "payment_overdue", label: "超时订单" },
+  { value: "pending_quote", label: "待确认报价" },
   { value: "matching", label: "待匹配" },
   { value: "pending_contract", label: "待签约" },
   { value: "in_progress", label: "进行中" },

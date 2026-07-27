@@ -1,4 +1,9 @@
-import type { Bounty, BountyLocation, Specialty } from "@/lib/types";
+import type {
+  Bounty,
+  BountyAttachment,
+  BountyLocation,
+  Specialty,
+} from "@/lib/types";
 import type { CreateOrderBody } from "@/lib/api-client";
 import type { BillingMode } from "@/lib/types";
 
@@ -14,9 +19,23 @@ export function buildRegularEntrustDescription(input: {
   months?: number;
   tracks?: string[];
   trackKey?: string;
+  /** 二级专业标签 */
+  timeL2Labels?: string[];
+  /** 各三级专业工时：标签 + 天数/月数 */
+  timeL3Units?: Array<{ label: string; units: number; unitLabel: string }>;
   withAudit?: boolean;
   withPM?: boolean;
 }): string {
+  const timeLines =
+    input.timeL3Units?.length ?
+      [
+        `二级专业：${(input.timeL2Labels ?? []).join("、") || "—"}`,
+        ...input.timeL3Units.map(
+          (row) => `· ${row.label}：${row.units} ${row.unitLabel}`,
+        ),
+      ]
+    : null;
+
   const lines = [
     input.description.trim(),
     "",
@@ -29,13 +48,21 @@ export function buildRegularEntrustDescription(input: {
     "--- 计费摘要 ---",
     `计费方式：${input.billingMode}`,
     input.billingMode === "area" && input.area
-      ? `面积：${input.area} ㎡ · 专业：${(input.tracks ?? []).join("、") || "—"}`
+      ? [
+          `面积：${input.area} ㎡ · 三级专业：${(input.tracks ?? []).join("、") || "—"}`,
+          input.timeL2Labels?.length
+            ? `二级专业：${input.timeL2Labels.join("、")}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join("\n")
       : null,
-    input.billingMode === "daily"
-      ? `工时：${input.days ?? 0} 工日 · ${input.trackKey ?? "—"}`
-      : null,
-    input.billingMode === "monthly"
-      ? `雇佣：${input.months ?? 0} 个月 · ${input.trackKey ?? "—"}`
+    input.billingMode === "daily" || input.billingMode === "monthly"
+      ? timeLines?.length
+        ? [`工时明细：`, ...timeLines].join("\n")
+        : input.billingMode === "daily"
+          ? `工时：${input.days ?? 0} 工日 · ${input.trackKey ?? "—"}`
+          : `雇佣：${input.months ?? 0} 个月 · ${input.trackKey ?? "—"}`
       : null,
     input.withAudit ? "增值服务：第三方审图" : null,
     input.withPM ? "增值服务：项目管理" : null,
@@ -56,9 +83,19 @@ export function buildRegularEntrustOrderBody(input: {
   budget?: number | "";
   withAudit?: boolean;
   withPM?: boolean;
+  attachments?: BountyAttachment[];
+  withDrawing?: boolean;
+  timeQuoteLines?: Array<{
+    l3: string;
+    l3Label: string;
+    quantity: number;
+    difficultyKey?: string;
+  }>;
 }): CreateOrderBody {
   const budget =
     typeof input.budget === "number" && input.budget > 0 ? input.budget : 0;
+  const isTimeBilling =
+    input.billingMode === "daily" || input.billingMode === "monthly";
   return {
     title: input.title.trim(),
     specialty: input.specialty,
@@ -71,6 +108,15 @@ export function buildRegularEntrustOrderBody(input: {
     projectAreaSqm: input.billingMode === "area" ? input.area : undefined,
     withAuditService: input.withAudit,
     withProjectManagement: input.withPM,
+    attachments: input.attachments?.length ? input.attachments : undefined,
+    timeQuote:
+      isTimeBilling && input.timeQuoteLines?.length
+        ? {
+            unit: input.billingMode === "daily" ? "day" : "month",
+            withDrawing: input.withDrawing,
+            lines: input.timeQuoteLines,
+          }
+        : undefined,
   };
 }
 
@@ -84,7 +130,7 @@ export function buildBountyCreateBody(input: {
   reward: number;
   deadline: string;
   requirements: string[];
-  attachments: { name: string }[];
+  attachments: Bounty["attachments"];
   preferredDesignerCodes?: string[];
   subjectFilters?: Bounty["subjectFilters"];
   contactName: string;

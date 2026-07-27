@@ -92,7 +92,7 @@ export function BountyApplicantList({
                     }
                     push({
                       title: `已选择 ${d.name}`,
-                      description: "将生成正式订单与电子合同（演示）。",
+                      description: "将生成正式订单与电子合同。",
                       variant: "success",
                     });
                   }}
@@ -104,7 +104,7 @@ export function BountyApplicantList({
                   onClick={() =>
                     push({
                       title: "私信沟通",
-                      description: `已向 ${d.name} 发送沟通邀请（演示）。`,
+                      description: `已向 ${d.name} 发送沟通邀请。`,
                     })
                   }
                 >

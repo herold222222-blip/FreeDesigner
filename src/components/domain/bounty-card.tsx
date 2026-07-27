@@ -1,4 +1,5 @@
-import Link from "next/link";
+"use client";
+
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { Bounty } from "@/lib/types";
@@ -6,13 +7,32 @@ import { SPECIALTIES } from "@/lib/constants";
 import { getTrackLabelParts } from "@/lib/bounty-filters";
 import { CalendarDays, Coins, MapPin, Users } from "lucide-react";
 import { bountyApplicantCount } from "@/lib/bounty-privacy";
+import {
+  maskGuestBountyDeadline,
+  maskGuestBountyDescription,
+  maskGuestBountyTitle,
+} from "@/lib/bounty-guest-privacy";
 import { formatBountyReward, formatDate } from "@/lib/utils";
+import { MemberLink } from "@/components/domain/member-link";
+import { useRoleStore } from "@/store/role-store";
 
 export function BountyCard({ bounty }: { bounty: Bounty }) {
+  const role = useRoleStore((s) => s.role);
+  const isGuest = role === "guest";
   const specialty = SPECIALTIES.find((s) => s.value === bounty.specialty)!;
   const trackLabels = getTrackLabelParts(bounty.primaryTrack);
+
+  const title = isGuest ? maskGuestBountyTitle(bounty.title) : bounty.title;
+  const description = isGuest
+    ? maskGuestBountyDescription(bounty.description)
+    : bounty.description;
+  const deadlineText = formatDate(bounty.deadline);
+  const deadlineDisplay = isGuest
+    ? maskGuestBountyDeadline(deadlineText)
+    : deadlineText;
+
   return (
-    <Link href={`/bounties/${bounty.id}`} className="group block">
+    <MemberLink href={`/bounties/${bounty.id}`} className="group block">
       <Card className="h-full p-6 transition-all hover:border-ink hover:shadow-md">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-2">
@@ -45,7 +65,7 @@ export function BountyCard({ bounty }: { bounty: Bounty }) {
               )}
             </div>
             <h3 className="line-clamp-2 text-lg font-semibold leading-snug text-ink group-hover:text-brand">
-              {bounty.title}
+              {title}
             </h3>
           </div>
           <div className="text-right">
@@ -56,14 +76,14 @@ export function BountyCard({ bounty }: { bounty: Bounty }) {
           </div>
         </div>
         <p className="mt-3 line-clamp-2 text-sm text-ink-60">
-          {bounty.description}
+          {description}
         </p>
         <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-ink-60">
           <span className="inline-flex items-center gap-1.5">
             <MapPin className="h-3.5 w-3.5" /> {bounty.location.label}
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <CalendarDays className="h-3.5 w-3.5" /> 成果提交 {formatDate(bounty.deadline)}
+            <CalendarDays className="h-3.5 w-3.5" /> 成果提交 {deadlineDisplay}
           </span>
           <span className="inline-flex items-center gap-1.5">
             <Users className="h-3.5 w-3.5" /> {bountyApplicantCount(bounty)} 位设计师报名
@@ -73,6 +93,6 @@ export function BountyCard({ bounty }: { bounty: Bounty }) {
           </span>
         </div>
       </Card>
-    </Link>
+    </MemberLink>
   );
 }

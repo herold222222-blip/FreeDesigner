@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { HalfDaySlot, ScheduleRequest, ServiceMode } from "@/lib/types";
 
-export interface DemoNotification {
+export interface AppNotification {
   id: string;
   title: string;
   description?: string;
@@ -40,9 +40,17 @@ interface SessionState {
   }>;
   draftBounties: Array<{ id: string; createdAt: string; payload: Record<string, unknown> }>;
   scheduleRequests: ScheduleRequest[];
-  notifications: DemoNotification[];
-  pushNotification: (n: Omit<DemoNotification, "id" | "createdAt">) => void;
+  /** 非错误类轻提示（右上角 Toast） */
+  notifications: AppNotification[];
+  /** 错误类提示（居中对话框，需用户确认） */
+  errorDialog: AppNotification | null;
+  /** 游客离页访问提醒 */
+  guestAccessPromptOpen: boolean;
+  pushNotification: (n: Omit<AppNotification, "id" | "createdAt">) => void;
   dismissNotification: (id: string) => void;
+  dismissErrorDialog: () => void;
+  promptGuestAccess: () => void;
+  dismissGuestAccessPrompt: () => void;
   appendDraftOrder: (designerId: string, payload: Omit<DraftOrderPayload, "status">) => string;
   appendDraftBounty: (payload: Record<string, unknown>) => string;
   submitScheduleRequest: (req: Omit<ScheduleRequest, "id" | "status" | "submittedAt">) => string;
@@ -58,12 +66,18 @@ export const useSessionStore = create<SessionState>()(
       draftBounties: [],
       scheduleRequests: [],
       notifications: [],
+      errorDialog: null,
+      guestAccessPromptOpen: false,
       pushNotification: (n) => {
-        const note: DemoNotification = {
+        const note: AppNotification = {
           id: Math.random().toString(36).slice(2, 10),
           createdAt: Date.now(),
           ...n,
         };
+        if (note.variant === "destructive") {
+          set({ errorDialog: note });
+          return;
+        }
         set({ notifications: [...get().notifications, note] });
         setTimeout(() => {
           set({
@@ -73,6 +87,9 @@ export const useSessionStore = create<SessionState>()(
       },
       dismissNotification: (id) =>
         set({ notifications: get().notifications.filter((n) => n.id !== id) }),
+      dismissErrorDialog: () => set({ errorDialog: null }),
+      promptGuestAccess: () => set({ guestAccessPromptOpen: true }),
+      dismissGuestAccessPrompt: () => set({ guestAccessPromptOpen: false }),
       appendDraftOrder: (designerId, payload) => {
         const id = `ORD-${Date.now().toString(36).toUpperCase()}`;
         set({
@@ -182,6 +199,13 @@ export const useSessionStore = create<SessionState>()(
           (r) => r.designerId === designerId && r.status === "pending",
         ),
     }),
-    { name: "lezyou-session" },
+    {
+      name: "lezyou-session",
+      partialize: (s) => ({
+        draftOrders: s.draftOrders,
+        draftBounties: s.draftBounties,
+        scheduleRequests: s.scheduleRequests,
+      }),
+    },
   ),
 );

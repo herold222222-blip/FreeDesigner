@@ -13,8 +13,8 @@ import type {
   Order,
   PlatformAdminAccount,
   ScheduleRequest,
+  ServiceProvider,
 } from "@/lib/types";
-import type { ServiceProvider } from "@/mocks/service-providers";
 import type { FeedbackMessage, ReviewItem, WalletTransaction } from "@/lib/types";
 import type { ContractTemplatesConfig } from "@/lib/contract-templates";
 import { cloneDefaultContractTemplates } from "@/lib/contract-templates";
@@ -66,12 +66,34 @@ interface AsyncState<T> {
   refresh: () => void;
 }
 
+const apiInvalidateBus =
+  typeof window !== "undefined" ? new EventTarget() : null;
+
+/** 通知所有订阅同一 path 的 useApi 重新拉取（如侧栏与页面共用设计师资料） */
+export function invalidateApiPath(path: string) {
+  apiInvalidateBus?.dispatchEvent(
+    new CustomEvent("invalidate", { detail: path }),
+  );
+}
+
 /** 通用：拉取一个返回 { ok, data } 的 GET 端点 */
 function useApi<T>(path: string | null, fallback: T): AsyncState<T> {
   const [data, setData] = useState<T>(fallback);
   const [loading, setLoading] = useState<boolean>(!!path);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+
+  useEffect(() => {
+    if (!path || !apiInvalidateBus) return;
+    const onInvalidate = (event: Event) => {
+      const detail = (event as CustomEvent<string>).detail;
+      if (detail === path) setNonce((n) => n + 1);
+    };
+    apiInvalidateBus.addEventListener("invalidate", onInvalidate);
+    return () => {
+      apiInvalidateBus.removeEventListener("invalidate", onInvalidate);
+    };
+  }, [path]);
 
   useEffect(() => {
     if (!path) {

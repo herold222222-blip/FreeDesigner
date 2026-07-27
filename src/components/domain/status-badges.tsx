@@ -34,6 +34,7 @@ export function WorkloadBadge({ status }: { status: WorkloadStatus }) {
 }
 
 const ORDER_VARIANT_MAP = {
+  pending_quote: "amber",
   matching: "muted",
   pending_schedule: "blue",
   pending_contract: "amber",

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import Image from "next/image";
 import type { Designer } from "@/lib/types";
 import { Card } from "@/components/ui/card";
@@ -16,16 +15,20 @@ import { DesignerLevelBadge, DesignerLevelCoefficientBadge } from "@/components/
 import { FavoriteButton } from "@/components/domain/favorite-button";
 import { DesignerCodeCopy } from "@/components/domain/designer-code-copy";
 import { DesignerName } from "@/components/domain/designer-name";
+import { MemberLink } from "@/components/domain/member-link";
 import { MapPin, Star, Briefcase, Plane, PencilLine, Phone } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { getDesignerV11TimeRates } from "@/lib/designer-rates";
+import { portfolioCoverUrl } from "@/lib/portfolio-images";
 import { SUBJECT_TYPE_META } from "@/lib/constants";
 import { Users, Building2, User } from "lucide-react";
 import type { DesignerLevel } from "@/lib/types";
 import { useDesignerContactPrivacy } from "@/lib/use-designer-contact-privacy";
 
 export function DesignerCard({ designer }: { designer: Designer }) {
-  const cover = designer.portfolio[0]?.cover;
+  const cover = designer.portfolio[0]
+    ? portfolioCoverUrl(designer.portfolio[0])
+    : undefined;
   const level: DesignerLevel = designer.level ?? "mid_v1";
   const rates = getDesignerV11TimeRates({ ...designer, level });
   const { displayName, displayPhone, displayContactName, canViewFull } =
@@ -33,16 +36,25 @@ export function DesignerCard({ designer }: { designer: Designer }) {
 
   return (
     <Card className="group overflow-hidden transition-transform hover:-translate-y-1 hover:shadow-lg">
-      <Link href={`/designers/${designer.id}`} className="block">
+      <MemberLink href={`/designers/${designer.id}`} className="block">
         <div className="relative aspect-[16/10] overflow-hidden bg-ink-20">
           {cover ? (
-            <Image
-              src={cover}
-              alt={displayName}
-              fill
-              sizes="(max-width: 768px) 100vw, 33vw"
-              className="object-cover transition-transform duration-700 group-hover:scale-[1.04]"
-            />
+            cover.startsWith("data:") || cover.startsWith("blob:") ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={cover}
+                alt={displayName}
+                className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.04]"
+              />
+            ) : (
+              <Image
+                src={cover}
+                alt={displayName}
+                fill
+                sizes="(max-width: 768px) 100vw, 33vw"
+                className="object-cover transition-transform duration-700 group-hover:scale-[1.04]"
+              />
+            )
           ) : null}
           <div className="absolute left-4 top-4 flex items-center gap-2">
             <Badge variant="default" className="bg-white/90 text-ink">
@@ -54,9 +66,9 @@ export function DesignerCard({ designer }: { designer: Designer }) {
             <FavoriteButton designerId={designer.id} />
           </div>
         </div>
-      </Link>
+      </MemberLink>
       <div className="space-y-4 p-5">
-        <Link href={`/designers/${designer.id}`} className="block">
+        <MemberLink href={`/designers/${designer.id}`} className="block">
           <div className="flex items-start gap-3">
             <div className="relative">
               <Avatar className="h-12 w-12 ring-2 ring-white">
@@ -120,7 +132,7 @@ export function DesignerCard({ designer }: { designer: Designer }) {
             </span>
             <span className="inline-flex items-center gap-1">
               <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-              {designer.rating}
+              {(designer.reviewCount ?? 0) > 0 ? designer.rating : "暂无"}
             </span>
           </div>
 
@@ -196,7 +208,7 @@ export function DesignerCard({ designer }: { designer: Designer }) {
               %（设计师等级 × 地区梯队）；不含税与驻场含绘图加成。
             </p>
           </div>
-        </Link>
+        </MemberLink>
       </div>
     </Card>
   );

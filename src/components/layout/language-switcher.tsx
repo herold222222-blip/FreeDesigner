@@ -47,7 +47,7 @@ export function LanguageSwitcher({ className }: { className?: string }) {
             </button>
           ))}
           <div className="mt-1 border-t border-ink-20 px-3 py-2 text-[11px] text-ink-40">
-            v1.1 多语言切换 · UI 演示
+            v1.1 多语言切换
           </div>
         </div>
       ) : null}

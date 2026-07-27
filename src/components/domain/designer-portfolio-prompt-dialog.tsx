@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Dialog,
   DialogContent,
@@ -14,33 +14,63 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   designerCanAcceptOrders,
-  getMissingPortfolioProjectTypes,
-  getRequiredProjectTypes,
+  getAcceptableProjectTypes,
   portfolioReadinessHint,
 } from "@/lib/designer-portfolio-readiness";
 import type { Designer } from "@/lib/types";
 import { ImagePlus } from "lucide-react";
+
+const PORTFOLIO_PATH = "/designer/portfolio";
 
 export function DesignerPortfolioPromptDialog({
   designer,
 }: {
   designer: Designer | null;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
 
   const needsUpload = designer ? !designerCanAcceptOrders(designer) : false;
-  const required = designer ? getRequiredProjectTypes(designer) : [];
-  const missing = designer ? getMissingPortfolioProjectTypes(designer) : [];
+  const covered = designer ? getAcceptableProjectTypes(designer) : [];
   const hint = designer ? portfolioReadinessHint(designer) : "";
 
   useEffect(() => {
-    setOpen(needsUpload);
-  }, [needsUpload]);
+    if (!needsUpload) {
+      setDismissed(false);
+      setOpen(false);
+      return;
+    }
+    if (dismissed) {
+      setOpen(false);
+      return;
+    }
+    setOpen(true);
+  }, [needsUpload, dismissed]);
 
   if (!designer || !needsUpload) return null;
 
+  const dismiss = () => {
+    setDismissed(true);
+    setOpen(false);
+  };
+
+  const goUploadWorks = () => {
+    dismiss();
+    if (pathname !== PORTFOLIO_PATH) {
+      router.push(PORTFOLIO_PATH);
+    }
+  };
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) dismiss();
+        else if (!dismissed) setOpen(true);
+      }}
+    >
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -52,22 +82,17 @@ export function DesignerPortfolioPromptDialog({
               <p>
                 入驻审核已通过。请先在作品管理中按
                 <span className="font-medium text-ink">项目类型</span>
-                上传对应案例，平台核验并公开展示后，方可开启在线接单与匹配平台项目。
+                上传案例：上传后的类型将同步为擅长项目类型，并决定您可承接的订单类型。
               </p>
-              {required.length > 0 ? (
+              {covered.length > 0 ? (
                 <div className="rounded-xl bg-ink-20/30 p-3">
                   <div className="text-xs font-medium text-ink">
-                    需覆盖的项目类型
+                    当前可接单项目类型
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {required.map((t) => (
-                      <Badge
-                        key={t}
-                        variant={missing.includes(t) ? "amber" : "emerald"}
-                        className="text-[10px]"
-                      >
+                    {covered.map((t) => (
+                      <Badge key={t} variant="emerald" className="text-[10px]">
                         {t}
-                        {missing.includes(t) ? " · 待上传" : ""}
                       </Badge>
                     ))}
                   </div>
@@ -78,11 +103,11 @@ export function DesignerPortfolioPromptDialog({
           </DialogDescription>
         </DialogHeader>
         <DialogFooter className="gap-2 sm:gap-0">
-          <Button variant="ghost" onClick={() => setOpen(false)}>
+          <Button variant="ghost" onClick={dismiss}>
             稍后处理
           </Button>
-          <Button asChild variant="brand">
-            <Link href="/designer/portfolio">去上传作品</Link>
+          <Button variant="brand" onClick={goUploadWorks}>
+            去上传作品
           </Button>
         </DialogFooter>
       </DialogContent>

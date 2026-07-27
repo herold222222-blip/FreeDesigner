@@ -6,7 +6,7 @@ import type { CreatePaymentParams, CreatePaymentResult } from "./provider";
  *
  * - 默认 PAYMENT_SANDBOX_AUTOCONFIRM=true：创建即视为支付成功（保持一键体验）。
  * - 设为 false：返回一个可扫描的占位二维码，需调用 sandbox-confirm 接口
- *   （或前端「模拟支付成功」按钮）后才置为成功，便于演示扫码轮询交互。
+ *   （或前端「确认支付」按钮）后才置为成功，便于沙箱扫码轮询联调。
  */
 export function sandboxAutoConfirm() {
   return process.env.PAYMENT_SANDBOX_AUTOCONFIRM !== "false";
@@ -18,7 +18,7 @@ export async function createSandboxPayment(
   if (sandboxAutoConfirm()) {
     return { autoPaid: true, raw: { sandbox: true, auto: true } };
   }
-  // 二维码内容仅作演示占位（指向沙箱确认页/订单号）
+  // 二维码内容为沙箱占位（指向确认页/订单号）
   return {
     qrCodeContent: `lezyou-sandbox://pay?out_trade_no=${params.outTradeNo}&amount=${params.amountFen}`,
     autoPaid: false,

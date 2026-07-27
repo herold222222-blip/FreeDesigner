@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { AccountSessionActions } from "@/components/domain/account-session-actions";
 
 export default function ClientSettingsPage() {
   return (
@@ -14,7 +15,7 @@ export default function ClientSettingsPage() {
           账号设置
         </h2>
         <p className="mt-1 text-sm text-ink-60">
-          管理基础信息、企业认证、消息提醒。
+          管理基础信息、企业认证、消息提醒与登录状态。
         </p>
       </div>
 
@@ -77,6 +78,8 @@ export default function ClientSettingsPage() {
           ))}
         </div>
       </Card>
+
+      <AccountSessionActions />
     </div>
   );
 }

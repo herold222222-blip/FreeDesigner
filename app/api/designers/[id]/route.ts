@@ -19,6 +19,16 @@ export async function GET(
       : null;
     const designer = await getDesigner(params.id);
     if (!designer) return fail(404, "设计师不存在");
+
+    const isApproved = (designer.reviewStatus ?? "approved") === "approved";
+    const isSelf =
+      session?.role === "designer" && session.identityId === designer.id;
+    const isAdmin =
+      session?.role === "admin" || session?.role === "super_admin";
+    if (!isApproved && !isSelf && !isAdmin) {
+      return fail(404, "设计师不存在");
+    }
+
     return ok(redactDesignerContactFields(designer, viewer));
   });
 }

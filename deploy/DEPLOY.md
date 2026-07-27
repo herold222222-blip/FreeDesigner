@@ -185,8 +185,7 @@ openssl rand -base64 32    # 用于 CRON_SECRET、POSTGRES_PASSWORD
 | `AUTH_SECRET` | 随机 48 字节 | 随机 48 字节 |
 | `PUBLIC_BASE_URL` | `http://1.2.3.4:3000` | `https://your-domain.com` |
 | `COOKIE_SECURE` | `false` | `true` |
-| `DEMO_CODE_ENABLED` | `off`（需 SMS） | `off`（需 SMS） |
-| `NEXT_PUBLIC_DEMO_MODE` | `off` | `off` |
+| `SMS_PROVIDER` / `SMS_*` | 必填 | 必填 |
 | `SMS_PROVIDER` | `aliyun` + 密钥 | `aliyun` + 密钥 |
 | `CRON_SECRET` | 随机字符串 | 随机字符串 |
 
@@ -239,8 +238,6 @@ docker compose logs -f app
 # 健康检查
 bash deploy/health-check.sh
 
-# API 全流程自检需临时开演示码（见 scripts/verify-entrust-flow.mjs）
-# DEMO_CODE_ENABLED=on DEMO_VERIFICATION_CODE=xxx BASE_URL=http://你的公网IP:3000 npm run verify:flow
 ```
 
 浏览器访问 `PUBLIC_BASE_URL`，使用**短信验证码**登录（须配置 `SMS_*`；`sms.ts` 当前为接入占位）。
@@ -340,7 +337,7 @@ docker compose down -v               # ⚠️ 停止并删除数据卷（会丢�
 docker compose exec app npm run prod:db:seed
 ```
 
-> **警告**：seed 会写入演示数据，生产环境慎用。
+> **说明**：seed 仅写入预设管理员账号与平台配置，不会写入样例订单/设计师。
 
 ---
 
@@ -446,8 +443,7 @@ docker compose down && docker compose up -d --build
 
 ## 11. 生产上线检查清单
 
-- [ ] `DEMO_CODE_ENABLED=off`
-- [ ] `NEXT_PUBLIC_DEMO_MODE=off`（需重新 build）
+- [ ] 已配置 `SMS_PROVIDER` 与短信密钥
 - [ ] `COOKIE_SECURE=true`
 - [ ] `PUBLIC_BASE_URL` 为 HTTPS 域名
 - [ ] `AUTH_SECRET`、`POSTGRES_PASSWORD`、`CRON_SECRET` 均为强随机值

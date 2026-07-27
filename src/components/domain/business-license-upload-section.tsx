@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { DocumentUploadSlot } from "@/components/domain/document-upload-slot";
-import { mockRecognizeBusinessLicense } from "@/lib/business-license-ocr";
+import { recognizeBusinessLicense } from "@/lib/business-license-ocr";
 
 type Props = {
   uploaded: boolean;
@@ -35,11 +35,13 @@ export function BusinessLicenseUploadSection({
   onRecognized,
 }: Props) {
   const handleUpload = () => {
-    const ocr = mockRecognizeBusinessLicense();
-    onCompanyNameChange(ocr.companyName);
-    onCreditCodeChange(ocr.creditCode);
-    onFoundedYearChange(ocr.foundedYear);
-    onBusinessScopeChange(ocr.businessScope);
+    const ocr = recognizeBusinessLicense();
+    if (ocr) {
+      onCompanyNameChange(ocr.companyName);
+      onCreditCodeChange(ocr.creditCode);
+      onFoundedYearChange(ocr.foundedYear);
+      onBusinessScopeChange(ocr.businessScope);
+    }
     onUploadedChange(true);
     onRecognized?.();
   };

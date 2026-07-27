@@ -175,11 +175,10 @@ function LoginInner() {
       return;
     }
     try {
-      const res = await sendCodeApi(phone, "login");
+      await sendCodeApi(phone, "login");
       setSeconds(60);
       push({
         title: "验证码已发送",
-        description: res.demoCode ? `演示用验证码:${res.demoCode}` : undefined,
       });
     } catch (e) {
       push({
@@ -210,7 +209,17 @@ function LoginInner() {
       title: `欢迎回来 · ${roleLabel(res.role)}`,
       variant: "success",
     });
-    router.push(res.redirectTo ?? roleHome(res.role));
+    // 管理员 / 超级管理员登录后固定进入工作台
+    if (res.role === "admin" || res.role === "super_admin") {
+      router.replace(roleHome(res.role));
+      return;
+    }
+    const redirectParam = params.get("redirect");
+    const safeRedirect =
+      redirectParam?.startsWith("/") && !redirectParam.startsWith("//")
+        ? redirectParam
+        : null;
+    router.push(safeRedirect ?? res.redirectTo ?? roleHome(res.role));
   };
 
   const handleCodeLogin = async () => {

@@ -19,7 +19,8 @@ import {
   getDesignerOwnDeliverables,
   getDesignerStagePaymentStatus,
 } from "@/lib/designer-order-scope";
-import { getServiceProviderById } from "@/mocks/service-providers";
+import { findServiceProvider } from "@/lib/service-provider-catalog";
+import { useServiceProviders } from "@/lib/use-data";
 import { ForwardPaymentLinkDialog } from "@/components/domain/forward-payment-link-dialog";
 import {
   ArrowDownToLine,
@@ -69,6 +70,9 @@ export function StageTimeline({
   onUploadDeliverables?: (stage: PaymentStage) => void;
 }) {
   const push = useSessionStore((s) => s.pushNotification);
+  const { data: serviceProviders } = useServiceProviders();
+  const getServiceProvider = (id: string) =>
+    findServiceProvider(serviceProviders, id);
   const [forwardPayStage, setForwardPayStage] =
     React.useState<PaymentStage | null>(null);
   const isClientView = perspective === "client" || perspective === "admin";
@@ -423,7 +427,7 @@ export function StageTimeline({
                 stage={stage}
                 splits={stageSplits}
                 getDesigner={getDesigner}
-                getServiceProvider={getServiceProviderById}
+                getServiceProvider={getServiceProvider}
               />
             ) : null}
 

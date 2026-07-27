@@ -11,8 +11,6 @@ import { fetchAdminClientPayments } from "@/lib/api-client";
 import { parseAdminUsersReturnTo, withReturnTo } from "@/lib/admin-return-to";
 import { useOrders } from "@/lib/use-data";
 import { isProjectId } from "@/lib/project-id";
-import { clients as mockClients } from "@/mocks/clients";
-import { clientWalletByOwnerId } from "@/mocks/wallet";
 import type { Client, Order, WalletTransaction } from "@/lib/types";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { ChevronRight, Receipt } from "lucide-react";
@@ -50,11 +48,9 @@ function AdminClientPaymentsInner() {
       })
       .catch(() => {
         if (!active) return;
-        const mock = mockClients.find((c) => c.id === clientId);
-        const txs = clientWalletByOwnerId[clientId] ?? [];
-        setClient(mock ?? null);
-        setTransactions(txs);
-        setTotalPaid(sumTotalPaid(txs));
+        setClient(null);
+        setTransactions([]);
+        setTotalPaid(0);
       })
       .finally(() => {
         if (active) setLoading(false);

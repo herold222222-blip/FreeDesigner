@@ -12,21 +12,26 @@ import {
   type DesignerSortKey,
   sortDesigners,
   getSortReferenceLabel,
+  pinDesignerFirst,
 } from "@/lib/designer-list-utils";
 import { useDesignerFilters } from "@/lib/designer-filters";
+import { useRoleStore } from "@/store/role-store";
+import { GuestAccessGate } from "@/components/domain/guest-access-gate";
 import { Search, ArrowUpDown } from "lucide-react";
 
 export default function DesignersPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="container-page py-20 text-center text-ink-60">
-          加载设计师列表...
-        </div>
-      }
-    >
-      <DesignersInner />
-    </Suspense>
+    <GuestAccessGate intent="browse">
+      <Suspense
+        fallback={
+          <div className="container-page py-20 text-center text-ink-60">
+            加载设计师列表...
+          </div>
+        }
+      >
+        <DesignersInner />
+      </Suspense>
+    </GuestAccessGate>
   );
 }
 
@@ -34,6 +39,8 @@ function DesignersInner() {
   const params = useSearchParams();
   const initialSpecialty = params.get("specialty") as Specialty | null;
   const { data: designers, loading } = useDesigners();
+  const role = useRoleStore((s) => s.role);
+  const identityId = useRoleStore((s) => s.identityId);
 
   const { filters, patchFilters, resetFilters, filtered: filteredBase } =
     useDesignerFilters(designers, {
@@ -42,10 +49,14 @@ function DesignersInner() {
 
   const [sortKey, setSortKey] = useState<DesignerSortKey>("comprehensive");
 
-  const filtered = useMemo(
-    () => sortDesigners(filteredBase, sortKey, filters.city),
-    [filteredBase, sortKey, filters.city],
-  );
+  const filtered = useMemo(() => {
+    const sorted = sortDesigners(filteredBase, sortKey, filters.city);
+    if (role !== "designer" || !identityId) return sorted;
+    const self = designers.find((d) => d.id === identityId);
+    if (!self) return pinDesignerFirst(sorted, identityId);
+    const withoutSelf = sorted.filter((d) => d.id !== identityId);
+    return [self, ...withoutSelf];
+  }, [filteredBase, sortKey, filters.city, role, identityId, designers]);
 
   const sortHint = DESIGNER_SORT_OPTIONS.find((o) => o.value === sortKey)?.hint;
   const distanceRef = getSortReferenceLabel(filters.city);

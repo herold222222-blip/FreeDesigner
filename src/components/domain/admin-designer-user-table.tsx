@@ -193,9 +193,18 @@ export function AdminDesignerUserTable({
                         <div className="min-w-0">
                           <div
                             className="truncate font-medium text-ink transition-colors group-hover:text-brand"
-                            title={d.name}
+                            title={
+                              d.loginName
+                                ? `${d.name}（${d.loginName}）`
+                                : d.name
+                            }
                           >
                             {d.name}
+                            {d.loginName ? (
+                              <span className="ml-1.5 font-normal text-ink-40">
+                                {d.loginName}
+                              </span>
+                            ) : null}
                           </div>
                           <div className="mt-0.5 flex items-center gap-x-2 text-[10px] text-ink-60">
                             <span className="inline-flex shrink-0 items-center gap-0.5">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useDesigner } from "@/lib/use-data";
@@ -38,20 +38,24 @@ import { DesignerName } from "@/components/domain/designer-name";
 import {
   DesignerLevelBadge,
 } from "@/components/domain/level-badges";
+import { GuestAccessGate } from "@/components/domain/guest-access-gate";
 
 export default function ScanOrderPage({
   params,
 }: {
   params: { designerId: string };
 }) {
-  return <ScanOrderForm designerId={params.designerId} />;
+  return (
+    <GuestAccessGate intent="browse">
+      <ScanOrderForm designerId={params.designerId} />
+    </GuestAccessGate>
+  );
 }
 
 function ScanOrderForm({ designerId }: { designerId: string }) {
   const router = useRouter();
   const { data: designer, loading } = useDesigner(designerId);
   const push = useSessionStore((s) => s.pushNotification);
-  const setRole = useRoleStore((s) => s.setRole);
   const role = useRoleStore((s) => s.role);
   const identityId = useRoleStore((s) => s.identityId);
   const [submitting, setSubmitting] = useState(false);
@@ -65,11 +69,6 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [paymentStages, setPaymentStages] = useState(() => defaultPaymentStages());
-
-  useEffect(() => {
-    if (role === "guest") setRole("client");
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only auto-switch on mount
-  }, []);
 
   const level: DesignerLevel = designer?.level ?? "mid_v1";
   const v11Rates = useMemo(

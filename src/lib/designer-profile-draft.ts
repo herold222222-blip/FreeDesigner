@@ -1,19 +1,36 @@
 import type {
   Designer,
+  EducationExperience,
+  EmploymentExperience,
+  HighestEducation,
   OnlineMeetingTimeOption,
   ServiceMode,
   Specialty,
   SubSpecialty,
   TravelDurationOption,
 } from "@/lib/types";
+import { inferRegionTier } from "@/lib/constants";
+import {
+  emptyEducationExperience,
+  emptyEmploymentExperience,
+  highestEducationLabel,
+  normalizeEducationExperiences,
+  normalizeEmploymentExperiences,
+} from "@/lib/designer-education";
 import { getOnlineMeetingTimeLabel } from "@/lib/designer-service-settings";
+import { defaultPrimaryTrackForSpecialty } from "@/lib/designer-track-resolve";
 
 /** 入驻后可在主页编辑的字段（不含姓名、年龄 / 从业年限） */
 export interface DesignerProfileDraft {
   phone?: string;
   location?: string;
+  /** @deprecated 请用 highestEducation + educationExperiences */
   education?: string;
+  /** @deprecated 请用 employmentExperiences */
   formerEmployers?: string[];
+  highestEducation?: HighestEducation;
+  educationExperiences?: EducationExperience[];
+  employmentExperiences?: EmploymentExperience[];
   avatar?: string;
   specialty?: Specialty;
   subSpecialties?: SubSpecialty[];
@@ -41,27 +58,6 @@ export interface DesignerProfileDraft {
   allYearOpen?: boolean;
 }
 
-/** 演示：注册时从身份证解析的固定年龄 */
-export const DESIGNER_ID_CARD_AGE: Record<string, number> = {
-  designer_chen: 38,
-  designer_zhao: 35,
-  designer_li: 42,
-  designer_wang: 33,
-  designer_he: 40,
-};
-
-export const DEFAULT_DESIGNER_PHONES: Record<string, string> = {
-  designer_chen: "13912348821",
-};
-
-const DEFAULT_EDUCATION: Record<string, string> = {
-  designer_chen: "同济大学 · 风景园林 · 硕士",
-};
-
-const DEFAULT_FORMER_EMPLOYERS: Record<string, string[]> = {
-  designer_chen: ["AECOM 景观", "奥雅设计"],
-};
-
 export function deriveProjectTypeTagsFromPortfolio(designer: Designer): string[] {
   const fromPortfolio = [
     ...new Set(designer.portfolio.map((p) => p.category).filter(Boolean)),
@@ -70,12 +66,36 @@ export function deriveProjectTypeTagsFromPortfolio(designer: Designer): string[]
 }
 
 export function designerDraftFromDesigner(designer: Designer): DesignerProfileDraft {
+  const educationExperiences = normalizeEducationExperiences(
+    designer.educationExperiences,
+  );
+  const employmentExperiences = normalizeEmploymentExperiences(
+    designer.employmentExperiences,
+  );
   return {
-    phone: DEFAULT_DESIGNER_PHONES[designer.id] ?? "",
+    phone: "",
     location: designer.location,
-    education: designer.education ?? DEFAULT_EDUCATION[designer.id] ?? "",
+    highestEducation: designer.highestEducation,
+    educationExperiences:
+      educationExperiences.length > 0
+        ? educationExperiences
+        : [emptyEducationExperience()],
+    employmentExperiences:
+      employmentExperiences.length > 0
+        ? employmentExperiences
+        : [emptyEmploymentExperience()],
+    education:
+      designer.education ??
+      (designer.highestEducation
+        ? highestEducationLabel(designer.highestEducation)
+        : ""),
     formerEmployers:
-      designer.formerEmployers ?? DEFAULT_FORMER_EMPLOYERS[designer.id] ?? [],
+      designer.formerEmployers ??
+      (employmentExperiences.length
+        ? employmentExperiences
+            .map((e) => e.company)
+            .filter((x): x is string => Boolean(x))
+        : []),
     avatar: designer.avatar,
     specialty: designer.specialty,
     subSpecialties: [...designer.subSpecialties],
@@ -118,13 +138,59 @@ export function mergeDesignerProfile(
     ? getOnlineMeetingTimeLabel(draft.onlineMeetingTime)
     : base.meetingFlexibility;
 
+  const nextSpecialty = draft.specialty ?? base.specialty;
+  const nextSubs = draft.subSpecialties ?? base.subSpecialties;
+  const specialtyChanged =
+    draft.specialty !== undefined && draft.specialty !== base.specialty;
+  const subsChanged = draft.subSpecialties !== undefined;
+  const trackMismatch =
+    !base.primaryTrack || base.primaryTrack.l1 !== nextSpecialty;
+  /** 专业变更、航道缺失/不一致，或子专业变更时，同步 primaryTrack */
+  const shouldSyncTrack = specialtyChanged || trackMismatch || subsChanged;
+
+  const nextLocation =
+    draft.location !== undefined ? draft.location : base.location;
   const merged: Designer = {
     ...base,
-    ...(draft.location !== undefined ? { location: draft.location } : {}),
-    ...(draft.education !== undefined ? { education: draft.education } : {}),
-    ...(draft.formerEmployers !== undefined
-      ? { formerEmployers: draft.formerEmployers }
+    ...(draft.location !== undefined
+      ? {
+          location: draft.location,
+          regionTier: draft.location.trim()
+            ? inferRegionTier(draft.location)
+            : base.regionTier,
+        }
+      : !base.regionTier && nextLocation?.trim()
+        ? { regionTier: inferRegionTier(nextLocation) }
+        : {}),
+    ...(draft.highestEducation !== undefined
+      ? {
+          highestEducation: draft.highestEducation,
+          education: highestEducationLabel(draft.highestEducation),
+        }
+      : draft.education !== undefined
+        ? { education: draft.education }
+        : {}),
+    ...(draft.educationExperiences !== undefined
+      ? {
+          educationExperiences: normalizeEducationExperiences(
+            draft.educationExperiences,
+          ),
+        }
       : {}),
+    ...(draft.employmentExperiences !== undefined
+      ? {
+          employmentExperiences: normalizeEmploymentExperiences(
+            draft.employmentExperiences,
+          ),
+          formerEmployers: normalizeEmploymentExperiences(
+            draft.employmentExperiences,
+          )
+            .map((e) => e.company)
+            .filter((x): x is string => Boolean(x)),
+        }
+      : draft.formerEmployers !== undefined
+        ? { formerEmployers: draft.formerEmployers }
+        : {}),
     ...(draft.specialty !== undefined ? { specialty: draft.specialty } : {}),
     ...(draft.subSpecialties !== undefined
       ? { subSpecialties: draft.subSpecialties }
@@ -167,6 +233,12 @@ export function mergeDesignerProfile(
     ...(draft.serviceModes !== undefined ? { serviceModes: draft.serviceModes } : {}),
     ...(draft.dailyRate !== undefined ? { dailyRate: draft.dailyRate } : {}),
     ...(draft.monthlyRate !== undefined ? { monthlyRate: draft.monthlyRate } : {}),
+    ...(shouldSyncTrack
+      ? {
+          primaryTrack: defaultPrimaryTrackForSpecialty(nextSpecialty, nextSubs),
+          ...(specialtyChanged ? { secondaryTracks: [] } : {}),
+        }
+      : {}),
   };
 
   return {

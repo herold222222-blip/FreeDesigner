@@ -1,10 +1,8 @@
-import { orders } from "@/mocks/orders";
-
 export function generateStaticParams() {
-  return orders.map((o) => ({ id: o.id }));
+  return [];
 }
 
-export default function AdminOrderDetailLayout({
+export default function AdminOrderLayout({
   children,
 }: {
   children: React.ReactNode;

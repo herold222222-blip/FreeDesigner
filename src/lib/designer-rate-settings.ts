@@ -6,8 +6,8 @@ import { formatPricePerSqm } from "@/lib/designer-pricing-base";
 import { formatCurrency } from "@/lib/utils";
 
 export const DEFAULT_DESIGNER_RATE_PERCENT = 100;
-export const MIN_DESIGNER_RATE_PERCENT = 50;
-export const MAX_DESIGNER_RATE_PERCENT = 200;
+/** 自定义费率百分比无上限；仅拒绝负数与非数字 */
+export const MIN_DESIGNER_RATE_PERCENT = 0;
 export const DESIGNER_RATE_PERCENT_STEP = 5;
 
 export type DesignerRatePercents = Record<string, number>;
@@ -40,10 +40,8 @@ export function getTimeRatePercentKey(lineId: string, subKey: TimeRateSubKey) {
 }
 
 export function clampDesignerRatePercent(value: number): number {
-  return Math.min(
-    MAX_DESIGNER_RATE_PERCENT,
-    Math.max(MIN_DESIGNER_RATE_PERCENT, Math.round(value)),
-  );
+  if (!Number.isFinite(value)) return DEFAULT_DESIGNER_RATE_PERCENT;
+  return Math.max(MIN_DESIGNER_RATE_PERCENT, Math.round(value));
 }
 
 export function getLineRatePercent(

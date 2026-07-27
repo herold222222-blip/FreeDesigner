@@ -27,6 +27,7 @@ import { getL2Options, getL3Options } from "@/lib/bounty-filters";
 import {
   orgL2OptionGroups,
   orgL3OptionGroups,
+  orgTracksFromL3Keys,
   pruneOrgL2Keys,
   pruneOrgL3Keys,
 } from "@/lib/designer-track-selection";
@@ -37,11 +38,27 @@ import {
   TEAM_SIZE_OPTIONS,
 } from "@/lib/designer-service-settings";
 import type {
+  EducationExperience,
+  EmploymentExperience,
+  HighestEducation,
   OnlineMeetingTimeOption,
   Specialty,
   SubjectType,
   TeamSizeOption,
 } from "@/lib/types";
+import {
+  emptyEducationExperience,
+  emptyEmploymentExperience,
+  normalizeEducationExperiences,
+  normalizeEmploymentExperiences,
+  validateEducationExperiences,
+  validateEmploymentExperiences,
+} from "@/lib/designer-education";
+import {
+  EducationExperienceEditor,
+  EmploymentExperienceEditor,
+  HighestEducationSelect,
+} from "@/components/domain/designer-education-employment-fields";
 
 const SUBJECT_ONBOARDING_LABEL: Record<SubjectType, string> = {
   individual: "个人设计师",
@@ -158,6 +175,15 @@ function DesignerOnboardingInner() {
   );
   const [years, setYears] = useState(5);
   const [inJob, setInJob] = useState(true);
+  const [highestEducation, setHighestEducation] = useState<
+    HighestEducation | ""
+  >("");
+  const [educationExperiences, setEducationExperiences] = useState<
+    EducationExperience[]
+  >(() => [emptyEducationExperience()]);
+  const [employmentExperiences, setEmploymentExperiences] = useState<
+    EmploymentExperience[]
+  >(() => [emptyEmploymentExperience()]);
 
   const [trackL1, setTrackL1] = useState<Specialty>("landscape");
   const [trackL2, setTrackL2] = useState(
@@ -232,12 +258,11 @@ function DesignerOnboardingInner() {
       return;
     }
     try {
-      const res = await sendCodeApi(normalizedPhone, "register");
+      await sendCodeApi(normalizedPhone, "register");
       setCodeSeconds(60);
       setPhoneVerified(false);
       push({
         title: "验证码已发送",
-        description: res.demoCode ? `演示用验证码：${res.demoCode}` : undefined,
       });
     } catch (e) {
       push({
@@ -323,6 +348,20 @@ function DesignerOnboardingInner() {
     }
     if (!gender) {
       push({ title: "请选择性别", variant: "destructive" });
+      return false;
+    }
+    if (!highestEducation) {
+      push({ title: "请选择最高学历", variant: "destructive" });
+      return false;
+    }
+    const eduErr = validateEducationExperiences(educationExperiences);
+    if (eduErr) {
+      push({ title: eduErr, variant: "destructive" });
+      return false;
+    }
+    const empErr = validateEmploymentExperiences(employmentExperiences);
+    if (empErr) {
+      push({ title: empErr, variant: "destructive" });
       return false;
     }
     return verifyPhoneStep();
@@ -498,6 +537,17 @@ function DesignerOnboardingInner() {
         subjectType === "team" || subjectType === "company"
           ? resolveOrgLocationLabel()
           : resolveAdministrativeTriple(locationTriple)?.fullLabel ?? "";
+      const orgTracks = allowsMultiTrack
+        ? orgTracksFromL3Keys(orgL3Keys)
+        : [];
+      const specialty = allowsMultiTrack
+        ? (orgTracks[0]?.l1 ?? orgL1s[0] ?? trackL1)
+        : trackL1;
+      const primaryTrack = allowsMultiTrack
+        ? orgTracks[0]
+        : { l1: trackL1, l2: trackL2, l3: trackL3 };
+      const secondaryTracks = allowsMultiTrack ? orgTracks.slice(1) : [];
+
       const res = await registerRequest({
         phone: normalizedPhone,
         code: reuseAccountPhone ? undefined : smsCode.trim(),
@@ -545,6 +595,24 @@ function DesignerOnboardingInner() {
         companyQualifications:
           subjectType === "company" && companyQualificationKeys.length > 0
             ? qualificationsFromKeys(companyQualificationKeys)
+            : undefined,
+        specialty,
+        primaryTrack,
+        secondaryTracks,
+        yearsOfExperience:
+          subjectType === "individual" ? Number(years) || 0 : undefined,
+        isInJob: subjectType === "individual" ? inJob : undefined,
+        highestEducation:
+          subjectType === "individual" && highestEducation
+            ? highestEducation
+            : undefined,
+        educationExperiences:
+          subjectType === "individual"
+            ? normalizeEducationExperiences(educationExperiences)
+            : undefined,
+        employmentExperiences:
+          subjectType === "individual"
+            ? normalizeEmploymentExperiences(employmentExperiences)
             : undefined,
       });
       setRole(res.role, res.identityId);
@@ -731,54 +799,25 @@ function DesignerOnboardingInner() {
                 <p className="text-xs text-ink-40">须与身份证一致的联系人姓名。</p>
               </div>
 
-              <div className="space-y-4">
-                <div>
-                  <Label className="flex items-center gap-2">
-                    联系人手机号码 *
-                    {phoneVerified ? (
-                      <Badge variant="emerald" className="text-[10px]">
-                        已验证
-                      </Badge>
-                    ) : null}
-                  </Label>
-                  <Input
-                    placeholder="11 位手机号"
-                    value={phone}
-                    onChange={(e) => {
-                      setPhone(e.target.value);
-                      setPhoneVerified(false);
-                      setSmsCode("");
-                    }}
-                    className="mt-2"
-                  />
-                </div>
-                <div>
-                  <Label>短信验证码 *</Label>
-                  <div className="mt-2 flex gap-2">
-                    <Input
-                      placeholder="6 位数字"
-                      value={smsCode}
-                      onChange={(e) => {
-                        setSmsCode(e.target.value);
-                        setPhoneVerified(false);
-                      }}
-                      className="flex-1"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="shrink-0"
-                      onClick={sendSmsCode}
-                      disabled={codeSeconds > 0}
-                    >
-                      {codeSeconds > 0 ? `${codeSeconds} 秒` : "获取验证码"}
-                    </Button>
-                  </div>
-                  <p className="mt-1.5 text-xs text-ink-40">
-                    验证码将发送至上述手机号；注册后可在账号设置中修改联系人手机。
-                  </p>
-                </div>
-              </div>
+              <DesignerPhoneFields
+                phoneLabel="联系人手机号码 *"
+                phone={phone}
+                onPhoneChange={(value) => {
+                  setPhone(value);
+                  setPhoneVerified(false);
+                  setSmsCode("");
+                }}
+                smsCode={smsCode}
+                onSmsCodeChange={(value) => {
+                  setSmsCode(value);
+                  setPhoneVerified(false);
+                }}
+                codeSeconds={codeSeconds}
+                onSendCode={sendSmsCode}
+                phoneVerified={phoneVerified}
+                reuseAccountPhone={Boolean(reuseAccountPhone)}
+                smsHint="验证码将发送至上述手机号；注册后可在账号设置中修改联系人手机。"
+              />
 
               <div className="space-y-3">
                 <Label>所在地区 *</Label>
@@ -894,54 +933,25 @@ function DesignerOnboardingInner() {
                 <p className="text-xs text-ink-40">须与身份证一致的联系人姓名。</p>
               </div>
 
-              <div className="space-y-4">
-                <div>
-                  <Label className="flex items-center gap-2">
-                    联系人手机号码 *
-                    {phoneVerified ? (
-                      <Badge variant="emerald" className="text-[10px]">
-                        已验证
-                      </Badge>
-                    ) : null}
-                  </Label>
-                  <Input
-                    placeholder="11 位手机号"
-                    value={phone}
-                    onChange={(e) => {
-                      setPhone(e.target.value);
-                      setPhoneVerified(false);
-                      setSmsCode("");
-                    }}
-                    className="mt-2"
-                  />
-                </div>
-                <div>
-                  <Label>短信验证码 *</Label>
-                  <div className="mt-2 flex gap-2">
-                    <Input
-                      placeholder="6 位数字"
-                      value={smsCode}
-                      onChange={(e) => {
-                        setSmsCode(e.target.value);
-                        setPhoneVerified(false);
-                      }}
-                      className="flex-1"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="shrink-0"
-                      onClick={sendSmsCode}
-                      disabled={codeSeconds > 0}
-                    >
-                      {codeSeconds > 0 ? `${codeSeconds} 秒` : "获取验证码"}
-                    </Button>
-                  </div>
-                  <p className="mt-1.5 text-xs text-ink-40">
-                    验证码将发送至上述手机号；注册后可在账号设置中修改联系人手机。
-                  </p>
-                </div>
-              </div>
+              <DesignerPhoneFields
+                phoneLabel="联系人手机号码 *"
+                phone={phone}
+                onPhoneChange={(value) => {
+                  setPhone(value);
+                  setPhoneVerified(false);
+                  setSmsCode("");
+                }}
+                smsCode={smsCode}
+                onSmsCodeChange={(value) => {
+                  setSmsCode(value);
+                  setPhoneVerified(false);
+                }}
+                codeSeconds={codeSeconds}
+                onSendCode={sendSmsCode}
+                phoneVerified={phoneVerified}
+                reuseAccountPhone={Boolean(reuseAccountPhone)}
+                smsHint="验证码将发送至上述手机号；注册后可在账号设置中修改联系人手机。"
+              />
 
               <div className="space-y-3">
                 <Label>所在地区 *</Label>
@@ -1063,53 +1073,26 @@ function DesignerOnboardingInner() {
                     gender={gender}
                   />
                 </div>
-                <div className="space-y-4 md:col-span-2">
-                  <div>
-                    <Label className="flex items-center gap-2">
-                      手机号 *
-                      {phoneVerified ? (
-                        <Badge variant="emerald" className="text-[10px]">
-                          已验证
-                        </Badge>
-                      ) : null}
-                    </Label>
-                    <Input
-                      placeholder="11 位手机号"
-                      value={phone}
-                      onChange={(e) => {
-                        setPhone(e.target.value);
-                        setPhoneVerified(false);
-                        setSmsCode("");
-                      }}
-                      className="mt-2"
-                    />
-                  </div>
-                  <div>
-                    <Label>短信验证码 *</Label>
-                    <div className="mt-2 flex gap-2">
-                      <Input
-                        placeholder="6 位数字"
-                        value={smsCode}
-                        onChange={(e) => {
-                          setSmsCode(e.target.value);
-                          setPhoneVerified(false);
-                        }}
-                        className="flex-1"
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="shrink-0"
-                        onClick={sendSmsCode}
-                        disabled={codeSeconds > 0}
-                      >
-                        {codeSeconds > 0 ? `${codeSeconds} 秒` : "获取验证码"}
-                      </Button>
-                    </div>
-                    <p className="mt-1.5 text-xs text-ink-40">
-                      验证码将发送至上述手机号，用于确认联系方式真实有效
-                    </p>
-                  </div>
+                <div className="md:col-span-2">
+                  <DesignerPhoneFields
+                    phoneLabel="手机号 *"
+                    phone={phone}
+                    onPhoneChange={(value) => {
+                      setPhone(value);
+                      setPhoneVerified(false);
+                      setSmsCode("");
+                    }}
+                    smsCode={smsCode}
+                    onSmsCodeChange={(value) => {
+                      setSmsCode(value);
+                      setPhoneVerified(false);
+                    }}
+                    codeSeconds={codeSeconds}
+                    onSendCode={sendSmsCode}
+                    phoneVerified={phoneVerified}
+                    reuseAccountPhone={Boolean(reuseAccountPhone)}
+                    smsHint="验证码将发送至上述手机号，用于确认联系方式真实有效"
+                  />
                 </div>
                 <div className="md:col-span-2">
                   <Label>所在地</Label>
@@ -1137,6 +1120,25 @@ function DesignerOnboardingInner() {
                     </span>
                     <Switch checked={inJob} onCheckedChange={setInJob} />
                   </div>
+                </div>
+                <div className="md:col-span-2">
+                  <HighestEducationSelect
+                    required
+                    value={highestEducation}
+                    onChange={setHighestEducation}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <EducationExperienceEditor
+                    value={educationExperiences}
+                    onChange={setEducationExperiences}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <EmploymentExperienceEditor
+                    value={employmentExperiences}
+                    onChange={setEmploymentExperiences}
+                  />
                 </div>
               </div>
             </div>
@@ -1568,6 +1570,78 @@ function DesignerOnboardingInner() {
           </div>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function DesignerPhoneFields({
+  phoneLabel,
+  phone,
+  onPhoneChange,
+  smsCode,
+  onSmsCodeChange,
+  codeSeconds,
+  onSendCode,
+  phoneVerified,
+  reuseAccountPhone,
+  smsHint,
+}: {
+  phoneLabel: string;
+  phone: string;
+  onPhoneChange: (value: string) => void;
+  smsCode: string;
+  onSmsCodeChange: (value: string) => void;
+  codeSeconds: number;
+  onSendCode: () => void;
+  phoneVerified: boolean;
+  reuseAccountPhone: boolean;
+  smsHint: string;
+}) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <Label className="flex items-center gap-2">
+          {phoneLabel}
+          {phoneVerified || reuseAccountPhone ? (
+            <Badge variant="emerald" className="text-[10px]">
+              已验证
+            </Badge>
+          ) : null}
+        </Label>
+        <Input
+          placeholder="11 位手机号"
+          value={phone}
+          onChange={(e) => onPhoneChange(e.target.value)}
+          className="mt-2"
+        />
+      </div>
+      {!reuseAccountPhone ? (
+        <div>
+          <Label>短信验证码 *</Label>
+          <div className="mt-2 flex gap-2">
+            <Input
+              placeholder="6 位数字"
+              value={smsCode}
+              onChange={(e) => onSmsCodeChange(e.target.value)}
+              className="flex-1"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="shrink-0"
+              onClick={onSendCode}
+              disabled={codeSeconds > 0}
+            >
+              {codeSeconds > 0 ? `${codeSeconds} 秒` : "获取验证码"}
+            </Button>
+          </div>
+          <p className="mt-1.5 text-xs text-ink-40">{smsHint}</p>
+        </div>
+      ) : (
+        <p className="text-xs text-emerald-700">
+          已登录账号手机号可直接使用，无需再收验证码。若更换手机号需重新验证。
+        </p>
+      )}
     </div>
   );
 }

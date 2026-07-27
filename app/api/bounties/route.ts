@@ -23,6 +23,10 @@ export async function POST(req: NextRequest) {
     }
     const body = (await req.json().catch(() => null)) as Partial<Bounty> | null;
     if (!body || !body.title) return fail(400, "缺少必要字段");
+    const reward = Math.round(Number(body.reward ?? 0));
+    if (!Number.isFinite(reward) || reward < 1000) {
+      return fail(400, "悬赏金额须不少于 1000 元");
+    }
 
     const id = body.id ?? `bounty_${Date.now()}`;
     const code = body.code ?? `XS-${Date.now().toString().slice(-6)}`;
@@ -36,7 +40,7 @@ export async function POST(req: NextRequest) {
       location:
         body.location ?? { provinceCode: "", provinceName: "", label: "" },
       description: body.description ?? "",
-      reward: body.reward ?? 0,
+      reward,
       rewardModel: body.rewardModel ?? "negotiable",
       deadline: body.deadline ?? "",
       publishedAt: new Date().toISOString(),

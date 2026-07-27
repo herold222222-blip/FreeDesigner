@@ -208,9 +208,18 @@ export function AdminClientUserTable({
                           <div className="min-w-0">
                             <div
                               className="truncate font-medium text-ink"
-                              title={c.name}
+                              title={
+                                c.loginName
+                                  ? `${c.name}（${c.loginName}）`
+                                  : c.name
+                              }
                             >
                               {c.name}
+                              {c.loginName ? (
+                                <span className="ml-1.5 font-normal text-ink-40">
+                                  {c.loginName}
+                                </span>
+                              ) : null}
                             </div>
                             {frozen ? (
                               <div className="text-[10px] text-amber-700">

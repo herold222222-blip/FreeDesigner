@@ -138,7 +138,7 @@ export function AdminPlatformDataCharts() {
               className={cn(
                 "rounded-lg px-4 py-1.5 text-sm font-medium transition-colors",
                 period === option.value
-                  ? "bg-ink text-paper shadow-sm"
+                  ? "bg-ink text-white shadow-sm"
                   : "text-ink-60 hover:text-ink",
               )}
             >

@@ -28,6 +28,22 @@ export interface SessionUser {
   phone: string;
   name: string;
   avatar?: string | null;
+  /** 已入驻的业务身份（委托人 / 设计师），不含管理员 */
+  availableRoles: Array<"client" | "designer">;
+}
+
+/** 根据资料推导可用业务身份（不含管理员） */
+export async function listBusinessRoles(
+  userId: string,
+): Promise<Array<"client" | "designer">> {
+  const [client, designer] = await Promise.all([
+    prisma.client.findUnique({ where: { userId }, select: { id: true } }),
+    prisma.designer.findUnique({ where: { userId }, select: { id: true } }),
+  ]);
+  const roles: Array<"client" | "designer"> = [];
+  if (client) roles.push("client");
+  if (designer) roles.push("designer");
+  return roles;
 }
 
 export function hashPassword(password: string) {
@@ -86,6 +102,12 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     return null;
   }
 
+  const isAdmin =
+    session.role === "admin" || session.role === "super_admin";
+  const availableRoles = isAdmin
+    ? []
+    : await listBusinessRoles(session.userId);
+
   return {
     sessionId: session.id,
     userId: session.userId,
@@ -94,6 +116,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     phone: session.user.phone,
     name: session.user.name,
     avatar: session.user.avatar,
+    availableRoles,
   };
 }
 

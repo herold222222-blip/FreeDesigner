@@ -41,14 +41,5 @@ if [ "$HTTP_CODE" != "401" ] && [ "$HTTP_CODE" != "200" ]; then
   exit 1
 fi
 
-echo "[health] 检查演示/验证码环境变量..."
-docker compose exec -T app node -e "
-  const d = process.env.DEMO_CODE_ENABLED || '(未设)';
-  const c = process.env.DEMO_VERIFICATION_CODE || '(未设)';
-  const ui = process.env.NEXT_PUBLIC_DEMO_MODE || '(构建时写入，运行时不可见)';
-  console.log('[health] DEMO_CODE_ENABLED=' + d);
-  console.log('[health] DEMO_VERIFICATION_CODE=' + c);
-" 2>/dev/null || echo "[health] ⚠️  无法读取容器环境变量"
-
 echo "[health] ✓ 全部通过"
 echo "[health] 访问地址: $BASE"

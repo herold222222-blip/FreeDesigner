@@ -3,11 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { Order, OrderAuditAssignment } from "@/lib/types";
 import { resolveTrackLabels } from "@/lib/constants";
-import {
-  getServiceProviderById,
-  serviceProviders,
-  type ServiceProvider,
-} from "@/mocks/service-providers";
+import { findServiceProvider } from "@/lib/service-provider-catalog";
+import { useServiceProviders } from "@/lib/use-data";
+import type { ServiceProvider } from "@/lib/types";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -56,6 +54,9 @@ export function OrderValueAddedServicesPanel({
   order: Order;
   mode?: "client" | "admin";
 }) {
+  const { data: serviceProviders } = useServiceProviders();
+  const getServiceProvider = (id: string) =>
+    findServiceProvider(serviceProviders, id);
   const audits = order.auditAssignments ?? [];
   const pm = order.projectManagement;
   if (!order.withAuditService && !order.withProjectManagement) return null;
@@ -121,6 +122,8 @@ export function OrderValueAddedServicesPanel({
                 order={order}
                 audit={audit}
                 mode={mode}
+                getServiceProvider={getServiceProvider}
+                serviceProviders={serviceProviders}
               />
             ))}
           </div>
@@ -133,7 +136,13 @@ export function OrderValueAddedServicesPanel({
             <UserCog className="h-4 w-4" />
             施工图项目管理员 · 整体服务
           </div>
-          <ProjectManagerCard order={order} pm={pm} mode={mode} />
+          <ProjectManagerCard
+            order={order}
+            pm={pm}
+            mode={mode}
+            getServiceProvider={getServiceProvider}
+            serviceProviders={serviceProviders}
+          />
         </div>
       ) : null}
     </Card>
@@ -144,13 +153,17 @@ function AuditAssignmentCard({
   order,
   audit,
   mode = "client",
+  getServiceProvider,
+  serviceProviders,
 }: {
   order: Order;
   audit: OrderAuditAssignment;
   mode?: "client" | "admin";
+  getServiceProvider: (id: string) => ServiceProvider | undefined;
+  serviceProviders: ServiceProvider[];
 }) {
   const labels = resolveTrackLabels(audit.l1, audit.l2, audit.l3);
-  const auditor = getServiceProviderById(audit.auditorId);
+  const auditor = getServiceProvider(audit.auditorId);
   const meta = STATUS_META[audit.status];
   const deliverables = getDeliverablesForIds(
     order,
@@ -178,6 +191,7 @@ function AuditAssignmentCard({
             mode={mode}
             replaceLabel="更换审图师"
             roleFilter="auditor"
+            serviceProviders={serviceProviders}
           />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -220,12 +234,16 @@ function ProjectManagerCard({
   order,
   pm,
   mode = "client",
+  getServiceProvider,
+  serviceProviders,
 }: {
   order: Order;
   pm: NonNullable<Order["projectManagement"]>;
   mode?: "client" | "admin";
+  getServiceProvider: (id: string) => ServiceProvider | undefined;
+  serviceProviders: ServiceProvider[];
 }) {
-  const manager = getServiceProviderById(pm.projectManagerId);
+  const manager = getServiceProvider(pm.projectManagerId);
   const meta = STATUS_META[pm.status];
   const deliverables = getDeliverablesForIds(
     order,
@@ -243,6 +261,7 @@ function ProjectManagerCard({
             replaceLabel="更换项目管理员"
             roleFilter="project_manager"
             size="lg"
+            serviceProviders={serviceProviders}
           />
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -281,12 +300,14 @@ function ServiceProviderAvatarMenu({
   replaceLabel,
   roleFilter,
   size = "md",
+  serviceProviders,
 }: {
   provider: ServiceProvider;
   mode: "client" | "admin";
   replaceLabel: string;
   roleFilter: ServiceProvider["role"];
   size?: "md" | "lg";
+  serviceProviders: ServiceProvider[];
 }) {
   const [open, setOpen] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);

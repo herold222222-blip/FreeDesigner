@@ -8,6 +8,7 @@ import { DesignerReviewCard } from "@/components/domain/designer-review-card";
 import { DesignerName } from "@/components/domain/designer-name";
 import { DesignerLevelBadge } from "@/components/domain/level-badges";
 import { SpecialtyBadge } from "@/components/domain/status-badges";
+import { GuestAccessGate } from "@/components/domain/guest-access-gate";
 import { ArrowLeft, Star } from "lucide-react";
 import type { DesignerLevel } from "@/lib/types";
 import { useDesigner, useDesignerReviews } from "@/lib/use-data";
@@ -17,8 +18,16 @@ export default function DesignerReviewsPage({
 }: {
   params: { id: string };
 }) {
-  const { data: designer, loading } = useDesigner(params.id);
-  const { data: reviews } = useDesignerReviews(params.id);
+  return (
+    <GuestAccessGate intent="detail">
+      <DesignerReviewsInner designerId={params.id} />
+    </GuestAccessGate>
+  );
+}
+
+function DesignerReviewsInner({ designerId }: { designerId: string }) {
+  const { data: designer, loading } = useDesigner(designerId);
+  const { data: reviews } = useDesignerReviews(designerId);
 
   if (loading) {
     return (

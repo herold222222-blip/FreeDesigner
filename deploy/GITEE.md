@@ -198,7 +198,7 @@ cd /opt/lezyou && bash deploy/gitee-deploy.sh
 | git pull 失败 | `ssh -T git@gitee.com`；检查部署公钥 |
 | 部署脚本没跑 | `tail /var/log/lezyou-gitee-deploy.log` |
 | 页面没更新 | `docker compose ps`；是否 push 到 main 分支 |
-| 右下角「演示身份切换」还在 | 自动部署默认已关闭；确认日志含 `演示身份切换：关`；若需保留内测切换器，在 `.env` 加 `ENABLE_DEMO_UI=true` 后重新部署 |
+| 收不到登录验证码 | 检查 `.env` 中 `SMS_*` 是否配置完整，并确认 `src/lib/server/sms.ts` 已接入真实短信通道 |
 
 ---
 

@@ -15,7 +15,7 @@ import {
   designerCanAcceptOrders,
   portfolioReadinessHint,
 } from "@/lib/designer-portfolio-readiness";
-import { Briefcase, PencilLine, Plane, Wifi } from "lucide-react";
+import { PencilLine, Plane, Wifi } from "lucide-react";
 import Link from "next/link";
 
 export function StatusControls({ designer }: { designer: Designer }) {
@@ -115,7 +115,7 @@ export function StatusControls({ designer }: { designer: Designer }) {
               当前 · {WORKLOAD_META[workload].label}
             </Badge>
           </div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-1.5">
             {(Object.keys(WORKLOAD_META) as WorkloadStatus[]).map((k) => {
               const meta = WORKLOAD_META[k];
               const active = workload === k;
@@ -123,23 +123,23 @@ export function StatusControls({ designer }: { designer: Designer }) {
                 <button
                   key={k}
                   onClick={() => updateWorkload(k)}
-                  className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
+                  className={`flex items-center justify-center gap-1.5 rounded-lg border px-1.5 py-2 text-xs whitespace-nowrap transition-colors sm:gap-2 sm:px-2 sm:text-sm ${
                     active
                       ? "border-ink bg-ink text-white"
                       : "border-ink-20 text-ink-60 hover:border-ink/40"
                   }`}
                 >
                   <span
-                    className={`h-1.5 w-1.5 rounded-full ${meta.color}`}
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.color}`}
                   />
-                  {meta.label}
+                  <span className="whitespace-nowrap">{meta.label}</span>
                 </button>
               );
             })}
           </div>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-3">
           <ToggleRow
             icon={Plane}
             label="支持出差 / 上门"
@@ -176,11 +176,16 @@ function ToggleRow({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between rounded-xl border border-ink-20 p-3">
-      <div className="flex items-center gap-2 text-sm text-ink">
-        <Icon className="h-4 w-4 text-ink-60" /> {label}
+    <div className="flex items-center justify-between gap-2 rounded-xl border border-ink-20 px-3 py-3">
+      <div className="flex min-w-0 items-center gap-2 text-sm text-ink">
+        <Icon className="h-4 w-4 shrink-0 text-ink-60" />
+        <span className="whitespace-nowrap">{label}</span>
       </div>
-      <Switch checked={checked} onCheckedChange={onChange} />
+      <Switch
+        className="shrink-0"
+        checked={checked}
+        onCheckedChange={onChange}
+      />
     </div>
   );
 }

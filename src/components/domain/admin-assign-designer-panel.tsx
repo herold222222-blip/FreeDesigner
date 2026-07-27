@@ -14,6 +14,10 @@ import {
 } from "@/components/ui/select";
 import type { Designer, Order } from "@/lib/types";
 import { assignDesignerToOrderRequest } from "@/lib/api-client";
+import {
+  designerCanAcceptOrders,
+  designerCoversProjectType,
+} from "@/lib/designer-portfolio-readiness";
 import { formatCurrency } from "@/lib/utils";
 import { useSessionStore } from "@/store/session-store";
 
@@ -35,7 +39,12 @@ export function AdminAssignDesignerPanel({
 
   if (order.status !== "matching") return null;
 
-  const candidates = designers.filter((d) => d.acceptingOrders !== false);
+  const candidates = designers.filter(
+    (d) =>
+      d.acceptingOrders !== false &&
+      designerCanAcceptOrders(d) &&
+      designerCoversProjectType(d, order.projectType),
+  );
 
   const handleAssign = async () => {
     if (!designerId || busy) return;

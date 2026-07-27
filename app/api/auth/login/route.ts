@@ -3,7 +3,11 @@ import { z } from "zod";
 import { handle, ok, fail } from "@/lib/server/api";
 import { prisma } from "@/lib/server/db";
 import { verifyCode } from "@/lib/server/verification";
-import { createSession, verifyPassword } from "@/lib/server/auth";
+import {
+  createSession,
+  listBusinessRoles,
+  verifyPassword,
+} from "@/lib/server/auth";
 import type { Role } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -43,18 +47,6 @@ async function findUserByCredential(phone?: string, loginName?: string) {
     return prisma.user.findUnique({ where: { phone } });
   }
   return null;
-}
-
-/** 根据资料推导可用业务身份（不含管理员） */
-async function listBusinessRoles(userId: string): Promise<Array<"client" | "designer">> {
-  const [client, designer] = await Promise.all([
-    prisma.client.findUnique({ where: { userId }, select: { id: true } }),
-    prisma.designer.findUnique({ where: { userId }, select: { id: true } }),
-  ]);
-  const roles: Array<"client" | "designer"> = [];
-  if (client) roles.push("client");
-  if (designer) roles.push("designer");
-  return roles;
 }
 
 function roleHome(role: Role) {

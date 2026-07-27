@@ -1,7 +1,10 @@
 "use client";
 
+import { useMemo } from "react";
 import { ConsoleBasePathProvider } from "@/components/layout/console-base-path";
 import { ConsoleShell } from "@/components/layout/console-shell";
+import { withMessagesNavItem } from "@/lib/inbox-nav";
+import { useInboxUnreadCount } from "@/lib/use-inbox-unread";
 import {
   AlertCircle,
   ArrowDownToLine,
@@ -10,13 +13,14 @@ import {
   FileSignature,
   FileText,
   LayoutDashboard,
+  MessageSquare,
   PackageSearch,
   SlidersHorizontal,
   TrendingUp,
   Users,
 } from "lucide-react";
 
-const NAV = [
+const BASE_NAV = [
   { href: "/super-admin", label: "工作台", icon: LayoutDashboard, exact: true },
   { href: "/super-admin/reviews", label: "入驻审核", icon: ClipboardCheck },
   { href: "/super-admin/orders", label: "订单监管", icon: PackageSearch },
@@ -35,9 +39,21 @@ export default function SuperAdminLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const { count: unread } = useInboxUnreadCount();
+  const nav = useMemo(
+    () =>
+      withMessagesNavItem(
+        BASE_NAV,
+        "/super-admin/messages",
+        MessageSquare,
+        unread,
+      ),
+    [unread],
+  );
+
   return (
     <ConsoleBasePathProvider basePath="/super-admin">
-      <ConsoleShell title="超级管理员后台" subtitle="全局参数与平台治理" nav={NAV}>
+      <ConsoleShell title="超级管理员后台" subtitle="全局参数与平台治理" nav={nav}>
         {children}
       </ConsoleShell>
     </ConsoleBasePathProvider>

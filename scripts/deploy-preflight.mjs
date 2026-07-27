@@ -40,18 +40,6 @@ for (const key of required) {
   }
 }
 
-if (env.DEMO_CODE_ENABLED !== "off") {
-  const msg =
-    "DEMO_CODE_ENABLED 未设为 off（固定验证码仍开启）；正式/公开部署请改为 off 并配置短信";
-  if (production) errors.push(msg);
-  else warns.push(msg);
-}
-if (env.NEXT_PUBLIC_DEMO_MODE !== "off") {
-  const msg =
-    "NEXT_PUBLIC_DEMO_MODE 未设为 off（右下角身份切换可能可见）；需重新 docker compose build";
-  if (production) errors.push(msg);
-  else warns.push(msg);
-}
 if (production && env.COOKIE_SECURE !== "true") {
   warns.push("正式环境建议 COOKIE_SECURE=true");
 }
@@ -59,8 +47,8 @@ if (production && !(env.PUBLIC_BASE_URL || "").startsWith("https://")) {
   warns.push("正式环境 PUBLIC_BASE_URL 建议使用 https:// 域名");
 }
 
-if (env.DEMO_CODE_ENABLED === "off" && !env.SMS_PROVIDER) {
-  errors.push("DEMO_CODE_ENABLED=off 但未配置 SMS_PROVIDER，用户将无法收验证码");
+if (!env.SMS_PROVIDER) {
+  errors.push("未配置 SMS_PROVIDER，用户将无法收登录/注册验证码");
 }
 
 if (env.COOKIE_SECURE === "true" && (env.PUBLIC_BASE_URL || "").startsWith("http://")) {

@@ -2,8 +2,10 @@ import {
   DESIGNER_LEVEL_META,
   LANDSCAPE_DAILY_RATE,
   LANDSCAPE_MONTHLY_RATE,
+  LANDSCAPE_PRELIMINARY_RATE,
   type LandscapeBasePricing,
   REGION_TIER_META,
+  resolveDesignerRegionTier,
   SPECIALTIES,
   SPECIALTY_TRACKS,
 } from "@/lib/constants";
@@ -16,6 +18,7 @@ import {
   type LandscapeTimeRateTrack,
 } from "@/lib/designer-rates";
 import type { PlatformPricingConfig } from "@/lib/platform-pricing";
+import { resolveDesignerTrackPairs } from "@/lib/designer-track-resolve";
 import type { Designer, DesignerLevel, RegionTier, Specialty } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 
@@ -32,7 +35,7 @@ const L3_TO_LANDSCAPE_TRACK: Record<string, LandscapeTimeRateTrack> = {
   ls_struct: "structure",
 };
 
-export type PricingBasePhase = "施工图" | "方案" | "按时间";
+export type PricingBasePhase = "施工图" | "扩初" | "方案" | "按时间";
 
 export type PricingLineRateKind = "area_unit" | "time_bundle";
 
@@ -129,27 +132,16 @@ function findL3Label(specialty: Specialty, l2: string, l3: string) {
 }
 
 function getRelevantTracks(designer: Designer) {
-  const out: { l2: string; l3: string }[] = [];
-  if (designer.primaryTrack?.l1 === designer.specialty) {
-    out.push({ l2: designer.primaryTrack.l2, l3: designer.primaryTrack.l3 });
-  }
-  for (const t of designer.secondaryTracks ?? []) {
-    if (t.l1 !== designer.specialty) continue;
-    if (!out.some((x) => x.l2 === t.l2 && x.l3 === t.l3)) {
-      out.push({ l2: t.l2, l3: t.l3 });
-    }
-  }
-  return out;
+  return resolveDesignerTrackPairs(designer);
 }
 
+/** platform_initial：平台阶梯原始基数；designer_composite：叠加等级×地区×项目类型 */
+export type PricingBaseMultiplierMode = "platform_initial" | "designer_composite";
+
 function timeRatesForTrack(
-  designer: Designer,
   track: LandscapeTimeRateTrack,
+  mult: number,
 ): { remote: { daily: number; monthly: number }; onsite: { daily: number; monthly: number } } {
-  const level: DesignerLevel = designer.level ?? "mid_v1";
-  const region: RegionTier = designer.regionTier ?? "tier6";
-  const mult =
-    DESIGNER_LEVEL_META[level].coefficient * REGION_TIER_META[region].coefficient;
   return {
     remote: {
       daily: Math.round(LANDSCAPE_DAILY_RATE.remote[track] * mult),
@@ -162,21 +154,39 @@ function timeRatesForTrack(
   };
 }
 
+export function getDesignerPricingMultipliers(
+  designer: Designer,
+  config: PlatformPricingConfig,
+) {
+  const level: DesignerLevel = designer.level ?? "mid_v1";
+  const region: RegionTier = resolveDesignerRegionTier(designer);
+  const projectTypeCoeff =
+    config.landscapeProjectTypeCoefficient[PRICING_BASE_EXAMPLE_PROJECT_TYPE] ?? 1;
+  const levelCoeff = config.designerLevelCoefficient[level] ?? 1;
+  const regionCoeff = config.regionTierCoefficient[region] ?? 1;
+  return {
+    level,
+    region,
+    levelCoeff,
+    regionCoeff,
+    projectTypeCoeff,
+    sharedMult: levelCoeff * regionCoeff * projectTypeCoeff,
+    levelLabel: DESIGNER_LEVEL_META[level].label,
+    regionLabel: REGION_TIER_META[region].label,
+  };
+}
+
 export function getDesignerPricingBaseSnapshot(
   designer: Designer,
   config: PlatformPricingConfig,
+  options?: { mode?: PricingBaseMultiplierMode },
 ): DesignerPricingBaseSnapshot {
+  const mode = options?.mode ?? "designer_composite";
   const specialtyMeta = SPECIALTIES.find((s) => s.value === designer.specialty)!;
   const subjectLabel =
     SUBJECT_LABEL[designer.subjectType ?? "individual"] ?? "设计师";
-  const level: DesignerLevel = designer.level ?? "mid_v1";
-  const region: RegionTier = designer.regionTier ?? "tier6";
-  const projectTypeCoeff =
-    config.landscapeProjectTypeCoefficient[PRICING_BASE_EXAMPLE_PROJECT_TYPE] ?? 1;
-  const sharedMult =
-    config.designerLevelCoefficient[level] *
-    config.regionTierCoefficient[region] *
-    projectTypeCoeff;
+  const factors = getDesignerPricingMultipliers(designer, config);
+  const sharedMult = mode === "platform_initial" ? 1 : factors.sharedMult;
 
   const available = isDesignerPricingBaseAvailable(designer);
   const lines: DesignerPricingBaseLine[] = [];
@@ -186,34 +196,42 @@ export function getDesignerPricingBaseSnapshot(
     const { tier: cdTier } = getLandscapeBaseFees(PRICING_BASE_EXAMPLE_AREA, config);
     const schemeTierInfo = getLandscapeSchemeBaseFee(PRICING_BASE_EXAMPLE_AREA, config);
     const timeTracksAdded = new Set<LandscapeTimeRateTrack>();
+    const areaHint =
+      mode === "platform_initial"
+        ? `以 ${PRICING_BASE_EXAMPLE_AREA.toLocaleString()}㎡ ${PRICING_BASE_EXAMPLE_PROJECT_TYPE} 阶梯「${cdTier.label}」为例，平台初始基数（未叠加个人系数）`
+        : `以 ${PRICING_BASE_EXAMPLE_AREA.toLocaleString()}㎡ ${PRICING_BASE_EXAMPLE_PROJECT_TYPE} 阶梯「${cdTier.label}」为例，已叠加等级×地区×项目类型`;
 
     for (const t of tracks) {
       const l3Label = findL3Label(designer.specialty, t.l2, t.l3);
 
-      if (t.l2 === "construction_doc") {
+      if (t.l2 === "construction_doc" || t.l2 === "preliminary") {
         const trackKey = L3_TO_LANDSCAPE_TRACK[t.l3];
+        const isPreliminary = t.l2 === "preliminary";
         if (trackKey) {
           if (trackKey in cdTier.pricing) {
-            const unitPrice = landscapeUnitPricePerSqm(
-              cdTier,
-              trackKey as keyof typeof cdTier.pricing,
-              PRICING_BASE_EXAMPLE_AREA,
-              sharedMult,
-            );
+            const unitPrice =
+              landscapeUnitPricePerSqm(
+                cdTier,
+                trackKey as keyof typeof cdTier.pricing,
+                PRICING_BASE_EXAMPLE_AREA,
+                sharedMult,
+              ) * (isPreliminary ? LANDSCAPE_PRELIMINARY_RATE : 1);
             lines.push({
-              id: `cd-${t.l3}`,
-              phase: "施工图",
+              id: `${isPreliminary ? "pre" : "cd"}-${t.l3}`,
+              phase: isPreliminary ? "扩初" : "施工图",
               trackLabel: l3Label,
               amountLabel: formatPricePerSqm(unitPrice),
-              subLabel: `设计单价 · ${LANDSCAPE_TIME_TRACK_LABELS[trackKey]}`,
-              hint: `以 ${PRICING_BASE_EXAMPLE_AREA.toLocaleString()}㎡ ${PRICING_BASE_EXAMPLE_PROJECT_TYPE} 阶梯「${cdTier.label}」为例，已叠加等级×地区×项目类型`,
+              subLabel: isPreliminary
+                ? `设计单价 · ${LANDSCAPE_TIME_TRACK_LABELS[trackKey]}（扩初按施工图 ${Math.round(LANDSCAPE_PRELIMINARY_RATE * 100)}%）`
+                : `设计单价 · ${LANDSCAPE_TIME_TRACK_LABELS[trackKey]}`,
+              hint: areaHint,
               rateKind: "area_unit",
               baseValue: unitPrice,
             });
           }
           if (!timeTracksAdded.has(trackKey)) {
             timeTracksAdded.add(trackKey);
-            const tr = timeRatesForTrack(designer, trackKey);
+            const tr = timeRatesForTrack(trackKey, sharedMult);
             lines.push({
               id: `time-${trackKey}`,
               phase: "按时间",
@@ -222,8 +240,12 @@ export function getDesignerPricingBaseSnapshot(
               subLabel: `线上 ${formatCurrency(tr.remote.monthly)}/月 · 驻场 ${formatCurrency(tr.onsite.daily)}/工日`,
               hint:
                 trackKey === "structure"
-                  ? "结构专业仅按时间计费（文档表）"
-                  : "v1.1 文档基准 × 等级 × 地区",
+                  ? mode === "platform_initial"
+                    ? "结构专业仅按时间计费 · 平台初始基数"
+                    : "结构专业仅按时间计费 · 已叠加等级×地区×项目类型"
+                  : mode === "platform_initial"
+                    ? "v1.1 文档基准 · 平台初始基数"
+                    : "v1.1 文档基准 × 等级 × 地区 × 项目类型",
               rateKind: "time_bundle",
               baseValue: tr.remote.daily,
               timeBundle: {
@@ -249,7 +271,10 @@ export function getDesignerPricingBaseSnapshot(
           trackLabel: l3Label,
           amountLabel: formatPricePerSqm(schemeUnit),
           subLabel: "设计单价（方案按面积）",
-          hint: `以 ${PRICING_BASE_EXAMPLE_AREA.toLocaleString()}㎡ 阶梯「${schemeTierInfo.tier.label}」为例，已叠加等级×地区×项目类型`,
+          hint:
+            mode === "platform_initial"
+              ? `以 ${PRICING_BASE_EXAMPLE_AREA.toLocaleString()}㎡ 阶梯「${schemeTierInfo.tier.label}」为例，平台初始基数（未叠加个人系数）`
+              : `以 ${PRICING_BASE_EXAMPLE_AREA.toLocaleString()}㎡ 阶梯「${schemeTierInfo.tier.label}」为例，已叠加等级×地区×项目类型`,
           rateKind: "area_unit",
           baseValue: schemeUnit,
         });
@@ -257,19 +282,131 @@ export function getDesignerPricingBaseSnapshot(
     }
 
     lines.sort((a, b) => {
-      const order: Record<PricingBasePhase, number> = { 施工图: 0, 方案: 1, 按时间: 2 };
+      const order: Record<PricingBasePhase, number> = {
+        施工图: 0,
+        扩初: 1,
+        方案: 2,
+        按时间: 3,
+      };
       return order[a.phase] - order[b.phase];
     });
   }
+
+  const multiplierNote = !available
+    ? "当前专业取费规则尚未接入"
+    : mode === "platform_initial"
+      ? "平台阶梯初始基数（未叠加等级 / 地区 / 项目类型）"
+      : `综合基数：${factors.levelLabel} × ${factors.regionLabel} × ${PRICING_BASE_EXAMPLE_PROJECT_TYPE}（约 ${Math.round(factors.sharedMult * 100)}%）`;
 
   return {
     available,
     subjectLabel,
     specialtyLabel: specialtyMeta.label,
     exampleTitle: `${(PRICING_BASE_EXAMPLE_AREA / 10000).toFixed(0)}万㎡ ${PRICING_BASE_EXAMPLE_PROJECT_TYPE}项目`,
-    multiplierNote: available
-      ? `已叠加等级 × 地区 × 项目类型（约 ${Math.round(sharedMult * 100)}%）`
-      : "当前专业取费规则尚未接入",
+    multiplierNote,
     lines,
   };
+}
+
+/** 同时返回平台初始基数与当前设计师综合基数 */
+export function getDesignerPlatformPricingBases(
+  designer: Designer,
+  config: PlatformPricingConfig,
+) {
+  return {
+    platformInitial: getDesignerPricingBaseSnapshot(designer, config, {
+      mode: "platform_initial",
+    }),
+    designerComposite: getDesignerPricingBaseSnapshot(designer, config, {
+      mode: "designer_composite",
+    }),
+    factors: getDesignerPricingMultipliers(designer, config),
+  };
+}
+
+export type DesignerPricingFactors = ReturnType<typeof getDesignerPricingMultipliers>;
+
+function formatCoeffPercent(value: number) {
+  const pct = value * 100;
+  if (Number.isInteger(pct)) return `${pct}%`;
+  const fixed = pct.toFixed(2).replace(/\.?0+$/, "");
+  return `${fixed}%`;
+}
+
+function formatPlainAmount(value: number, kind: "area_unit" | "currency") {
+  if (kind === "area_unit") {
+    const digits = value < 10 ? 2 : value < 100 ? 1 : 0;
+    return `¥${value.toFixed(digits)}`;
+  }
+  return formatCurrency(value);
+}
+
+/** 综合基数计算式：初始 × 等级 × 地区 × 项目类型 = 结果 */
+export function buildCompositeRateFormula(
+  initialAmount: number,
+  resultAmount: number,
+  factors: DesignerPricingFactors,
+  kind: "area_unit" | "currency",
+  resultSuffix = "",
+) {
+  const left = [
+    `${formatPlainAmount(initialAmount, kind)}（初始）`,
+    `${formatCoeffPercent(factors.levelCoeff)}（${factors.levelLabel}）`,
+    `${formatCoeffPercent(factors.regionCoeff)}（${factors.regionLabel}）`,
+    `${formatCoeffPercent(factors.projectTypeCoeff)}（${PRICING_BASE_EXAMPLE_PROJECT_TYPE}）`,
+  ].join(" × ");
+  return `${left} = ${formatPlainAmount(resultAmount, kind)}${resultSuffix}`;
+}
+
+export function buildCompositeLineFormulas(
+  initial: DesignerPricingBaseLine,
+  composite: DesignerPricingBaseLine,
+  factors: DesignerPricingFactors,
+): string[] {
+  if (
+    initial.rateKind === "time_bundle" &&
+    initial.timeBundle &&
+    composite.timeBundle
+  ) {
+    const rows: { label: string; unit: string; from: number; to: number }[] = [
+      {
+        label: "线上工日",
+        unit: "/工日",
+        from: initial.timeBundle.remoteDaily,
+        to: composite.timeBundle.remoteDaily,
+      },
+      {
+        label: "线上月费",
+        unit: "/月",
+        from: initial.timeBundle.remoteMonthly,
+        to: composite.timeBundle.remoteMonthly,
+      },
+      {
+        label: "驻场工日",
+        unit: "/工日",
+        from: initial.timeBundle.onsiteDaily,
+        to: composite.timeBundle.onsiteDaily,
+      },
+      {
+        label: "驻场月费",
+        unit: "/月",
+        from: initial.timeBundle.onsiteMonthly,
+        to: composite.timeBundle.onsiteMonthly,
+      },
+    ];
+    return rows.map(
+      (row) =>
+        `${row.label}：${buildCompositeRateFormula(row.from, row.to, factors, "currency", row.unit)}`,
+    );
+  }
+
+  return [
+    buildCompositeRateFormula(
+      initial.baseValue,
+      composite.baseValue,
+      factors,
+      "area_unit",
+      composite.rateKind === "area_unit" ? "/㎡" : "",
+    ),
+  ];
 }

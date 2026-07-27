@@ -14,20 +14,8 @@ import {
   useOrders,
   usePlatformAdmins,
 } from "@/lib/use-data";
-import { clientWalletByOwnerId } from "@/mocks/wallet";
-import { clients as mockClients } from "@/mocks/clients";
-import { designers as mockDesigners } from "@/mocks/designers";
 import type { AdminClientRow, AdminDesignerRow } from "@/lib/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-
-function sumClientTotalPaid(clientId: string) {
-  const txs = clientWalletByOwnerId[clientId] ?? [];
-  return Math.abs(
-    txs
-      .filter((t) => t.type === "income" && t.amount < 0)
-      .reduce((acc, t) => acc + t.amount, 0),
-  );
-}
 
 function AdminUsersInner() {
   const pathname = usePathname();
@@ -45,16 +33,7 @@ function AdminUsersInner() {
   } = usePlatformAdmins(isSuperAdminConsole);
 
   const designers: AdminDesignerRow[] = useMemo(() => {
-    const base =
-      designersRaw.length > 0
-        ? designersRaw
-        : mockDesigners.map((d) => ({
-            ...d,
-            accountStatus: "active" as const,
-            ongoingOrdersCount: 0,
-          }));
-
-    if (designersRaw.length > 0) return base;
+    if (designersRaw.length === 0) return [];
 
     const ongoingByDesigner = new Map<string, number>();
     for (const o of orders) {
@@ -65,30 +44,14 @@ function AdminUsersInner() {
         );
       }
     }
-    return base.map((d, i) => {
-      const row = d as AdminDesignerRow;
-      return {
-        ...row,
-        ongoingOrdersCount: ongoingByDesigner.get(row.id) ?? 0,
-        registeredAt:
-          row.registeredAt ??
-          `2025-${String((i % 12) + 1).padStart(2, "0")}-${String(8 + (i % 20)).padStart(2, "0")}`,
-      };
-    });
+    return designersRaw.map((d) => ({
+      ...d,
+      ongoingOrdersCount: ongoingByDesigner.get(d.id) ?? d.ongoingOrdersCount ?? 0,
+    }));
   }, [designersRaw, orders]);
 
   const clients: AdminClientRow[] = useMemo(() => {
-    const base =
-      clientsRaw.length > 0
-        ? clientsRaw
-        : mockClients.map((c) => ({
-            ...c,
-            accountStatus: "active" as const,
-            ongoingOrdersCount: 0,
-            totalPaidAmount: 0,
-          }));
-
-    if (clientsRaw.length > 0) return base;
+    if (clientsRaw.length === 0) return [];
 
     const ongoingByClient = new Map<string, number>();
     for (const o of orders) {
@@ -100,11 +63,9 @@ function AdminUsersInner() {
       }
     }
 
-    return base.map((c) => ({
+    return clientsRaw.map((c) => ({
       ...c,
-      ongoingOrdersCount: ongoingByClient.get(c.id) ?? 0,
-      totalPaidAmount: sumClientTotalPaid(c.id),
-      registeredAt: c.joinedAt,
+      ongoingOrdersCount: ongoingByClient.get(c.id) ?? c.ongoingOrdersCount ?? 0,
     }));
   }, [clientsRaw, orders]);
 

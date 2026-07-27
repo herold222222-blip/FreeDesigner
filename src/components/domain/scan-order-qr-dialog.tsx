@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import { QRCodeSVG } from "qrcode.react";
 import {
   Dialog,
@@ -13,9 +12,8 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { buildScanOrderPath, getScanOrderUrl } from "@/lib/scan-order";
-import { ArrowRight, Copy, QrCode, Share2 } from "lucide-react";
+import { Copy, QrCode, Share2 } from "lucide-react";
 import { useSessionStore } from "@/store/session-store";
-import { useRoleStore } from "@/store/role-store";
 
 export function ScanOrderQrDialog({
   designerId,
@@ -28,8 +26,6 @@ export function ScanOrderQrDialog({
 }) {
   const [open, setOpen] = useState(false);
   const push = useSessionStore((s) => s.pushNotification);
-  const role = useRoleStore((s) => s.role);
-  const orderPath = buildScanOrderPath(designerId);
 
   const scanUrl = useMemo(() => {
     if (typeof window === "undefined") return buildScanOrderPath(designerId);
@@ -79,19 +75,6 @@ export function ScanOrderQrDialog({
             {scanUrl}
           </p>
         </div>
-
-        {role === "client" ? (
-          <div className="rounded-xl border border-dashed border-brand/40 bg-brand/5 p-3">
-            <p className="text-center text-[11px] text-ink-60">
-              演示模式：无需真机扫码，可直接模拟委托人扫码后的填写页
-            </p>
-            <Button asChild variant="brand" className="mt-3 w-full">
-              <Link href={orderPath} onClick={() => setOpen(false)}>
-                <ArrowRight className="h-4 w-4" /> 进入扫码下单页
-              </Link>
-            </Button>
-          </div>
-        ) : null}
 
         <div className="flex flex-wrap gap-2">
           <Button variant="brand" className="flex-1" onClick={copyLink}>

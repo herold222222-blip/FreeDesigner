@@ -54,9 +54,6 @@ if grep -q "^EXPOSE_DB_PUBLIC=true" .env 2>/dev/null; then
   COMPOSE_FILES+=(-f docker-compose.shared-db.yml)
   echo "[deploy] 5432 公网映射已启用"
 fi
-# shellcheck source=deploy/resolve-demo-env.sh
-source "$ROOT/deploy/resolve-demo-env.sh"
-resolve_demo_env
 docker compose "${COMPOSE_FILES[@]}" build
 docker compose "${COMPOSE_FILES[@]}" up -d
 

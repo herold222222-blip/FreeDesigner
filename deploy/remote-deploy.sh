@@ -28,19 +28,8 @@ if grep -q "^EXPOSE_DB_PUBLIC=true" .env 2>/dev/null; then
   echo "[remote-deploy] 5432 公网映射已启用（本地 / 图形工具直连）"
 fi
 
-# shellcheck source=deploy/resolve-demo-env.sh
-source "$ROOT/deploy/resolve-demo-env.sh"
-resolve_demo_env
-
-BUILD_FLAGS=()
-if [ "${NEXT_PUBLIC_DEMO_MODE:-off}" = "off" ]; then
-  # 演示切换器由构建参数写入前端包，关闭时需穿透 BuildKit 层缓存
-  BUILD_FLAGS+=(--no-cache)
-  echo "[remote-deploy] 构建镜像（NEXT_PUBLIC_DEMO_MODE=off，无缓存重建前端）..."
-else
-  echo "[remote-deploy] 构建镜像（复用上次 lezyou-app:latest 层缓存）..."
-fi
-docker compose "${COMPOSE_FILES[@]}" build "${BUILD_FLAGS[@]}"
+echo "[remote-deploy] 构建镜像..."
+docker compose "${COMPOSE_FILES[@]}" build
 
 echo "[remote-deploy] 启动容器（数据库迁移由 entrypoint 执行）..."
 docker compose "${COMPOSE_FILES[@]}" up -d

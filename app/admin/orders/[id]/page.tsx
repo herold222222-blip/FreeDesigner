@@ -1,52 +1,41 @@
 "use client";
 
-
-
-import { Suspense, useMemo } from "react";
-
+import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-
 import { useOrder, useDesigners } from "@/lib/use-data";
+import { invalidateApiPath } from "@/lib/use-data";
+import { updateMatchingOrderRequest } from "@/lib/api-client";
 import { AdminAssignDesignerPanel } from "@/components/domain/admin-assign-designer-panel";
-
-import { Card } from "@/components/ui/card";
-
-import { Badge } from "@/components/ui/badge";
-
-import { Separator } from "@/components/ui/separator";
-
+import { OrderQuotePanel } from "@/components/domain/order-quote-panel";
+import { OrderEntrustDescription } from "@/components/domain/order-entrust-description";
 import {
-
+  MatchingOrderEditDialog,
+  type MatchingOrderEditPayload,
+} from "@/components/domain/matching-order-edit-dialog";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import {
   OrderStatusBadge,
-
   SpecialtyBadge,
-
 } from "@/components/domain/status-badges";
-
 import { ProjectIdCopy } from "@/components/domain/project-id-copy";
 import { StageTimeline } from "@/components/domain/stage-timeline";
 import { OrderWorkCalendarContentsPanel } from "@/components/domain/order-work-calendar-contents-panel";
-
 import { AdminStageCollaboratorSection } from "@/components/domain/stage-collaborator-panel";
-
 import { OrderTrackAssignmentsPanel } from "@/components/domain/order-track-assignments";
-
 import {
-
   OrderValueAddedBadges,
-
   OrderValueAddedServicesPanel,
-
 } from "@/components/domain/order-value-added-services";
-
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
-
 import { useConsoleBasePath } from "@/components/layout/console-base-path";
 import { AdminConsoleReturnBar } from "@/components/layout/admin-console-return-bar";
 import { parseAdminUsersReturnTo, withReturnTo } from "@/lib/admin-return-to";
-
-import { ArrowLeft, Calendar, Clock, MapPin, ShieldAlert } from "lucide-react";
+import { useSessionStore } from "@/store/session-store";
+import { ArrowLeft, Calendar, Clock, MapPin, Pencil, ShieldAlert } from "lucide-react";
 
 function AdminOrderDetailInner({
   params,
@@ -58,31 +47,44 @@ function AdminOrderDetailInner({
   const usersReturnTo = parseAdminUsersReturnTo(searchParams.get("returnTo"));
   const designerIdFilter = searchParams.get("designerId");
   const statusParam = searchParams.get("status");
+  const push = useSessionStore((s) => s.pushNotification);
 
   const { data: order, loading, refresh } = useOrder(params.id);
-
   const { data: designers } = useDesigners();
+  const [editOpen, setEditOpen] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
 
   const getDesignerById = useMemo(
-
     () => (id: string) => designers.find((d) => d.id === id),
-
     [designers],
-
   );
 
-
+  const handleSaveMatching = async (payload: MatchingOrderEditPayload) => {
+    if (!order || editSaving) return;
+    setEditSaving(true);
+    try {
+      await updateMatchingOrderRequest(order.id, payload);
+      push({ title: "委托信息已更新", variant: "success" });
+      setEditOpen(false);
+      invalidateApiPath("/api/orders");
+      refresh();
+    } catch (e) {
+      push({
+        title: "保存失败",
+        description: e instanceof Error ? e.message : "请稍后再试",
+        variant: "destructive",
+      });
+    } finally {
+      setEditSaving(false);
+    }
+  };
 
   if (loading) {
-
     return <div className="py-20 text-center text-ink-60">正在加载订单...</div>;
-
   }
 
   if (!order) {
-
     return <div className="py-20 text-center text-ink-60">未找到该订单。</div>;
-
   }
 
 
@@ -141,25 +143,30 @@ function AdminOrderDetailInner({
 
             </h1>
 
-            <p className="max-w-2xl text-sm text-ink-60">{order.description}</p>
-
           </div>
 
-          <div className="text-right">
-
-            <div className="text-xs text-ink-60">订单总额</div>
-
-            <div className="text-2xl font-semibold tracking-tight text-ink">
-
-              {formatCurrency(order.totalAmount)}
-
+          <div className="flex flex-col items-end gap-2 text-right">
+            <div>
+              <div className="text-xs text-ink-60">订单总额</div>
+              <div className="text-2xl font-semibold tracking-tight text-ink">
+                {formatCurrency(order.totalAmount)}
+              </div>
             </div>
-
+            {order.status === "matching" ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1"
+                onClick={() => setEditOpen(true)}
+              >
+                <Pencil className="h-3.5 w-3.5" /> 修改委托信息
+              </Button>
+            ) : null}
           </div>
-
         </div>
 
-
+        <OrderEntrustDescription description={order.description} />
 
         <Separator className="my-6" />
 
@@ -240,6 +247,8 @@ function AdminOrderDetailInner({
       </Card>
 
 
+
+      {order.quote ? <OrderQuotePanel order={order} /> : null}
 
       {order.status === "matching" ? (
         <AdminAssignDesignerPanel
@@ -357,8 +366,16 @@ function AdminOrderDetailInner({
 
       </Card>
 
+      {order.status === "matching" ? (
+        <MatchingOrderEditDialog
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          order={order}
+          onSave={handleSaveMatching}
+          saving={editSaving}
+        />
+      ) : null}
     </div>
-
   );
 }
 

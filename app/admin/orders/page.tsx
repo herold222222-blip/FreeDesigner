@@ -25,8 +25,6 @@ import { AdminConsoleReturnBar } from "@/components/layout/admin-console-return-
 import { parseAdminUsersReturnTo, withReturnTo } from "@/lib/admin-return-to";
 import { useAdminDesigners, useClients, useOrders } from "@/lib/use-data";
 import { cn } from "@/lib/utils";
-import { designers as mockDesigners } from "@/mocks/designers";
-import { clients as mockClients } from "@/mocks/clients";
 
 function AdminOrdersInner() {
   const base = useConsoleBasePath();
@@ -34,8 +32,8 @@ function AdminOrdersInner() {
   const { data: orders, loading } = useOrders();
   const { data: designersRaw } = useAdminDesigners();
   const { data: clientsRaw } = useClients();
-  const designers = designersRaw.length > 0 ? designersRaw : mockDesigners;
-  const clients = clientsRaw.length > 0 ? clientsRaw : mockClients;
+  const designers = designersRaw;
+  const clients = clientsRaw;
 
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] =
@@ -279,7 +277,7 @@ function AdminOrdersInner() {
                   ? withReturnTo(`${base}/orders/${o.id}${orderListQuery}`, usersReturnTo)
                   : `${base}/orders/${o.id}${orderListQuery}`
               }
-              perspective="client"
+              perspective="admin"
               paymentOverdue={getOrderPaymentOverdueInfo(o)}
             />
           ))

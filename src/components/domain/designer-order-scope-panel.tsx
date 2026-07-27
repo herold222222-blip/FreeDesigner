@@ -5,7 +5,8 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DeliverableFileList } from "@/components/domain/deliverable-file-list";
-import { getServiceProviderById } from "@/mocks/service-providers";
+import { findServiceProvider } from "@/lib/service-provider-catalog";
+import { useServiceProviders } from "@/lib/use-data";
 import {
   getAssignmentDeliverables,
   getAuditsForDesignerTracks,
@@ -38,6 +39,9 @@ export function DesignerOrderScopePanel({
   const peerTracks = getPeerTrackAssignments(order, designerId);
   const audits = getAuditsForDesignerTracks(order, designerId);
   const showPm = designerHasProjectManagement(order, designerId);
+  const { data: serviceProviders } = useServiceProviders();
+  const getServiceProvider = (id: string) =>
+    findServiceProvider(serviceProviders, id);
 
   if (
     myTracks.length === 0 &&
@@ -129,7 +133,7 @@ export function DesignerOrderScopePanel({
                       </div>
                       <div className="space-y-2">
                         {stageAudits.map((audit) => {
-                          const auditor = getServiceProviderById(audit.auditorId);
+                          const auditor = getServiceProvider(audit.auditorId);
                           const auditFiles =
                             order.stages
                               .find((s) => s.id === audit.stageId)
@@ -188,7 +192,7 @@ export function DesignerOrderScopePanel({
             项目管理员（整体协调）
           </div>
           {(() => {
-            const manager = getServiceProviderById(
+            const manager = getServiceProvider(
               order.projectManagement!.projectManagerId,
             );
             const pmFiles =

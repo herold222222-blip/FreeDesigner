@@ -20,7 +20,7 @@ import { formatCurrency } from "@/lib/utils";
 import { Loader2, ShieldCheck } from "lucide-react";
 
 const PROVIDER_LABEL: Record<PayIntentDTO["provider"], string> = {
-  sandbox: "沙箱支付（演示）",
+  sandbox: "沙箱支付",
   wechat: "微信支付",
   alipay: "支付宝",
 };
@@ -151,7 +151,7 @@ export function StagePaymentDialog({
                   ? "请使用微信扫一扫完成支付，支付后自动到账平台托管。"
                   : intent.provider === "alipay"
                     ? "请使用支付宝扫一扫完成支付，支付后自动到账平台托管。"
-                    : "沙箱演示二维码：点击下方按钮模拟支付成功。"}
+                    : "沙箱二维码：点击下方按钮模拟支付成功。"}
               </p>
             </>
           )}

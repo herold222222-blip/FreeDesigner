@@ -1,39 +1,57 @@
 import type { Designer } from "@/lib/types";
 
-/** 设计师主页需覆盖的项目类型（作品集 category 与之对应） */
+/** 从作品集推导擅长项目类型（与 projectTypeTags 同步） */
+export function projectTypesFromPortfolio(designer: Designer): string[] {
+  return [
+    ...new Set(
+      (designer.portfolio ?? []).map((p) => p.category).filter(Boolean),
+    ),
+  ];
+}
+
+/**
+ * 设计师当前可接单的项目类型 = 已上传作品案例的项目类型。
+ * 优先使用内存中的 projectTypeTags，若为空则回退到作品集推导。
+ */
+export function getAcceptableProjectTypes(designer: Designer): string[] {
+  const tags = designer.projectTypeTags ?? [];
+  if (tags.length > 0) return [...new Set(tags.filter(Boolean))];
+  return projectTypesFromPortfolio(designer);
+}
+
+/** @deprecated 使用 getAcceptableProjectTypes；保留别名兼容旧调用 */
 export function getRequiredProjectTypes(designer: Designer): string[] {
-  return designer.projectTypeTags ?? [];
+  return getAcceptableProjectTypes(designer);
 }
 
-/** 尚未上传案例的项目类型 */
-export function getMissingPortfolioProjectTypes(designer: Designer): string[] {
-  const portfolio = designer.portfolio ?? [];
-  const covered = new Set(portfolio.map((p) => p.category));
-  const required = getRequiredProjectTypes(designer);
-  if (required.length === 0) return [];
-
-  return required.filter((t) => !covered.has(t));
-}
-
-/** 是否已具备接单 / 平台匹配所需的作品案例 */
+/** 是否已具备基础接单资格（至少 1 个作品案例） */
 export function designerCanAcceptOrders(designer: Designer): boolean {
-  const portfolio = designer.portfolio ?? [];
-  if (portfolio.length === 0) return false;
+  return getAcceptableProjectTypes(designer).length > 0;
+}
 
-  const required = getRequiredProjectTypes(designer);
-  if (required.length === 0) return true;
+/** 设计师是否可承接指定项目类型的订单 / 悬赏 */
+export function designerCoversProjectType(
+  designer: Designer,
+  projectType?: string | null,
+): boolean {
+  const type = projectType?.trim();
+  if (!type) return designerCanAcceptOrders(designer);
+  return getAcceptableProjectTypes(designer).includes(type);
+}
 
-  const covered = new Set(portfolio.map((p) => p.category));
-  return required.every((t) => covered.has(t));
+/** 尚未上传案例时的提示（不再要求「预先声明再补齐」） */
+export function getMissingPortfolioProjectTypes(_designer: Designer): string[] {
+  return [];
 }
 
 export function portfolioReadinessHint(designer: Designer): string {
-  const missing = getMissingPortfolioProjectTypes(designer);
-  if ((designer.portfolio ?? []).length === 0) {
-    return "请先在作品管理中按项目类型上传至少 1 个案例，审核展示通过后方可接单与匹配平台项目。";
+  const types = getAcceptableProjectTypes(designer);
+  if (types.length === 0) {
+    return "请先在作品管理中按项目类型上传至少 1 个案例。上传后的项目类型将同步为擅长类型，并决定您可承接的订单类型。";
   }
-  if (missing.length > 0) {
-    return `请补充以下项目类型的案例：${missing.join("、")}`;
-  }
-  return "";
+  return `当前可接单项目类型：${types.join("、")}`;
+}
+
+export function projectTypeMismatchMessage(projectType: string): string {
+  return `该设计师尚未上传「${projectType}」类型案例，无法承接此类订单。请选择已覆盖该项目类型的设计师，或请设计师先补充对应作品。`;
 }

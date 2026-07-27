@@ -1,7 +1,5 @@
-import { designers } from "@/mocks/designers";
-
 export function generateStaticParams() {
-  return designers.map((d) => ({ id: d.id }));
+  return [];
 }
 
 export default function DesignerReviewsLayout({

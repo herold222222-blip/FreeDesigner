@@ -11,7 +11,7 @@ export type PresetAccountDef = {
 
 /**
  * 种子预设账号（账号 + 密码可直接登录）
- * FD001 超管 · FD002–FD004 管理员 · FD005–FD010 普通账号（可再注册委托/设计身份）
+ * FD001 超管 · FD002–FD004 管理员 · FD005–FD020 普通账号（可再注册委托/设计身份）
  */
 export const PRESET_ACCOUNTS: PresetAccountDef[] = [
   {
@@ -38,48 +38,17 @@ export const PRESET_ACCOUNTS: PresetAccountDef[] = [
     role: "admin",
     name: "普通管理员 C",
   },
-  {
-    loginName: "FD005",
-    password: "4006801231",
-    role: "client",
-    name: "普通账号 05",
-    needsOnboarding: true,
-  },
-  {
-    loginName: "FD006",
-    password: "4006801231",
-    role: "client",
-    name: "普通账号 06",
-    needsOnboarding: true,
-  },
-  {
-    loginName: "FD007",
-    password: "4006801231",
-    role: "client",
-    name: "普通账号 07",
-    needsOnboarding: true,
-  },
-  {
-    loginName: "FD008",
-    password: "4006801231",
-    role: "client",
-    name: "普通账号 08",
-    needsOnboarding: true,
-  },
-  {
-    loginName: "FD009",
-    password: "4006801231",
-    role: "client",
-    name: "普通账号 09",
-    needsOnboarding: true,
-  },
-  {
-    loginName: "FD010",
-    password: "4006801231",
-    role: "client",
-    name: "普通账号 10",
-    needsOnboarding: true,
-  },
+  ...Array.from({ length: 16 }, (_, i) => {
+    const n = i + 5;
+    const loginName = `FD${String(n).padStart(3, "0")}`;
+    return {
+      loginName,
+      password: "4006801231",
+      role: "client" as const,
+      name: `普通账号 ${String(n).padStart(2, "0")}`,
+      needsOnboarding: true,
+    };
+  }),
 ];
 
 /** 兼容旧引用：超级管理员默认账号 */

@@ -3,10 +3,12 @@ import { handle, ok, fail } from "@/lib/server/api";
 import { requireSession } from "@/lib/server/auth";
 import { getDesigner, saveDesigner } from "@/lib/server/repo";
 import {
+  deriveProjectTypeTagsFromPortfolio,
   mergeDesignerProfile,
   type DesignerProfileDraft,
 } from "@/lib/designer-profile-draft";
-import type { Designer } from "@/lib/types";
+import { normalizePortfolioItem } from "@/lib/portfolio-images";
+import type { Designer, PortfolioItem } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +34,7 @@ export async function PATCH(
       calendar?: Designer["calendar"];
       workCalendarEvents?: Designer["workCalendarEvents"];
       calendarBatchSettings?: Designer["calendarBatchSettings"];
+      portfolio?: PortfolioItem[];
     };
 
     let next: Designer = base;
@@ -49,6 +52,17 @@ export async function PATCH(
     }
     if (body.calendarBatchSettings) {
       next = { ...next, calendarBatchSettings: body.calendarBatchSettings };
+    }
+    if (body.portfolio) {
+      const portfolio = body.portfolio.map(normalizePortfolioItem);
+      next = {
+        ...next,
+        portfolio,
+        projectTypeTags: deriveProjectTypeTagsFromPortfolio({
+          ...next,
+          portfolio,
+        }),
+      };
     }
 
     await saveDesigner(next);

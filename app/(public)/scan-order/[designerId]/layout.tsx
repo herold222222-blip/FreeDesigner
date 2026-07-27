@@ -1,10 +1,8 @@
-import { designers } from "@/mocks/designers";
-
 export function generateStaticParams() {
-  return designers.map((d) => ({ designerId: d.id }));
+  return [];
 }
 
-export default function ScanOrderDesignerLayout({
+export default function ScanOrderLayout({
   children,
 }: {
   children: React.ReactNode;

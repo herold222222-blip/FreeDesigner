@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { SPECIALTIES, SUB_SPECIALTIES } from "@/lib/constants";
 import { updateDesignerProfileRequest } from "@/lib/api-client";
+import { invalidateApiPath } from "@/lib/use-data";
 import {
   BACK_TO_BACK_CONTRACT_NOTE,
   ONLINE_MEETING_TIME_OPTIONS,
@@ -26,7 +27,15 @@ import {
   TRAVEL_DURATION_OPTIONS,
 } from "@/lib/designer-service-settings";
 import {
-  DESIGNER_ID_CARD_AGE,
+  EducationExperienceEditor,
+  EmploymentExperienceEditor,
+  HighestEducationSelect,
+} from "@/components/domain/designer-education-employment-fields";
+import {
+  validateEducationExperiences,
+  validateEmploymentExperiences,
+} from "@/lib/designer-education";
+import {
   deriveProjectTypeTagsFromPortfolio,
   designerDraftFromDesigner,
   type DesignerProfileDraft,
@@ -97,10 +106,34 @@ export function DesignerProfileEditDialog({
 
   const save = async () => {
     if (saving) return;
+    if (
+      (designer.subjectType ?? "individual") === "individual" &&
+      !form.highestEducation
+    ) {
+      push({
+        title: "请完善基础信息",
+        description: "请选择最高学历",
+        variant: "destructive",
+      });
+      return;
+    }
+    const eduErr = validateEducationExperiences(form.educationExperiences ?? []);
+    if (eduErr) {
+      push({ title: "请完善毕业经历", description: eduErr, variant: "destructive" });
+      return;
+    }
+    const empErr = validateEmploymentExperiences(
+      form.employmentExperiences ?? [],
+    );
+    if (empErr) {
+      push({ title: "请完善任职经历", description: empErr, variant: "destructive" });
+      return;
+    }
     setSaving(true);
     try {
       await updateDesignerProfileRequest(designer.id, { profile: form });
       clearDraft(designer.id);
+      invalidateApiPath(`/api/designers/${designer.id}`);
       push({
         title: "主页信息已更新",
         description: "对外展示内容已保存至服务器。",
@@ -119,7 +152,6 @@ export function DesignerProfileEditDialog({
     }
   };
 
-  const idAge = DESIGNER_ID_CARD_AGE[designer.id];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -139,7 +171,7 @@ export function DesignerProfileEditDialog({
             </div>
             <div className="space-y-1.5">
               <Label className="text-ink-40">年龄（身份证固定）</Label>
-              <Input value={idAge ? `${idAge} 岁` : "—"} disabled className="bg-white/80" />
+              <Input value="—" disabled className="bg-white/80" />
             </div>
             <div className="space-y-1.5 sm:col-span-2">
               <Label className="text-ink-40">从业年限（身份证固定）</Label>
@@ -187,29 +219,35 @@ export function DesignerProfileEditDialog({
                     onChange={(e) => patch({ location: e.target.value })}
                   />
                 </div>
-                <div className="space-y-1.5 sm:col-span-2">
-                  <Label>学历</Label>
-                  <Input
-                    value={form.education ?? ""}
-                    onChange={(e) => patch({ education: e.target.value })}
-                    placeholder="例如：同济大学 · 风景园林 · 硕士"
-                  />
-                </div>
-                <div className="space-y-1.5 sm:col-span-2">
-                  <Label>曾任职公司</Label>
-                  <Input
-                    value={(form.formerEmployers ?? []).join("，")}
-                    onChange={(e) =>
-                      patch({
-                        formerEmployers: e.target.value
-                          .split(/[,，]/)
-                          .map((x) => x.trim())
-                          .filter(Boolean),
-                      })
-                    }
-                    placeholder="多家请用逗号分隔"
-                  />
-                </div>
+                {(designer.subjectType ?? "individual") === "individual" ? (
+                  <>
+                    <div className="sm:col-span-2">
+                      <HighestEducationSelect
+                        required
+                        value={form.highestEducation ?? ""}
+                        onChange={(highestEducation) =>
+                          patch({ highestEducation })
+                        }
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <EducationExperienceEditor
+                        value={form.educationExperiences ?? []}
+                        onChange={(educationExperiences) =>
+                          patch({ educationExperiences })
+                        }
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <EmploymentExperienceEditor
+                        value={form.employmentExperiences ?? []}
+                        onChange={(employmentExperiences) =>
+                          patch({ employmentExperiences })
+                        }
+                      />
+                    </div>
+                  </>
+                ) : null}
                 <div className="space-y-1.5 sm:col-span-2">
                   <Label>头像地址</Label>
                   <div className="flex gap-3">
@@ -520,7 +558,7 @@ export function DesignerProfileEditDialog({
                 </p>
               ) : (
                 <p className="text-[11px] text-ink-40">
-                  详细档期请在「接单档期」菜单中按日历调整；此处为入驻时的默认偏好。
+                  详细档期请在个人主页「接单档期」中按日历调整；此处为入驻时的默认偏好。
                 </p>
               )}
             </TabsContent>

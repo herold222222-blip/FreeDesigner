@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -23,7 +24,9 @@ import { DesignerCodeCopy } from "@/components/domain/designer-code-copy";
 import { DesignerName } from "@/components/domain/designer-name";
 import { ScanOrderQrDialog } from "@/components/domain/scan-order-qr-dialog";
 import { DesignerSchedulePicker } from "@/components/domain/designer-schedule-picker";
+import { DesignerScheduleWorkspace } from "@/components/domain/designer-schedule-workspace";
 import { DesignerRegistrationTags } from "@/components/domain/designer-registration-tags";
+import { PortfolioImageLightbox } from "@/components/domain/portfolio-image-lightbox";
 import {
   Calendar,
   CheckCircle2,
@@ -32,26 +35,37 @@ import {
   Sparkles,
   Star,
 } from "lucide-react";
+import {
+  formatEducationExperienceLine,
+  formatEmploymentExperienceLine,
+  highestEducationLabel,
+} from "@/lib/designer-education";
 import { getDesignerV11TimeRates } from "@/lib/designer-rates";
+import { normalizePortfolioItem, portfolioCoverUrl } from "@/lib/portfolio-images";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { getOnlineMeetingTimeLabel } from "@/lib/designer-service-settings";
 import { AdminConsoleReturnBar } from "@/components/layout/admin-console-return-bar";
-import type { Designer, DesignerLevel } from "@/lib/types";
+import type { Designer, DesignerLevel, PortfolioItem } from "@/lib/types";
 import { useDesignerContactPrivacy } from "@/lib/use-designer-contact-privacy";
 
 export function DesignerPublicProfileView({
   designer,
   embedded = false,
   returnTo,
+  onSchedulePersisted,
 }: {
   designer: Designer;
   embedded?: boolean;
   /** 从管理后台用户管理进入时，提供返回列表链接 */
   returnTo?: string;
+  onSchedulePersisted?: () => void;
 }) {
   const level: DesignerLevel = designer.level ?? "mid_v1";
   const timeRates = getDesignerV11TimeRates({ ...designer, level });
   const { displayName } = useDesignerContactPrivacy(designer);
+  const [previewItem, setPreviewItem] = useState<PortfolioItem | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewInitialIndex, setPreviewInitialIndex] = useState(0);
 
   const portfolioGrouped = designer.portfolio.reduce<
     Record<string, typeof designer.portfolio>
@@ -123,7 +137,9 @@ export function DesignerPublicProfileView({
                     title="查看历史评价"
                   >
                     <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-                    {designer.rating} ({designer.reviewCount} 条好评)
+                    {(designer.reviewCount ?? 0) > 0
+                      ? `${designer.rating} (${designer.reviewCount} 条好评)`
+                      : "暂无"}
                   </Link>
                   <span className="inline-flex items-center gap-1">
                     <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
@@ -134,22 +150,56 @@ export function DesignerPublicProfileView({
               </div>
             </div>
             <Separator className="my-7" />
-            {(designer.education || designer.formerEmployers?.length) ? (
-              <div className="mb-4 grid gap-2 text-sm text-ink-60 sm:grid-cols-2">
-                {designer.education ? (
-                  <div>
-                    <span className="text-ink-40">学历 · </span>
-                    {designer.education}
-                  </div>
-                ) : null}
-                {designer.formerEmployers?.length ? (
-                  <div>
-                    <span className="text-ink-40">曾任职 · </span>
-                    {designer.formerEmployers.join("、")}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
+            {(() => {
+              const eduLabel = highestEducationLabel(designer.highestEducation);
+              const eduRows = designer.educationExperiences ?? [];
+              const empRows = designer.employmentExperiences ?? [];
+              const hasStructured =
+                Boolean(eduLabel) || eduRows.length > 0 || empRows.length > 0;
+              const hasLegacy =
+                Boolean(designer.education) ||
+                Boolean(designer.formerEmployers?.length);
+              if (!hasStructured && !hasLegacy) return null;
+              return (
+                <div className="mb-4 space-y-3 text-sm text-ink-60">
+                  {eduLabel || designer.education ? (
+                    <div>
+                      <span className="text-ink-40">最高学历 · </span>
+                      {eduLabel || designer.education}
+                    </div>
+                  ) : null}
+                  {eduRows.length > 0 ? (
+                    <div>
+                      <div className="mb-1 text-ink-40">毕业经历</div>
+                      <ul className="space-y-1">
+                        {eduRows.map((row) => (
+                          <li key={row.id}>
+                            {formatEducationExperienceLine(row)}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {empRows.length > 0 ? (
+                    <div>
+                      <div className="mb-1 text-ink-40">曾任职</div>
+                      <ul className="space-y-1">
+                        {empRows.map((row) => (
+                          <li key={row.id}>
+                            {formatEmploymentExperienceLine(row)}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : designer.formerEmployers?.length ? (
+                    <div>
+                      <span className="text-ink-40">曾任职 · </span>
+                      {designer.formerEmployers.join("、")}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })()}
             <p className="text-sm leading-relaxed text-ink-60">{designer.bio}</p>
             {!embedded ? (
               <div className="mt-6 flex flex-wrap items-center gap-3">
@@ -260,52 +310,106 @@ export function DesignerPublicProfileView({
                     <span className="text-xs text-ink-40">{items.length} 件</span>
                   </div>
                   <div className="grid gap-3 md:grid-cols-3">
-                    {items.map((p) => (
-                      <div
+                    {items.map((p) => {
+                      const normalized = normalizePortfolioItem(p);
+                      const cover = portfolioCoverUrl(normalized);
+                      const imageCount = normalized.images?.length ?? 1;
+                      const coverIdx = Math.max(
+                        0,
+                        (normalized.images ?? []).indexOf(normalized.cover),
+                      );
+                      return (
+                      <button
+                        type="button"
                         key={p.id}
-                        className="group relative overflow-hidden rounded-xl"
+                        className="group relative w-full overflow-hidden rounded-xl text-left cursor-zoom-in"
+                        onClick={() => {
+                          setPreviewItem(normalized);
+                          setPreviewInitialIndex(coverIdx);
+                          setPreviewOpen(true);
+                        }}
                       >
-                        <Image
-                          src={p.cover}
-                          alt={p.title}
-                          width={600}
-                          height={400}
-                          className="h-44 w-full object-cover transition-transform duration-500 group-hover:scale-105"
-                        />
+                        {cover.startsWith("data:") || cover.startsWith("blob:") ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={cover}
+                            alt={p.title}
+                            className="h-44 w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                          />
+                        ) : (
+                          <Image
+                            src={cover}
+                            alt={p.title}
+                            width={600}
+                            height={400}
+                            className="h-44 w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                          />
+                        )}
+                        {imageCount > 1 ? (
+                          <Badge
+                            variant="muted"
+                            className="pointer-events-none absolute right-2 top-2 bg-ink/70 text-[10px] text-white"
+                          >
+                            {imageCount} 图
+                          </Badge>
+                        ) : null}
                         <div className="absolute inset-0 flex items-end bg-gradient-to-t from-ink/70 via-ink/0 to-transparent p-3 opacity-0 transition-opacity group-hover:opacity-100">
                           <div className="text-xs text-white">
                             <div className="font-medium">{p.title}</div>
-                            <div className="opacity-70">{p.year}</div>
+                            <div className="opacity-70">
+                              {p.year}
+                              {p.landscapeAreaSqm
+                                ? ` · ${p.landscapeAreaSqm.toLocaleString()}㎡`
+                                : ""}
+                              {p.owner ? ` · ${p.owner}` : ""}
+                            </div>
+                            {p.description ? (
+                              <div className="mt-1 line-clamp-2 opacity-80">
+                                {p.description}
+                              </div>
+                            ) : null}
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      </button>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
             </div>
           </Card>
 
-          <Card className="p-8">
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-semibold tracking-tight text-ink">接单档期</h2>
-                <p className="mt-1 text-sm text-ink-60">
-                  定向下单与线下上门均需在档期内选择 · 最少半天 · 线上会议时间{" "}
-                  {designer.onlineMeetingTime
-                    ? getOnlineMeetingTimeLabel(designer.onlineMeetingTime)
-                    : designer.meetingFlexibility}
-                </p>
+          {embedded ? (
+            <Card className="p-6 sm:p-8">
+              <DesignerScheduleWorkspace
+                designer={designer}
+                onPersisted={onSchedulePersisted}
+              />
+            </Card>
+          ) : (
+            <Card className="p-8">
+              <div className="mb-5 flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold tracking-tight text-ink">
+                    接单档期
+                  </h2>
+                  <p className="mt-1 text-sm text-ink-60">
+                    定向下单与线下上门均需在档期内选择 · 最少半天 · 线上会议时间{" "}
+                    {designer.onlineMeetingTime
+                      ? getOnlineMeetingTimeLabel(designer.onlineMeetingTime)
+                      : designer.meetingFlexibility}
+                  </p>
+                </div>
               </div>
-            </div>
-            <DesignerSchedulePicker
-              calendar={designer.calendar}
-              value={[]}
-              readOnly
-              initialYear={startOfMonth.getFullYear()}
-              initialMonth={startOfMonth.getMonth() + 1}
-            />
-          </Card>
+              <DesignerSchedulePicker
+                calendar={designer.calendar}
+                value={[]}
+                readOnly
+                initialYear={startOfMonth.getFullYear()}
+                initialMonth={startOfMonth.getMonth() + 1}
+              />
+            </Card>
+          )}
         </div>
 
         <aside className="space-y-5 lg:sticky lg:top-20 lg:self-start">
@@ -400,6 +504,16 @@ export function DesignerPublicProfileView({
           </Card>
         </aside>
       </div>
+
+      <PortfolioImageLightbox
+        item={previewItem}
+        open={previewOpen}
+        onOpenChange={(open) => {
+          setPreviewOpen(open);
+          if (!open) setPreviewItem(null);
+        }}
+        initialIndex={previewInitialIndex}
+      />
     </div>
   );
 }

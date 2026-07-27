@@ -17,7 +17,6 @@ import {
   filterReviewItems,
   type ReviewSpecialtyFilter,
 } from "@/lib/admin-review-filters";
-import { reviewQueue as demoReviewQueue } from "@/mocks/reviews";
 import { cn, formatDateTime } from "@/lib/utils";
 import {
   isInternPromotionReview,
@@ -35,9 +34,6 @@ import {
   TrendingUp,
   XCircle,
 } from "lucide-react";
-
-const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE !== "off";
-const DEMO_REVIEW_IDS = new Set(demoReviewQueue.map((r) => r.id));
 
 export type ReviewQueueTab =
   | "designer"
@@ -142,7 +138,9 @@ export function AdminReviewQueue({
             ? target
               ? `已晋升至「${target}」。`
               : "等级已更新。"
-            : "已发送通知,账号正式上线。",
+            : item.type === "designer"
+              ? "已通过入驻审核，该设计师将出现在公开设计师列表中。"
+              : "已发送通知,账号正式上线。",
       });
       refresh();
     } catch (e) {
@@ -167,7 +165,9 @@ export function AdminReviewQueue({
           ? "该设计师维持见习等级，仍受同时仅接 1 单限制。"
           : isLevelPromotionReview(item)
             ? "该设计师维持当前等级，可完善评价数据后重新申请。"
-            : "已通知申请人完善资料后重新提交。",
+            : item.type === "designer"
+              ? "入驻未通过，不会在设计师列表中展示。"
+              : "已通知申请人完善资料后重新提交。",
       });
       refresh();
     } catch (e) {
@@ -448,9 +448,6 @@ function ReviewCard({
         <div className="flex-1 space-y-2">
           <div className="flex items-center gap-2">
             <Badge variant={badgeVariant}>{badgeLabel}</Badge>
-            {DEMO_MODE && DEMO_REVIEW_IDS.has(item.id) ? (
-              <Badge variant="muted">演示</Badge>
-            ) : null}
             <h4 className="text-base font-semibold text-ink">{item.name}</h4>
             <span className="text-xs text-ink-40">
               提交于 {formatDateTime(item.submittedAt)}

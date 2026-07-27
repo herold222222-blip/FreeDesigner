@@ -53,6 +53,7 @@ import {
   resolveCalculatorQuoteRemarkVariant,
 } from "@/lib/calculator-quote-remarks";
 import {
+  difficultyOptionKey,
   getHardscapeScopeNote,
   landscapeAreaDifficultyUI,
   landscapeTimeDifficultyUI,
@@ -67,6 +68,7 @@ import {
   Ruler,
   Sparkles,
 } from "lucide-react";
+import { GuestAccessGate } from "@/components/domain/guest-access-gate";
 
 const TRACK_LABEL: Record<"hardscape" | "softscape" | "drainage" | "electrical" | "structure", string> = {
   hardscape: "园建（Hardscape）",
@@ -323,6 +325,14 @@ function LandscapeSharedProjectPanel({ shared }: { shared: LandscapeSharedProps 
 }
 
 export default function CalculatorPage() {
+  return (
+    <GuestAccessGate intent="browse">
+      <CalculatorPageInner />
+    </GuestAccessGate>
+  );
+}
+
+function CalculatorPageInner() {
   const [activeSpecialty, setActiveSpecialty] = useState<Specialty>("landscape");
 
   return (
@@ -1505,6 +1515,8 @@ function TimeBasedCalculator({
   } = shared;
 
   const landscapeDifficulty = pricingConfig.landscapeDifficulty;
+  const [difficultyKey, setDifficultyKey] = useState("mid");
+  const timeUi = landscapeTimeDifficultyUI(track, landscapeDifficulty);
 
   useEffect(() => {
     const ui = landscapeTimeDifficultyUI(track, landscapeDifficulty);
@@ -1512,9 +1524,15 @@ function TimeBasedCalculator({
       setDifficulty(ui.value);
       return;
     }
-    const allowed = ui.options.map((o) => o.value);
-    setDifficulty((prev) => (allowed.includes(prev) ? prev : ui.options[0]?.value ?? 1));
-  }, [track, landscapeDifficulty]);
+    const keys = ui.options.map(difficultyOptionKey);
+    setDifficultyKey((prev) => {
+      const next = keys.includes(prev) ? prev : (keys[0] ?? "mid");
+      const selected =
+        ui.options.find((o) => difficultyOptionKey(o) === next) ?? ui.options[0];
+      setDifficulty(selected?.value ?? 1);
+      return next;
+    });
+  }, [track, landscapeDifficulty, setDifficulty]);
 
   const result = useMemo(
     () =>
@@ -1532,8 +1550,6 @@ function TimeBasedCalculator({
       }, pricingConfig),
     [unit, quantity, mode, track, designerLevel, designerRegion, clientLevel, withDrawing, difficulty, tax, pricingConfig],
   );
-
-  const timeUi = landscapeTimeDifficultyUI(track, landscapeDifficulty);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_440px]">
@@ -1605,53 +1621,50 @@ function TimeBasedCalculator({
             <div className="space-y-1.5 sm:col-span-2">
               <Label>
                 难度系数 · {TRACK_LABEL[track].split("（")[0]?.trim()}
-                {track === "structure"
-                  ? "（文档未单列，计算器暂按园建四档系数参考）"
-                  : track === "hardscape"
-                    ? " · 适用范围见按面积一侧园建说明"
-                    : ""}
+                {track === "structure" || track === "electrical"
+                  ? "（固定 100%）"
+                  : "（按天 / 按月专用档位）"}
               </Label>
-              {track === "hardscape" ? (
-                <p className="text-[11px] leading-relaxed text-ink-60">
-                  {getHardscapeScopeNote(landscapeDifficulty)}
-                </p>
-              ) : null}
               {timeUi.kind === "select" ? (
                 <>
                   <div className="flex flex-wrap gap-1.5">
-                    {timeUi.options.map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => setDifficulty(opt.value)}
-                        className={pillCls(difficulty === opt.value)}
-                      >
-                        {opt.label} {Math.round(opt.value * 100)}%
-                      </button>
-                    ))}
+                    {timeUi.options.map((opt) => {
+                      const key = difficultyOptionKey(opt);
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => {
+                            setDifficultyKey(key);
+                            setDifficulty(opt.value);
+                          }}
+                          className={pillCls(difficultyKey === key)}
+                        >
+                          {opt.label} {Math.round(opt.value * 100)}%
+                        </button>
+                      );
+                    })}
                   </div>
-                  <div
-                    className={cn(
-                      "mt-2 grid gap-2",
-                      timeUi.options.length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-2",
-                    )}
-                  >
-                    {timeUi.options.map((opt) => (
-                      <div
-                        key={opt.value}
-                        className={cn(
-                          "rounded-lg border px-2.5 py-2 text-[11px] leading-snug",
-                          difficulty === opt.value
-                            ? "border-brand/40 bg-brand/5"
-                            : "border-ink-20/80 bg-white/60",
-                        )}
-                      >
-                        <span className="font-semibold text-ink">
-                          {opt.label} · {Math.round(opt.value * 100)}%
-                        </span>
-                        <span className="mt-1 block text-ink-60">{opt.remark}</span>
-                      </div>
-                    ))}
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {timeUi.options.map((opt) => {
+                      const key = difficultyOptionKey(opt);
+                      return (
+                        <div
+                          key={key}
+                          className={cn(
+                            "rounded-lg border px-2.5 py-2 text-[11px] leading-snug",
+                            difficultyKey === key
+                              ? "border-brand/40 bg-brand/5"
+                              : "border-ink-20/80 bg-white/60",
+                          )}
+                        >
+                          <span className="font-semibold text-ink">
+                            {opt.label} · {Math.round(opt.value * 100)}%
+                          </span>
+                          <span className="mt-1 block text-ink-60">{opt.remark}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </>
               ) : (
@@ -1663,8 +1676,8 @@ function TimeBasedCalculator({
                 </div>
               )}
               <div className="text-[11px] text-ink-40">
-                与文档 3.1.1.2.6 一致：给排水为人工取水 / 自动喷灌二选一；电气固定
-                100%；园建、绿化为四档备注。
+                按天 / 按月：园建、绿化为中/高二档；给排水为人工取水 / 自动喷灌（均为
+                100%）；电气与结构固定 100%。
               </div>
             </div>
           </div>

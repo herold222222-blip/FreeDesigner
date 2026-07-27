@@ -100,7 +100,7 @@
 
 | 字段 | 说明 |
 |------|------|
-| id | 业务 id（如 designer_chen） |
+| id | 业务 id（如 designer_xxx） |
 | userId | 关联 User，可选 |
 | name / avatar | 名称、头像 |
 | subjectType | `individual` / `team` / `company` |
@@ -380,7 +380,7 @@ SELECT id, phone, name, role, status FROM "User";
 SELECT id, code, title, status, "totalAmount" FROM "Order";
 
 -- 某设计师的订单
-SELECT code, title, status FROM "Order" WHERE "designerId" = 'designer_chen';
+SELECT code, title, status FROM "Order" WHERE "designerId" = 'designer_xxx';
 ```
 
 ---
@@ -394,7 +394,7 @@ SELECT code, title, status FROM "Order" WHERE "designerId" = 'designer_chen';
 | 管理员 | 13700000000 |
 | 超级管理员 | 13700000001 |
 
-登录默认走短信验证码（`DEMO_CODE_ENABLED=off`）。仅本地临时调试时可开启固定码。
+登录走短信验证码，须配置 `SMS_*`。
 
 ---
 

@@ -11,10 +11,18 @@ import {
   requestStageRevisionRequest,
   confirmFinalSettlementRequest,
   submitOrderReviewRequest,
+  updateMatchingOrderRequest,
+  confirmOrderQuoteRequest,
 } from "@/lib/api-client";
+import {
+  MatchingOrderEditDialog,
+  type MatchingOrderEditPayload,
+} from "@/components/domain/matching-order-edit-dialog";
+import { invalidateApiPath } from "@/lib/use-data";
 import { StagePaymentDialog } from "@/components/domain/stage-payment-dialog";
 import { OrderReviewDialog } from "@/components/domain/order-review-dialog";
 import { DisputeFilingDialog } from "@/components/domain/dispute-filing-dialog";
+import { OrderQuotePanel } from "@/components/domain/order-quote-panel";
 import {
   canPayOrderStages,
   isContractFullySigned,
@@ -47,6 +55,7 @@ import {
   Info,
   MapPin,
   MessageSquare,
+  Pencil,
   Send,
   ShieldAlert,
   Sparkles,
@@ -83,6 +92,8 @@ function ClientOrderDetailInner({ id }: { id: string }) {
   } | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [disputeOpen, setDisputeOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
 
   useEffect(() => {
     const stageId = searchParams.get("payStage");
@@ -120,6 +131,26 @@ function ClientOrderDetailInner({ id }: { id: string }) {
       });
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleSaveMatching = async (payload: MatchingOrderEditPayload) => {
+    if (!order || editSaving) return;
+    setEditSaving(true);
+    try {
+      await updateMatchingOrderRequest(order.id, payload);
+      push({ title: "委托信息已更新", variant: "success" });
+      setEditOpen(false);
+      invalidateApiPath("/api/orders");
+      refresh();
+    } catch (e) {
+      push({
+        title: "保存失败",
+        description: e instanceof Error ? e.message : "请稍后再试",
+        variant: "destructive",
+      });
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -163,11 +194,24 @@ function ClientOrderDetailInner({ id }: { id: string }) {
                   {order.description}
                 </p>
               </div>
-              <div className="text-right">
-                <div className="text-xs text-ink-60">订单总额</div>
-                <div className="text-2xl font-semibold tracking-tight text-ink">
-                  {formatCurrency(order.totalAmount)}
+              <div className="flex flex-col items-end gap-2 text-right">
+                <div>
+                  <div className="text-xs text-ink-60">订单总额</div>
+                  <div className="text-2xl font-semibold tracking-tight text-ink">
+                    {formatCurrency(order.totalAmount)}
+                  </div>
                 </div>
+                {order.status === "matching" ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => setEditOpen(true)}
+                  >
+                    <Pencil className="h-3.5 w-3.5" /> 修改委托信息
+                  </Button>
+                ) : null}
               </div>
             </div>
 
@@ -203,6 +247,22 @@ function ClientOrderDetailInner({ id }: { id: string }) {
             ) : null}
           </Card>
 
+          {order.quote ? (
+            <OrderQuotePanel
+              order={order}
+              confirming={busy}
+              onConfirm={
+                order.status === "pending_quote"
+                  ? () =>
+                      runAction(
+                        () => confirmOrderQuoteRequest(order.id),
+                        "报价已确认，已通知管理员分配设计师",
+                      )
+                  : undefined
+              }
+            />
+          ) : null}
+
           {order.status === "in_revision" && order.revisions.length > 0 ? (
             <Card className="border-violet-200 bg-violet-50 p-5">
               <div className="flex items-start gap-3">
@@ -235,62 +295,66 @@ function ClientOrderDetailInner({ id }: { id: string }) {
             </Card>
           ) : null}
 
-          <OrderTrackAssignmentsPanel order={order} getDesigner={getDesigner} />
+          {order.status !== "pending_quote" ? (
+            <OrderTrackAssignmentsPanel order={order} getDesigner={getDesigner} />
+          ) : null}
 
           {(order.withAuditService || order.withProjectManagement) ? (
             <OrderValueAddedServicesPanel order={order} />
           ) : null}
 
-          {isTimeBilledOrder(order) ? (
-            <OrderScheduleBillingPanel
-              order={order}
-              paying={busy}
-              onPayStage={(item) => {
-                if (!item.stageId) return;
-                setPayTarget({
-                  stageId: item.stageId,
-                  name: item.label,
-                  amount: item.amount,
-                });
-              }}
-            />
-          ) : (
-            <Card className="p-7">
-              <div className="mb-5">
-                <h2 className="text-lg font-semibold tracking-tight text-ink">
-                  付款进度 & 阶段成果
-                </h2>
-                <p className="mt-1 text-sm text-ink-60">
-                  设计师上传成果文件后,你可在线免费预览。预览满意后付款解锁下载。
-                </p>
-              </div>
-              <StageTimeline
+          {order.status !== "pending_quote" ? (
+            isTimeBilledOrder(order) ? (
+              <OrderScheduleBillingPanel
                 order={order}
-                perspective="client"
-                getDesigner={getDesigner}
-                collaboratorMode="client"
-                onPay={(stage) =>
+                paying={busy}
+                onPayStage={(item) => {
+                  if (!item.stageId) return;
                   setPayTarget({
-                    stageId: stage.id,
-                    name: stage.name,
-                    amount: stage.amount,
-                  })
-                }
-                onStageComplete={(stage) =>
-                  runAction(
-                    () => releaseStageRequest(order.id, stage.id),
-                    `${stage.name}已确认验收，款项已解冻`,
-                  )
-                }
-                onRevise={(stage) =>
-                  runAction(
-                    () => requestStageRevisionRequest(order.id, stage.id),
-                    "已提交返修需求，设计师将优先处理",
-                  )
-                }
+                    stageId: item.stageId,
+                    name: item.label,
+                    amount: item.amount,
+                  });
+                }}
               />
-            </Card>
-          )}
+            ) : (
+              <Card className="p-7">
+                <div className="mb-5">
+                  <h2 className="text-lg font-semibold tracking-tight text-ink">
+                    付款进度 & 阶段成果
+                  </h2>
+                  <p className="mt-1 text-sm text-ink-60">
+                    设计师上传成果文件后,你可在线免费预览。预览满意后付款解锁下载。
+                  </p>
+                </div>
+                <StageTimeline
+                  order={order}
+                  perspective="client"
+                  getDesigner={getDesigner}
+                  collaboratorMode="client"
+                  onPay={(stage) =>
+                    setPayTarget({
+                      stageId: stage.id,
+                      name: stage.name,
+                      amount: stage.amount,
+                    })
+                  }
+                  onStageComplete={(stage) =>
+                    runAction(
+                      () => releaseStageRequest(order.id, stage.id),
+                      `${stage.name}已确认验收，款项已解冻`,
+                    )
+                  }
+                  onRevise={(stage) =>
+                    runAction(
+                      () => requestStageRevisionRequest(order.id, stage.id),
+                      "已提交返修需求，设计师将优先处理",
+                    )
+                  }
+                />
+              </Card>
+            )
+          ) : null}
 
           <Card className="p-7">
             <div className="mb-5 flex items-center gap-2">
@@ -430,10 +494,50 @@ function ClientOrderDetailInner({ id }: { id: string }) {
                   : "电子合同已生成，等待双方签署。")}
               {order.status === "pending_schedule" &&
                 "委托人已提交档期申请,请确认后进入合同签署。"}
+              {order.status === "pending_quote" &&
+                "系统已生成报价单，请确认后进入设计师匹配；确认后将通知管理员分配设计师。"}
               {order.status === "matching" &&
-                "悬赏招标中,等待设计师报名匹配。"}
+                "等待平台匹配设计师并确认费用，此阶段可修改委托信息。"}
             </div>
           </Card>
+
+          {order.status === "pending_quote" && order.quote ? (
+            <Card className="space-y-3 p-5">
+              <div className="text-xs uppercase tracking-wider text-ink-40">
+                待办操作
+              </div>
+              <Button
+                variant="brand"
+                size="sm"
+                className="w-full"
+                disabled={busy}
+                onClick={() =>
+                  runAction(
+                    () => confirmOrderQuoteRequest(order.id),
+                    "报价已确认，已通知管理员分配设计师",
+                  )
+                }
+              >
+                确认报价并提交匹配
+              </Button>
+            </Card>
+          ) : null}
+
+          {order.status === "matching" ? (
+            <Card className="space-y-3 p-5">
+              <div className="text-xs uppercase tracking-wider text-ink-40">
+                待办操作
+              </div>
+              <Button
+                variant="brand"
+                size="sm"
+                className="w-full"
+                onClick={() => setEditOpen(true)}
+              >
+                <Pencil className="h-3.5 w-3.5" /> 修改委托信息
+              </Button>
+            </Card>
+          ) : null}
 
           {(needsClientSign(order) ||
             isPendingFinalSettlement(order) ||
@@ -570,6 +674,16 @@ function ClientOrderDetailInner({ id }: { id: string }) {
           </Card>
         </aside>
       </div>
+
+      {order.status === "matching" ? (
+        <MatchingOrderEditDialog
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          order={order}
+          onSave={handleSaveMatching}
+          saving={editSaving}
+        />
+      ) : null}
 
       <OrderReviewDialog
         open={reviewOpen}

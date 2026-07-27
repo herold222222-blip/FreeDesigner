@@ -25,6 +25,10 @@ import {
   getL3Label,
   normalizeBountyTrack,
 } from "@/lib/bounty-tracks";
+import {
+  designerCanAcceptOrders,
+  designerCoversProjectType,
+} from "@/lib/designer-portfolio-readiness";
 import type { Bounty, Designer } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +50,10 @@ export function BountyApplyDialog({
     () => (designer ? designerEligibleL3s(designer, track.l3) : []),
     [designer, track.l3],
   );
+  const portfolioBlocked =
+    !!designer &&
+    (!designerCanAcceptOrders(designer) ||
+      !designerCoversProjectType(designer, bounty.projectType));
 
   const [appliedL3, setAppliedL3] = useState("");
   const [proposal, setProposal] = useState("");
@@ -93,6 +101,12 @@ export function BountyApplyDialog({
 
         {!designer ? (
           <p className="text-sm text-ink-60">请先登录设计师账号。</p>
+        ) : portfolioBlocked ? (
+          <p className="text-sm text-destructive">
+            {bounty.projectType?.trim()
+              ? `请先在作品管理上传「${bounty.projectType}」类型案例后，方可报名该悬赏。`
+              : "请先在作品管理上传项目类型案例后，方可报名悬赏。"}
+          </p>
         ) : eligibleL3s.length === 0 ? (
           <p className="text-sm text-destructive">
             您的注册专业与悬赏要求的三级专业不匹配，无法报名。
@@ -141,7 +155,12 @@ export function BountyApplyDialog({
           </Button>
           <Button
             variant="brand"
-            disabled={submitting || !designer || eligibleL3s.length === 0}
+            disabled={
+              submitting ||
+              !designer ||
+              portfolioBlocked ||
+              eligibleL3s.length === 0
+            }
             onClick={handleSubmit}
             className={cn(submitting && "opacity-70")}
           >

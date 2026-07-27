@@ -1,5 +1,5 @@
 /**
- * 文档 3.1.1.2.6 · 景观按面积计费时的三级专业难度系数展示与取值。
+ * 文档 3.1.1.2.6 · 景观按面积 / 按时间计费时的三级专业难度系数展示与取值。
  */
 
 import type { LandscapeTrackDifficultyConfig } from "@/lib/platform-pricing";
@@ -9,6 +9,12 @@ export interface LandscapeAreaDifficultyOption {
   label: string;
   /** 文档备注原文 */
   remark: string;
+  /** 同系数多档时用于区分选中项（如给排水人工取水 / 自动喷灌） */
+  id?: string;
+}
+
+export function difficultyOptionKey(opt: LandscapeAreaDifficultyOption): string {
+  return opt.id ?? String(opt.value);
 }
 
 /** 园建取值范围说明（含简单园林结构的园建档位；不含计算书；大型钢结构、≥3m 挡墙等需另选结构设计） */
@@ -61,13 +67,93 @@ export const LANDSCAPE_SOFTSCAPE_DIFFICULTY: LandscapeAreaDifficultyOption[] = [
   },
 ];
 
-/** 给排水仅有二档（文档无「高/中/低」四档） */
+/** 给排水仅有二档（文档无「高/中/低」四档）· 按面积 */
 export const LANDSCAPE_DRAINAGE_DIFFICULTY: LandscapeAreaDifficultyOption[] = [
-  { value: 1.0, label: "人工取水", remark: "人工取水（系数 100%）" },
-  { value: 1.3, label: "自动喷灌", remark: "自动喷灌（系数 130%）" },
+  {
+    id: "manual",
+    value: 1.0,
+    label: "人工取水",
+    remark: "人工取水（系数 100%）",
+  },
+  {
+    id: "irrigation",
+    value: 1.3,
+    label: "自动喷灌",
+    remark: "自动喷灌（系数 130%）",
+  },
 ];
 
-export type AreaLandscapeTrack = "hardscape" | "softscape" | "drainage" | "electrical";
+/**
+ * 按天 / 按月计费 · 景观施工图三级专业难度（仅园建 / 绿化 / 给排水）。
+ * 与按面积四档规则不同，不复用面积侧配置。
+ */
+export const LANDSCAPE_TIME_HARDSCAPE_DIFFICULTY: LandscapeAreaDifficultyOption[] =
+  [
+    {
+      id: "mid",
+      value: 1.0,
+      label: "中",
+      remark: "仅负责园建专业内容",
+    },
+    {
+      id: "high",
+      value: 1.2,
+      label: "高",
+      remark: "需要懂得并协调绿化、水电专业",
+    },
+  ];
+
+export const LANDSCAPE_TIME_SOFTSCAPE_DIFFICULTY: LandscapeAreaDifficultyOption[] =
+  [
+    {
+      id: "mid",
+      value: 1.0,
+      label: "中",
+      remark: "常规乔木组合乔灌草",
+    },
+    {
+      id: "high",
+      value: 1.2,
+      label: "高",
+      remark: "大量特色植物空间，水系，热带/沙漠植物或者花境较多",
+    },
+  ];
+
+export const LANDSCAPE_TIME_DRAINAGE_DIFFICULTY: LandscapeAreaDifficultyOption[] =
+  [
+    {
+      id: "manual",
+      value: 1.0,
+      label: "人工取水",
+      remark: "人工取水（系数 100%）",
+    },
+    {
+      id: "irrigation",
+      value: 1.0,
+      label: "自动喷灌",
+      remark: "自动喷灌（系数 100%）",
+    },
+  ];
+
+export type AreaLandscapeTrack =
+  | "hardscape"
+  | "softscape"
+  | "drainage"
+  | "electrical";
+
+export type TimeLandscapeTrack =
+  | "hardscape"
+  | "softscape"
+  | "drainage"
+  | "electrical"
+  | "structure";
+
+/** 按时间计费中具备难度系数选项的专业 */
+export function hasLandscapeTimeDifficultySelect(
+  t: TimeLandscapeTrack,
+): boolean {
+  return t === "hardscape" || t === "softscape" || t === "drainage";
+}
 
 export type LandscapeAreaDifficultyUIMode =
   | { kind: "select"; options: LandscapeAreaDifficultyOption[] }
@@ -104,29 +190,29 @@ export function landscapeAreaDifficultyUI(
   }
 }
 
-export function getHardscapeScopeNote(cfg: LandscapeTrackDifficultyConfig = DEFAULT_DIFFICULTY) {
+export function getHardscapeScopeNote(
+  cfg: LandscapeTrackDifficultyConfig = DEFAULT_DIFFICULTY,
+) {
   return cfg.hardscapeScopeNote;
 }
 
-export type TimeLandscapeTrack =
-  | "hardscape"
-  | "softscape"
-  | "drainage"
-  | "electrical"
-  | "structure";
-
-/** 按时间报价：绿化/园建/给排水/电气与文档一致；「结构」在 3.1.1.2.6 未单列四档描述，沿用园建四档系数作参考计费。 */
+/**
+ * 按时间报价难度：
+ * - 园建 / 绿化 / 给排水：按天计费专用二档（与按面积四档不同）
+ * - 电气：固定 100%
+ * - 结构：无独立难度档，固定 100%
+ */
 export function landscapeTimeDifficultyUI(
   t: TimeLandscapeTrack,
   cfg: LandscapeTrackDifficultyConfig = DEFAULT_DIFFICULTY,
 ): LandscapeAreaDifficultyUIMode {
   switch (t) {
     case "hardscape":
-      return { kind: "select", options: cfg.hardscape };
+      return { kind: "select", options: LANDSCAPE_TIME_HARDSCAPE_DIFFICULTY };
     case "softscape":
-      return { kind: "select", options: cfg.softscape };
+      return { kind: "select", options: LANDSCAPE_TIME_SOFTSCAPE_DIFFICULTY };
     case "drainage":
-      return { kind: "select", options: cfg.drainage };
+      return { kind: "select", options: LANDSCAPE_TIME_DRAINAGE_DIFFICULTY };
     case "electrical":
       return {
         kind: "fixed",
@@ -134,6 +220,10 @@ export function landscapeTimeDifficultyUI(
         note: cfg.electrical.note,
       };
     default:
-      return { kind: "select", options: cfg.hardscape };
+      return {
+        kind: "fixed",
+        value: 1,
+        note: "结构专业按时间计费暂无独立难度档位，系数固定 100%。",
+      };
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,10 +13,29 @@ import { useRoleStore } from "@/store/role-store";
 import { useDesigner } from "@/lib/use-data";
 
 export default function DesignerProfileEditorPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="text-sm text-ink-60">正在加载个人主页...</div>
+      }
+    >
+      <DesignerProfileEditorInner />
+    </Suspense>
+  );
+}
+
+function DesignerProfileEditorInner() {
   const identityId = useRoleStore((s) => s.identityId) ?? "";
   const { refresh } = useDesigner(identityId);
   const designer = useEffectiveDesigner(identityId);
   const [editOpen, setEditOpen] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash !== "#schedule") return;
+    const el = document.getElementById("schedule");
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [designer?.id]);
 
   if (!designer) {
     return (
@@ -30,7 +49,7 @@ export default function DesignerProfileEditorPage() {
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-ink">个人主页</h2>
           <p className="mt-1 text-sm text-ink-60">
-            右侧为委托人看到的对外展示效果；修改资料后预览即时更新。
+            右侧为委托人看到的对外展示效果；接单档期与工作安排可直接在本页查看与修改。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -71,7 +90,11 @@ export default function DesignerProfileEditorPage() {
             /designers/{designer.id}
           </span>
         </div>
-        <DesignerPublicProfileView designer={designer} embedded />
+        <DesignerPublicProfileView
+          designer={designer}
+          embedded
+          onSchedulePersisted={refresh}
+        />
       </div>
     </div>
   );

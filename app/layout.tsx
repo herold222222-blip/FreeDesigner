@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
-import { RoleSwitcherFab } from "@/components/layout/role-switcher-fab";
+import { ErrorAlertDialog } from "@/components/ui/error-alert-dialog";
+import { GuestAccessDialog } from "@/components/domain/guest-access-dialog";
 import { AuthBootstrap } from "@/components/layout/auth-bootstrap";
 
 export const metadata: Metadata = {
@@ -21,7 +22,8 @@ export default function RootLayout({
         {children}
         <AuthBootstrap />
         <Toaster />
-        <RoleSwitcherFab />
+        <ErrorAlertDialog />
+        <GuestAccessDialog />
       </body>
     </html>
   );

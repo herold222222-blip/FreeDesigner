@@ -9,9 +9,27 @@ import {
   hashPassword,
   switchSessionRole,
 } from "@/lib/server/auth";
-import { allocateClientCode, allocateDesignerCode } from "@/lib/server/repo";
+import { sendWelcomeInboxMessage } from "@/lib/server/inbox";
+import {
+  allocateClientCode,
+  allocateDesignerCode,
+  createDesignerOnboardingReview,
+} from "@/lib/server/repo";
 import { resolveRegistrationAvatar } from "@/lib/default-profile-images";
-import type { Client, Designer, Role, SubjectType } from "@/lib/types";
+import type {
+  Client,
+  Designer,
+  Role,
+  Specialty,
+  SubjectType,
+} from "@/lib/types";
+import { inferRegionTier } from "@/lib/constants";
+import {
+  highestEducationLabel,
+  normalizeEducationExperiences,
+  normalizeEmploymentExperiences,
+} from "@/lib/designer-education";
+import { defaultPrimaryTrackForSpecialty } from "@/lib/designer-track-resolve";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +75,72 @@ const schema = z.object({
       }),
     )
     .optional(),
+  specialty: z
+    .enum([
+      "architecture",
+      "landscape",
+      "interior",
+      "rendering",
+      "cost_consulting",
+    ])
+    .optional(),
+  primaryTrack: z
+    .object({
+      l1: z.enum([
+        "architecture",
+        "landscape",
+        "interior",
+        "rendering",
+        "cost_consulting",
+      ]),
+      l2: z.string().min(1),
+      l3: z.string().min(1),
+    })
+    .optional(),
+  secondaryTracks: z
+    .array(
+      z.object({
+        l1: z.enum([
+          "architecture",
+          "landscape",
+          "interior",
+          "rendering",
+          "cost_consulting",
+        ]),
+        l2: z.string().min(1),
+        l3: z.string().min(1),
+      }),
+    )
+    .optional(),
+  yearsOfExperience: z.number().int().min(0).max(80).optional(),
+  isInJob: z.boolean().optional(),
+  highestEducation: z
+    .enum(["college_or_below", "bachelor", "master", "doctorate_or_above"])
+    .optional(),
+  educationExperiences: z
+    .array(
+      z.object({
+        id: z.string(),
+        school: z.string().optional(),
+        degree: z
+          .enum(["college", "bachelor", "master", "doctorate", "postdoc"])
+          .optional(),
+        major: z.string().optional(),
+        graduatedAt: z.string().optional(),
+      }),
+    )
+    .optional(),
+  employmentExperiences: z
+    .array(
+      z.object({
+        id: z.string(),
+        company: z.string().optional(),
+        title: z.string().optional(),
+        startAt: z.string().optional(),
+        endAt: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -86,6 +170,14 @@ export async function POST(req: NextRequest) {
       businessScope,
       companyQualificationNone,
       companyQualifications,
+      specialty: specialtyInput,
+      primaryTrack: primaryTrackInput,
+      secondaryTracks: secondaryTracksInput,
+      yearsOfExperience: yearsOfExperienceInput,
+      isInJob: isInJobInput,
+      highestEducation: highestEducationInput,
+      educationExperiences: educationExperiencesInput,
+      employmentExperiences: employmentExperiencesInput,
     } = parsed.data;
 
     if (kind === "designer_company") {
@@ -243,6 +335,20 @@ export async function POST(req: NextRequest) {
             ? "company"
             : "individual";
       const designerCode = await allocateDesignerCode();
+      const specialty: Specialty = specialtyInput ?? "architecture";
+      const primaryTrack =
+        primaryTrackInput ?? defaultPrimaryTrackForSpecialty(specialty);
+      const secondaryTracks = secondaryTracksInput ?? [];
+      const educationExperiences =
+        subjectType === "individual"
+          ? normalizeEducationExperiences(educationExperiencesInput)
+          : [];
+      const employmentExperiences =
+        subjectType === "individual"
+          ? normalizeEmploymentExperiences(employmentExperiencesInput)
+          : [];
+      const highestEducation =
+        subjectType === "individual" ? highestEducationInput : undefined;
       const designerData: Partial<Designer> = {
         id: `designer_${userId}`,
         code: designerCode,
@@ -268,18 +374,36 @@ export async function POST(req: NextRequest) {
         locationScope: locationScope ?? undefined,
         overseasCountry: overseasCountry?.trim() || undefined,
         location: location?.trim() || "",
+        regionTier: location?.trim()
+          ? inferRegionTier(location.trim())
+          : undefined,
         level: "intern",
-        specialty: "architecture",
+        specialty,
+        primaryTrack,
+        secondaryTracks,
         subSpecialties: [],
-        yearsOfExperience: 0,
+        yearsOfExperience:
+          subjectType === "individual"
+            ? Math.max(0, yearsOfExperienceInput ?? 0)
+            : 0,
         onlineStatus: "online",
         workloadStatus: "free",
         activityIndicator: "green",
         lastActiveAt: new Date().toISOString(),
         isOpenToTravel: false,
         supportsHandDrawing: false,
-        isInJob: false,
+        isInJob:
+          subjectType === "individual" ? Boolean(isInJobInput) : false,
         acceptingOrders: false,
+        highestEducation,
+        educationExperiences,
+        employmentExperiences,
+        education: highestEducation
+          ? highestEducationLabel(highestEducation)
+          : undefined,
+        formerEmployers: employmentExperiences
+          .map((e) => e.company)
+          .filter((x): x is string => Boolean(x)),
         serviceModes: ["online"],
         meetingFlexibility: "",
         tagline: "",
@@ -294,22 +418,27 @@ export async function POST(req: NextRequest) {
         portfolio: [],
         calendar: [],
       };
+      const designerPayload: Designer = {
+        ...(designerData as Designer),
+        reviewStatus: "pending",
+      };
       const d = await prisma.designer.create({
         data: {
-          id: designerData.id!,
+          id: designerPayload.id,
           userId,
           name,
           avatar: resolvedAvatar,
           subjectType,
           level: "intern",
-          specialty: "architecture",
+          specialty,
           acceptingOrders: false,
           reviewStatus: "pending",
           code: designerCode,
-          data: JSON.stringify(designerData),
+          data: JSON.stringify(designerPayload),
         },
       });
       identityId = d.id;
+      await createDesignerOnboardingReview(designerPayload, phone);
     }
 
     if (attachMode && session) {
@@ -317,6 +446,19 @@ export async function POST(req: NextRequest) {
     } else {
       await createSession({ userId, role, identityId });
     }
+
+    const roleLabel = isClient
+      ? clientType === "enterprise"
+        ? "企业委托人"
+        : "个人委托人"
+      : kind === "designer_company"
+        ? "设计公司"
+        : kind === "designer_team"
+          ? "设计团队"
+          : "个人设计师";
+    await sendWelcomeInboxMessage(userId, roleLabel).catch(() => {
+      /* 欢迎消息失败不阻断注册 */
+    });
 
     return ok({
       userId,

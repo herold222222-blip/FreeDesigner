@@ -191,6 +191,19 @@ export function sortDesigners(
   return sorted;
 }
 
+/** 当前登录设计师始终置顶 */
+export function pinDesignerFirst(
+  list: Designer[],
+  designerId?: string | null,
+): Designer[] {
+  if (!designerId) return list;
+  const idx = list.findIndex((d) => d.id === designerId);
+  if (idx <= 0) return list;
+  const next = [...list];
+  const [self] = next.splice(idx, 1);
+  return [self, ...next];
+}
+
 export function getSortReferenceLabel(referenceCity: string): string {
   return referenceCity === "all" ? DEFAULT_REFERENCE_CITY : referenceCity;
 }

@@ -12,8 +12,11 @@ import {
 } from "@/lib/bounty-filters";
 import type { Specialty } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { MapPin, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+
+const selectClass =
+  "h-9 w-full min-w-0 rounded-lg border border-ink-20 bg-white px-2.5 text-xs text-ink disabled:opacity-50";
 
 export function createDefaultBountyFilters(): BountyListFilters {
   return {
@@ -79,14 +82,137 @@ export function BountyFiltersPanel({
   };
 
   return (
-    <Card className="mb-6 space-y-5 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-ink">
-          <SlidersHorizontal className="h-4 w-4 text-brand" />
-          筛选悬赏项目
-        </div>
-        <div className="flex items-center gap-3 text-xs text-ink-60">
-          <span>
+    <Card className="mb-6 p-3 sm:p-4">
+      <div className="flex flex-wrap items-end gap-2 sm:gap-2.5">
+        <ToolbarField label="专业" className="w-[7.5rem] sm:w-36">
+          <select
+            className={selectClass}
+            value={filters.l1}
+            onChange={(e) => onL1(e.target.value as Specialty | "all")}
+          >
+            <option value="all">全部专业</option>
+            {SPECIALTIES.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </ToolbarField>
+
+        {filters.l1 !== "all" ? (
+          <>
+            <ToolbarField label="二级" className="w-[7.5rem] sm:w-36">
+              <select
+                className={selectClass}
+                value={filters.l2}
+                onChange={(e) => patch({ l2: e.target.value, l3: "all" })}
+              >
+                <option value="all">全部二级</option>
+                {l2Options.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </ToolbarField>
+            <ToolbarField label="三级" className="w-[7.5rem] sm:w-36">
+              <select
+                className={selectClass}
+                value={filters.l3}
+                disabled={filters.l2 === "all"}
+                onChange={(e) => patch({ l3: e.target.value })}
+              >
+                <option value="all">全部三级</option>
+                {l3Options.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </ToolbarField>
+          </>
+        ) : null}
+
+        <ToolbarField label="所在地" className="w-auto">
+          <div className="flex h-9 items-center rounded-lg border border-ink-20 p-0.5 text-[11px]">
+            <button
+              type="button"
+              className={cn(
+                "rounded-md px-2.5 py-1.5 transition-colors",
+                filters.locationMode === "province"
+                  ? "bg-ink text-white"
+                  : "text-ink-60 hover:text-ink",
+              )}
+              onClick={() =>
+                patch({ locationMode: "province", cityCode: "all" })
+              }
+            >
+              省份
+            </button>
+            <button
+              type="button"
+              className={cn(
+                "rounded-md px-2.5 py-1.5 transition-colors",
+                filters.locationMode === "city"
+                  ? "bg-ink text-white"
+                  : "text-ink-60 hover:text-ink",
+              )}
+              onClick={() => patch({ locationMode: "city" })}
+            >
+              城市
+            </button>
+          </div>
+        </ToolbarField>
+
+        <ToolbarField label="省份" className="min-w-[8rem] flex-1 sm:max-w-[11rem]">
+          <select
+            className={selectClass}
+            value={filters.provinceCode}
+            onChange={(e) => onProvince(e.target.value)}
+          >
+            <option value="all">全国 / 不限</option>
+            {AREA_ROOTS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.text}
+              </option>
+            ))}
+          </select>
+        </ToolbarField>
+
+        {filters.locationMode === "city" ? (
+          <ToolbarField label="城市" className="min-w-[8rem] flex-1 sm:max-w-[11rem]">
+            <select
+              className={selectClass}
+              value={filters.cityCode}
+              disabled={filters.provinceCode === "all"}
+              onChange={(e) => patch({ cityCode: e.target.value })}
+            >
+              <option value="all">该省全部</option>
+              {cityOptions.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.text}
+                </option>
+              ))}
+            </select>
+          </ToolbarField>
+        ) : null}
+
+        <ToolbarField label="状态" className="w-[7rem] sm:w-32">
+          <select
+            className={selectClass}
+            value={filters.status}
+            onChange={(e) =>
+              patch({ status: e.target.value as BountyListFilters["status"] })
+            }
+          >
+            <option value="all">全部状态</option>
+            <option value="open">开放报名</option>
+            <option value="in_review">审核中</option>
+          </select>
+        </ToolbarField>
+
+        <div className="ml-auto flex h-9 items-center gap-2 pb-0.5">
+          <span className="whitespace-nowrap text-xs text-ink-60">
             共 <strong className="text-ink">{resultCount}</strong> 条
           </span>
           <Button type="button" variant="ghost" size="sm" onClick={onReset}>
@@ -94,178 +220,24 @@ export function BountyFiltersPanel({
           </Button>
         </div>
       </div>
-
-      <div>
-        <Label className="text-xs text-ink-40">一级专业</Label>
-        <div className="mt-2 flex flex-wrap gap-2">
-          <FilterChip active={filters.l1 === "all"} onClick={() => onL1("all")}>
-            全部
-          </FilterChip>
-          {SPECIALTIES.map((s) => (
-            <FilterChip
-              key={s.value}
-              active={filters.l1 === s.value}
-              onClick={() => onL1(s.value)}
-            >
-              {s.label}
-            </FilterChip>
-          ))}
-        </div>
-      </div>
-
-      {filters.l1 !== "all" ? (
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <Label className="text-xs text-ink-40">二级专业</Label>
-            <select
-              className="mt-2 h-10 w-full rounded-xl border border-ink-20 bg-white px-3 text-sm"
-              value={filters.l2}
-              onChange={(e) =>
-                patch({ l2: e.target.value, l3: "all" })
-              }
-            >
-              <option value="all">全部二级</option>
-              {l2Options.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <Label className="text-xs text-ink-40">三级专业</Label>
-            <select
-              className="mt-2 h-10 w-full rounded-xl border border-ink-20 bg-white px-3 text-sm"
-              value={filters.l3}
-              disabled={filters.l2 === "all"}
-              onChange={(e) => patch({ l3: e.target.value })}
-            >
-              <option value="all">全部三级</option>
-              {l3Options.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      ) : null}
-
-      <div className="border-t border-ink-20 pt-4">
-        <div className="mb-3 flex flex-wrap items-center gap-3">
-          <Label className="flex items-center gap-1.5 text-xs text-ink-40">
-            <MapPin className="h-3.5 w-3.5" /> 项目所在地
-          </Label>
-          <div className="flex rounded-full border border-ink-20 p-0.5 text-xs">
-            <button
-              type="button"
-              className={cn(
-                "rounded-full px-3 py-1 transition-colors",
-                filters.locationMode === "province"
-                  ? "bg-ink text-white"
-                  : "text-ink-60",
-              )}
-              onClick={() =>
-                patch({ locationMode: "province", cityCode: "all" })
-              }
-            >
-              仅省份
-            </button>
-            <button
-              type="button"
-              className={cn(
-                "rounded-full px-3 py-1 transition-colors",
-                filters.locationMode === "city"
-                  ? "bg-ink text-white"
-                  : "text-ink-60",
-              )}
-              onClick={() => patch({ locationMode: "city" })}
-            >
-              精确到城市
-            </button>
-          </div>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <Label className="text-xs text-ink-40">省份</Label>
-            <select
-              className="mt-2 h-10 w-full rounded-xl border border-ink-20 bg-white px-3 text-sm"
-              value={filters.provinceCode}
-              onChange={(e) => onProvince(e.target.value)}
-            >
-              <option value="all">全国 / 不限</option>
-              {AREA_ROOTS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.text}
-                </option>
-              ))}
-            </select>
-          </div>
-          {filters.locationMode === "city" ? (
-            <div>
-              <Label className="text-xs text-ink-40">城市</Label>
-              <select
-                className="mt-2 h-10 w-full rounded-xl border border-ink-20 bg-white px-3 text-sm disabled:opacity-50"
-                value={filters.cityCode}
-                disabled={filters.provinceCode === "all"}
-                onChange={(e) => patch({ cityCode: e.target.value })}
-              >
-                <option value="all">该省全部城市</option>
-                {cityOptions.map((c) => (
-                  <option key={c.value} value={c.value}>
-                    {c.text}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <div>
-        <Label className="text-xs text-ink-40">报名状态</Label>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {[
-            { value: "all", label: "全部状态" },
-            { value: "open", label: "开放报名" },
-            { value: "in_review", label: "审核中" },
-          ].map((s) => (
-            <FilterChip
-              key={s.value}
-              active={filters.status === s.value}
-              onClick={() => patch({ status: s.value as BountyListFilters["status"] })}
-            >
-              {s.label}
-            </FilterChip>
-          ))}
-        </div>
-      </div>
     </Card>
   );
 }
 
-function FilterChip({
-  active,
-  onClick,
+function ToolbarField({
+  label,
   children,
+  className,
 }: {
-  active: boolean;
-  onClick: () => void;
+  label: string;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "rounded-full border px-4 py-1.5 text-sm transition-colors",
-        active
-          ? "border-ink bg-ink text-white"
-          : "border-ink-20 text-ink-60 hover:border-ink/40",
-      )}
-    >
+    <div className={cn("space-y-1", className)}>
+      <Label className="text-[10px] font-medium text-ink-40">{label}</Label>
       {children}
-    </button>
+    </div>
   );
 }
 

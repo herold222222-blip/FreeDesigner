@@ -1,15 +1,21 @@
+"use client";
+
 import Link from "next/link";
-import { Sparkles } from "lucide-react";
+import { BrandLogo } from "@/components/layout/brand-logo";
+import { MemberLink } from "@/components/domain/member-link";
+import { canPublishEntrust } from "@/lib/publish-access";
+import { useRoleStore } from "@/store/role-store";
 
 export function PublicFooter() {
+  const role = useRoleStore((s) => s.role);
+  const showPublish = role === "guest" || canPublishEntrust(role);
+
   return (
     <footer className="mt-24 border-t border-ink-20 bg-ink-20/20">
       <div className="container-page grid gap-10 py-14 md:grid-cols-4">
         <div className="space-y-3 md:col-span-2">
           <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-ink text-white">
-              <Sparkles className="h-4 w-4" />
-            </div>
+            <BrandLogo size={36} />
             <div className="text-base font-semibold text-ink">乐自由</div>
           </div>
           <p className="max-w-md text-sm text-ink-60">
@@ -22,15 +28,20 @@ export function PublicFooter() {
         </div>
         <div className="space-y-2 text-sm">
           <div className="font-medium text-ink">产品能力</div>
-          <Link href="/designers" className="block text-ink-60 hover:text-ink">
-            找设计
-          </Link>
-          <Link href="/bounties" className="block text-ink-60 hover:text-ink">
+          <MemberLink href="/designers" className="block text-ink-60 hover:text-ink">
+            设计师
+          </MemberLink>
+          <MemberLink href="/bounties" className="block text-ink-60 hover:text-ink">
             悬赏招标
-          </Link>
-          <Link href="/entrust/new" className="block text-ink-60 hover:text-ink">
-            发布项目需求
-          </Link>
+          </MemberLink>
+          {showPublish ? (
+            <MemberLink
+              href="/entrust/new"
+              className="block text-ink-60 hover:text-ink"
+            >
+              发布项目需求
+            </MemberLink>
+          ) : null}
         </div>
         <div className="space-y-2 text-sm">
           <div className="font-medium text-ink">关于平台</div>

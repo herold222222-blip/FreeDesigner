@@ -115,7 +115,7 @@ export const SPECIALTY_TRACKS: SpecialtyTrackL1[] = [
     l2: [
       {
         value: "scheme",
-        label: "方案设计",
+        label: "景观方案设计",
         l3: [
           { value: "scheme_lead", label: "方案主创" },
           { value: "scheme_doc", label: "方案文本" },
@@ -124,8 +124,21 @@ export const SPECIALTY_TRACKS: SpecialtyTrackL1[] = [
         ],
       },
       {
+        value: "preliminary",
+        label: "景观扩初设计",
+        l3: [
+          { value: "ls_garden", label: "景观园建专业" },
+          { value: "ls_garden_struct", label: "景观园建专业（含简单结构）" },
+          { value: "ls_greening", label: "景观绿化专业" },
+          { value: "ls_drainage", label: "景观给排水专业" },
+          { value: "ls_drainage_irrigation", label: "景观给排水 + 自动喷灌" },
+          { value: "ls_electrical", label: "景观电气专业" },
+          { value: "ls_struct", label: "景观结构专业" },
+        ],
+      },
+      {
         value: "construction_doc",
-        label: "施工图设计",
+        label: "景观施工图设计",
         l3: [
           { value: "ls_garden", label: "景观园建专业" },
           { value: "ls_garden_struct", label: "景观园建专业（含简单结构）" },
@@ -702,6 +715,16 @@ export function inferRegionTier(location: string): RegionTier {
   return "tier6";
 }
 
+/** 优先按所在地推算地区梯队；无有效所在地时回退已存字段 */
+export function resolveDesignerRegionTier(designer: {
+  regionTier?: RegionTier | null;
+  location?: string | null;
+}): RegionTier {
+  const location = designer.location?.trim();
+  if (location) return inferRegionTier(location);
+  return designer.regionTier ?? "tier6";
+}
+
 /* ------------------------------------------------------------------ */
 /* 项目类型系数（景观，v1.1 新增）                                      */
 /* ------------------------------------------------------------------ */
@@ -891,6 +914,7 @@ export const SUPPORTED_LANGUAGES = [
 /* ------------------------------------------------------------------ */
 
 export const ORDER_STATUS_META = {
+  pending_quote: { label: "待确认报价", tone: "amber" as const },
   matching: { label: "待匹配设计师", tone: "muted" as const },
   pending_schedule: { label: "待确认档期", tone: "blue" as const },
   pending_contract: { label: "待签约", tone: "amber" as const },

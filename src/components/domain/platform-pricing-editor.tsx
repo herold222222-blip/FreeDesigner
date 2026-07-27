@@ -335,7 +335,7 @@ function LandscapePricingParamsContent({
           </div>
         </div>
         <p className="text-xs text-ink-40">
-          按时间报价中的「结构」专业未在文档中单列档位，计算器沿用园建难度档位。
+          上方为按面积计费档位。按天 / 按月另有专用规则：园建与绿化为中/高二档，给排水为人工取水 / 自动喷灌（均为 100%）；电气与结构固定 100%。
         </p>
       </Card>
 

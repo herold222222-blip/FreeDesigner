@@ -3,13 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Sparkles, Heart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { fetchMe } from "@/lib/api-client";
 import type { Role } from "@/lib/types";
+import { canPublishEntrust } from "@/lib/publish-access";
 import { useRoleStore } from "@/store/role-store";
+import { BrandLogo } from "@/components/layout/brand-logo";
 import { LanguageSwitcher } from "@/components/layout/language-switcher";
+import { HeaderInboxBell } from "@/components/layout/header-inbox-bell";
+import { MemberLink } from "@/components/domain/member-link";
 import { cn } from "@/lib/utils";
 
 function workbenchHref(role: Role): string {
@@ -35,11 +38,9 @@ function resolveProfileFallback(role: Role) {
   return { name: "用户", avatar: null };
 }
 
-const NAV = [
-  { href: "/designers", label: "找设计" },
-  { href: "/bounties", label: "悬赏大厅" },
-  { href: "/entrust/new", label: "发布需求" },
-];
+const DESIGNERS_NAV = { href: "/designers", label: "设计师" } as const;
+const BOUNTIES_NAV = { href: "/bounties", label: "悬赏大厅" } as const;
+const PUBLISH_NAV = { href: "/entrust/new", label: "发布需求" } as const;
 
 export function PublicHeader() {
   const pathname = usePathname();
@@ -91,14 +92,28 @@ export function PublicHeader() {
   }, [role, identityId, userName, userAvatar]);
 
   const authReady = hydrated && bootstrapped;
+  /**
+   * 游客：设计师 / 悬赏大厅 / 发布需求
+   * 委托人：设计师 / 发布需求（不显示悬赏大厅）
+   * 设计师：设计师 / 悬赏大厅
+   * 管理员：含发布需求，并保留悬赏大厅
+   */
+  const navItems = useMemo(() => {
+    const items: Array<{ href: string; label: string }> = [DESIGNERS_NAV];
+    if (role !== "client") {
+      items.push(BOUNTIES_NAV);
+    }
+    if (role === "guest" || canPublishEntrust(role)) {
+      items.push(PUBLISH_NAV);
+    }
+    return items;
+  }, [role]);
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-ink-20 bg-white/80 backdrop-blur-xl">
       <div className="container-page flex h-16 items-center justify-between gap-6">
         <Link href="/" className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-ink text-white">
-            <Sparkles className="h-4 w-4" />
-          </div>
+          <BrandLogo size={36} />
           <div className="flex flex-col leading-none">
             <span className="text-base font-semibold tracking-tight text-ink">
               乐自由
@@ -108,8 +123,8 @@ export function PublicHeader() {
         </Link>
 
         <nav className="hidden flex-1 items-center justify-center gap-1 lg:flex">
-          {NAV.map((n) => (
-            <Link
+          {navItems.map((n) => (
+            <MemberLink
               key={n.href}
               href={n.href}
               className={cn(
@@ -118,25 +133,11 @@ export function PublicHeader() {
               )}
             >
               {n.label}
-            </Link>
+            </MemberLink>
           ))}
         </nav>
 
         <div className="flex items-center gap-1.5">
-          {authReady && role === "client" ? (
-            <Button
-              asChild
-              variant="ghost"
-              size="sm"
-              className="gap-1.5"
-              title="我的收藏"
-            >
-              <Link href="/client/favorites">
-                <Heart className="h-4 w-4" />
-                <span className="hidden md:inline">收藏</span>
-              </Link>
-            </Button>
-          ) : null}
           <LanguageSwitcher />
           {authReady && role !== "guest" ? (
             <div className="flex items-center gap-2">
@@ -161,6 +162,7 @@ export function PublicHeader() {
               <Button asChild variant="outline" size="sm">
                 <Link href={workbenchHref(role)}>我的工作台</Link>
               </Button>
+              <HeaderInboxBell />
             </div>
           ) : authReady ? (
             <Button asChild size="sm">

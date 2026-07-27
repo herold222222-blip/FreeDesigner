@@ -377,17 +377,16 @@ export function PercentStepper({
       >
         <Minus className="h-3.5 w-3.5" />
       </Button>
-      <div className="flex h-8 min-w-[5.75rem] shrink-0 items-center justify-center gap-0.5 rounded-md border border-input bg-background px-2">
+      <div className="flex h-8 min-w-[6.5rem] shrink-0 items-center justify-center gap-0.5 rounded-md border border-input bg-background px-2">
         <Input
           type="number"
-          min={50}
-          max={200}
+          min={0}
           step={5}
           value={value}
           onChange={(e) =>
             onChange(Number(e.target.value) || DEFAULT_DESIGNER_RATE_PERCENT)
           }
-          className="h-8 w-10 min-w-[2.5rem] shrink-0 border-0 bg-transparent p-0 text-center text-sm tabular-nums shadow-none focus-visible:ring-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          className="h-8 w-14 min-w-[3rem] shrink-0 border-0 bg-transparent p-0 text-center text-sm tabular-nums shadow-none focus-visible:ring-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         />
         <span className="shrink-0 text-sm tabular-nums text-ink-60">%</span>
       </div>

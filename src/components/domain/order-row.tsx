@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import type { Order } from "@/lib/types";
 import type { OrderPaymentOverdueInfo } from "@/lib/order-payment-overdue";
@@ -8,17 +9,27 @@ import { getPendingReviewStage } from "@/lib/client-order-focus";
 import { DESIGNER_ORDER_STATUS_LABEL } from "@/lib/designer-order-status-filter";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ProjectIdCopy } from "@/components/domain/project-id-copy";
+import {
+  MatchingOrderEditDialog,
+  type MatchingOrderEditPayload,
+} from "@/components/domain/matching-order-edit-dialog";
 import { OrderStatusBadge, SpecialtyBadge } from "./status-badges";
-import { ArrowRight, Coins, MapPin, User2 } from "lucide-react";
+import { ArrowRight, Ban, Coins, MapPin, Pencil, User2 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { useDesigners, useClients } from "@/lib/use-data";
+import {
+  cancelOrderRequest,
+  updateMatchingOrderRequest,
+} from "@/lib/api-client";
+import { invalidateApiPath, useDesigners, useClients } from "@/lib/use-data";
+import { useSessionStore } from "@/store/session-store";
 
 interface Props {
   order: Order;
   href: string;
-  perspective: "client" | "designer";
+  perspective: "client" | "designer" | "admin";
   tags?: string[];
   paymentOverdue?: OrderPaymentOverdueInfo | null;
   /** 待支付筛选下的高亮展示 */
@@ -26,6 +37,8 @@ interface Props {
   /** 待成果确认筛选下的高亮展示 */
   reviewHighlight?: boolean;
 }
+
+const ADMIN_CANCELLABLE = new Set(["pending_quote", "matching"]);
 
 export function OrderRow({
   order,
@@ -38,9 +51,71 @@ export function OrderRow({
 }: Props) {
   const { data: designers } = useDesigners();
   const { data: clients } = useClients();
+  const push = useSessionStore((s) => s.pushNotification);
+  const [editOpen, setEditOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const designer = designers.find((d) => d.id === order.designerId);
   const client = clients.find((c) => c.id === order.clientId);
-  const counterparty = perspective === "client" ? designer : client;
+  const counterparty =
+    perspective === "designer"
+      ? client
+      : perspective === "admin"
+        ? client
+        : designer;
+  const canEditMatching =
+    perspective === "client" && order.status === "matching";
+  const canAdminCancel =
+    perspective === "admin" && ADMIN_CANCELLABLE.has(order.status);
+  const needsQuoteConfirm =
+    perspective === "client" && order.status === "pending_quote" && !!order.quote;
+
+  const handleSaveMatching = async (payload: MatchingOrderEditPayload) => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await updateMatchingOrderRequest(order.id, payload);
+      push({ title: "委托信息已更新", variant: "success" });
+      setEditOpen(false);
+      invalidateApiPath("/api/orders");
+      invalidateApiPath(`/api/orders/${order.id}`);
+    } catch (e) {
+      push({
+        title: "保存失败",
+        description: e instanceof Error ? e.message : "请稍后再试",
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAdminCancel = async () => {
+    if (cancelling) return;
+    const ok = window.confirm(
+      `确认取消订单「${order.title}」？\n取消后将通知委托人，订单归入已取消列表。`,
+    );
+    if (!ok) return;
+    setCancelling(true);
+    try {
+      await cancelOrderRequest(order.id);
+      push({
+        title: "订单已取消",
+        description: "已通知委托人，订单已归入已取消列表。",
+        variant: "success",
+      });
+      invalidateApiPath("/api/orders");
+      invalidateApiPath(`/api/orders/${order.id}`);
+    } catch (e) {
+      push({
+        title: "取消失败",
+        description: e instanceof Error ? e.message : "请稍后再试",
+        variant: "destructive",
+      });
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const paid = order.stages.filter((s) => s.status !== "pending");
   const paidAmount = paid.reduce((sum, s) => sum + s.amount, 0);
@@ -62,6 +137,8 @@ export function OrderRow({
     <Card
       className={cn(
         "p-5 transition-all hover:border-ink hover:shadow-md",
+        needsQuoteConfirm &&
+          "border-amber-300 bg-gradient-to-br from-amber-50 to-orange-50/80 ring-1 ring-amber-200/60 hover:border-amber-400",
         paymentHighlight &&
           payable &&
           "border-amber-300 bg-gradient-to-br from-amber-50 to-orange-50/80 ring-1 ring-amber-200/60 hover:border-amber-400",
@@ -138,7 +215,20 @@ export function OrderRow({
           </div>
         </div>
         <div className="flex w-48 flex-col items-end gap-2">
-          {reviewHighlight && reviewStage ? (
+          {needsQuoteConfirm ? (
+            <div className="w-full rounded-xl border border-amber-200/80 bg-white/80 p-3 text-right">
+              <div className="text-[10px] text-amber-800">待确认报价</div>
+              <div className="mt-1 text-lg font-bold tabular-nums text-brand">
+                {formatCurrency(order.quote!.total)}
+              </div>
+              <Link
+                href={href}
+                className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand/90"
+              >
+                确认报价 <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+          ) : reviewHighlight && reviewStage ? (
             <div className="w-full rounded-xl border border-blue-200/80 bg-white/80 p-3 text-right">
               <div className="text-[10px] text-blue-800">待确认阶段</div>
               <div className="mt-0.5 text-sm font-semibold text-blue-950">
@@ -186,16 +276,51 @@ export function OrderRow({
                   />
                 </div>
               </div>
-              <Link
-                href={href}
-                className="inline-flex items-center gap-1 text-xs font-medium text-brand hover:gap-2 transition-all"
-              >
-                查看详情 <ArrowRight className="h-3.5 w-3.5" />
-              </Link>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {canEditMatching ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1 px-2.5 text-xs"
+                    onClick={() => setEditOpen(true)}
+                  >
+                    <Pencil className="h-3.5 w-3.5" /> 修改
+                  </Button>
+                ) : null}
+                {canAdminCancel ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1 px-2.5 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                    disabled={cancelling}
+                    onClick={handleAdminCancel}
+                  >
+                    <Ban className="h-3.5 w-3.5" />
+                    {cancelling ? "取消中..." : "取消订单"}
+                  </Button>
+                ) : null}
+                <Link
+                  href={href}
+                  className="inline-flex items-center gap-1 text-xs font-medium text-brand hover:gap-2 transition-all"
+                >
+                  查看详情 <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
             </>
           )}
         </div>
       </div>
+      {canEditMatching ? (
+        <MatchingOrderEditDialog
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          order={order}
+          onSave={handleSaveMatching}
+          saving={saving}
+        />
+      ) : null}
     </Card>
   );
 }

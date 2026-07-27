@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
@@ -29,21 +29,33 @@ import {
 } from "@/lib/constants";
 import { getL2Options } from "@/lib/bounty-filters";
 import {
+  getL2Labels,
+  getL3Label,
   getL3OptionsForL2s,
+  landscapeL3SelectionConflict,
   pruneL3ForL2s,
+  reconcileLandscapeL2Selection,
+  reconcileLandscapeL3Selection,
 } from "@/lib/bounty-tracks";
 import { BountyTrackMultiSelect } from "@/components/domain/bounty-track-multi-select";
+import {
+  LANDSCAPE_TIME_TRACK_LABELS,
+  landscapeTimeTrackFromL3,
+  type LandscapeTimeRateTrack,
+} from "@/lib/designer-rates";
 import { bountyLocationFromTriple } from "@/components/domain/bounty-filters-panel";
 import {
   CUSTOMER_SERVICE_CONTACTS,
   formatCustomerServiceLine,
 } from "@/lib/customer-service";
 import {
+  difficultyOptionKey,
   getHardscapeScopeNote,
+  hasLandscapeTimeDifficultySelect,
   landscapeAreaDifficultyUI,
   landscapeTimeDifficultyUI,
 } from "@/lib/landscape-area-difficulty";
-import type { Specialty } from "@/lib/types";
+import type { BountyAttachment, Specialty } from "@/lib/types";
 import {
   ArrowLeft,
   Calculator,
@@ -85,6 +97,7 @@ import {
 } from "@/components/domain/bounty-subject-filters-editor";
 import { parseDesignerCodesInput } from "@/lib/designer-code";
 import { PlatformTimeBillingStandardCard } from "@/components/domain/platform-time-billing-standard-card";
+import { GuestAccessGate } from "@/components/domain/guest-access-gate";
 
 type EntrustMode = "regular" | "bounty";
 type BillingMode = "area" | "daily" | "monthly";
@@ -100,15 +113,17 @@ type TrackKey = (typeof TRACK_OPTIONS)[number]["value"];
 
 export default function NewEntrustPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="container-page py-20 text-center text-ink-60">
-          加载发布委托表单...
-        </div>
-      }
-    >
-      <NewEntrustInner />
-    </Suspense>
+    <GuestAccessGate intent="publish">
+      <Suspense
+        fallback={
+          <div className="container-page py-20 text-center text-ink-60">
+            加载发布委托表单...
+          </div>
+        }
+      >
+        <NewEntrustInner />
+      </Suspense>
+    </GuestAccessGate>
   );
 }
 
@@ -308,7 +323,6 @@ function RegularEntrustForm() {
   const push = useSessionStore((s) => s.pushNotification);
   const role = useRoleStore((s) => s.role);
   const identityId = useRoleStore((s) => s.identityId);
-  const setRole = useRoleStore((s) => s.setRole);
   const [submitting, setSubmitting] = useState(false);
   const pricingConfig = usePlatformPricingStore((s) => s.config);
   const landscapeDifficulty = pricingConfig.landscapeDifficulty;
@@ -336,20 +350,39 @@ function RegularEntrustForm() {
   const [billingMode, setBillingMode] = useState<BillingMode>("area");
   const [area, setArea] = useState(8000);
   const [budget, setBudget] = useState<number | "">("");
-  const [days, setDays] = useState(10);
-  const [months, setMonths] = useState(1);
   const [serviceMode, setServiceMode] = useState<"remote" | "onsite">("remote");
   const [withDrawing, setWithDrawing] = useState(false);
-  const [trackKey, setTrackKey] = useState<TrackKey | "">("");
   const [areaDifficulty, setAreaDifficulty] = useState<
     Partial<Record<TrackKey, number>>
   >({});
-  const [timeDifficulty, setTimeDifficulty] = useState<number | null>(null);
+  /** 一级专业下的二级多选；按天/按月时再选三级并填天数 */
+  const [selectedL2, setSelectedL2] = useState<string[]>([]);
+  const [timeL3, setTimeL3] = useState<string[]>([]);
+  const [daysByL3, setDaysByL3] = useState<Record<string, number>>({});
+  const [monthsByL3, setMonthsByL3] = useState<Record<string, number>>({});
+  /** 按时间难度选中项 key（difficultyOptionKey），避免给排水等同系数档位无法区分 */
+  const [timeDifficultyByTrack, setTimeDifficultyByTrack] = useState<
+    Partial<Record<LandscapeTimeRateTrack, string>>
+  >({});
 
   // 三级专业（按面积时，默认不勾选）
   const [tracks, setTracks] = useState<TrackKey[]>([]);
   const [subjectFilters, setSubjectFilters] = useState(EMPTY_BOUNTY_SUBJECT_FILTERS);
   const [buildType, setBuildType] = useState<"new" | "renovation">("new");
+
+  const l2Options = useMemo(() => getL2Options(specialty), [specialty]);
+  const timeL3Options = useMemo(
+    () => getL3OptionsForL2s(specialty, selectedL2),
+    [specialty, selectedL2],
+  );
+  const timePricingTracks = useMemo(() => {
+    const set = new Set<LandscapeTimeRateTrack>();
+    for (const l3 of timeL3) {
+      const tk = landscapeTimeTrackFromL3(l3);
+      if (tk) set.add(tk);
+    }
+    return [...set];
+  }, [timeL3]);
 
   // 增值服务
   const [withAudit, setWithAudit] = useState(false);
@@ -357,14 +390,69 @@ function RegularEntrustForm() {
 
   // 描述与附件
   const [description, setDescription] = useState("");
-  const [attachments, setAttachments] = useState<string[]>(["项目任务书.pdf"]);
+  const [attachments, setAttachments] = useState<BountyAttachment[]>([]);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [quoteSubmitted, setQuoteSubmitted] = useState(false);
+  const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+
+  const formatAttachmentSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const handleAttachmentFiles = (files: FileList | null) => {
+    if (!files?.length) return;
+    const list = Array.from(files);
+    const oversized = list.find((f) => f.size > MAX_ATTACHMENT_BYTES);
+    if (oversized) {
+      push({
+        title: "附件过大",
+        description: `「${oversized.name}」超过 5MB，请压缩后重试。`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setUploadingAttachment(true);
+    Promise.all(
+      list.map(
+        (file) =>
+          new Promise<BountyAttachment>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              if (typeof reader.result !== "string") {
+                reject(new Error("读取失败"));
+                return;
+              }
+              resolve({
+                name: file.name,
+                url: reader.result,
+                size: file.size,
+              });
+            };
+            reader.onerror = () => reject(new Error("读取失败"));
+            reader.readAsDataURL(file);
+          }),
+      ),
+    )
+      .then((items) => {
+        setAttachments((prev) => [...prev, ...items]);
+      })
+      .catch(() => {
+        push({
+          title: "附件上传失败",
+          description: "请重新选择文件后再试。",
+          variant: "destructive",
+        });
+      })
+      .finally(() => {
+        setUploadingAttachment(false);
+        if (attachmentInputRef.current) attachmentInputRef.current.value = "";
+      });
+  };
 
   const [tax, setTax] = useState(pricingConfig.taxOptions[0]!);
-
-  useEffect(() => {
-    if (role === "guest") setRole("client");
-  }, [role, setRole]);
 
   useEffect(() => {
     if (!pricingConfig.taxOptions.some((item) => item.value === tax.value)) {
@@ -398,25 +486,25 @@ function RegularEntrustForm() {
   }, [tracks, landscapeDifficulty]);
 
   useEffect(() => {
-    if (!trackKey) {
-      setTimeDifficulty(null);
-      return;
-    }
-    const ui = landscapeTimeDifficultyUI(trackKey, landscapeDifficulty);
-    if (ui.kind === "fixed") {
-      setTimeDifficulty(ui.value);
-      return;
-    }
-    setTimeDifficulty((prev) => {
-      if (prev == null) return null;
-      const allowed = ui.options.map((o) => o.value);
-      return allowed.includes(prev) ? prev : null;
+    setTimeDifficultyByTrack((prev) => {
+      const next: Partial<Record<LandscapeTimeRateTrack, string>> = {};
+      let changed = false;
+      for (const tk of timePricingTracks) {
+        if (!hasLandscapeTimeDifficultySelect(tk)) continue;
+        const ui = landscapeTimeDifficultyUI(tk, landscapeDifficulty);
+        if (ui.kind !== "select" || !ui.options.length) continue;
+        const allowed = ui.options.map(difficultyOptionKey);
+        if (prev[tk] != null && allowed.includes(prev[tk]!)) {
+          next[tk] = prev[tk];
+        } else {
+          next[tk] = allowed[0]!;
+          changed = true;
+        }
+      }
+      if (Object.keys(prev).length !== Object.keys(next).length) changed = true;
+      return changed ? next : prev;
     });
-  }, [trackKey, landscapeDifficulty]);
-
-  const timeDiffUiEntrust = trackKey
-    ? landscapeTimeDifficultyUI(trackKey, landscapeDifficulty)
-    : null;
+  }, [timePricingTracks, landscapeDifficulty]);
 
   const basicInfoComplete =
     !!title.trim() &&
@@ -426,10 +514,15 @@ function RegularEntrustForm() {
     !!projectType.trim();
 
   const billingComplete =
-    billingMode === "area"
+    selectedL2.length > 0 &&
+    (billingMode === "area"
       ? area > 0 && tracks.length > 0
-      : !!trackKey &&
-        (billingMode === "daily" ? days >= 0.5 : months >= 1);
+      : timeL3.length > 0 &&
+        timeL3.every((l3) =>
+          billingMode === "daily"
+            ? (daysByL3[l3] ?? 0) >= 0.5
+            : (monthsByL3[l3] ?? 0) >= 1,
+        ));
 
   const descriptionComplete = !!description.trim();
 
@@ -478,10 +571,19 @@ function RegularEntrustForm() {
         committerName,
         billingMode,
         area,
-        days,
-        months,
         tracks,
-        trackKey: trackKey || undefined,
+        timeL2Labels: getL2Labels(specialty, selectedL2),
+        timeL3Units:
+          billingMode === "area"
+            ? undefined
+            : timeL3.map((l3) => ({
+                label: getL3Label(specialty, l3),
+                units:
+                  billingMode === "daily"
+                    ? (daysByL3[l3] ?? 0)
+                    : (monthsByL3[l3] ?? 0),
+                unitLabel: billingMode === "daily" ? "工日" : "个月",
+              })),
         withAudit,
         withPM,
       });
@@ -496,15 +598,43 @@ function RegularEntrustForm() {
         budget,
         withAudit,
         withPM,
+        attachments,
+        withDrawing: serviceMode === "onsite" ? withDrawing : false,
+        timeQuoteLines:
+          billingMode === "area"
+            ? undefined
+            : timeL3.map((l3) => {
+                const track = landscapeTimeTrackFromL3(l3);
+                return {
+                  l3,
+                  l3Label: getL3Label(specialty, l3),
+                  quantity:
+                    billingMode === "daily"
+                      ? (daysByL3[l3] ?? 0)
+                      : (monthsByL3[l3] ?? 0),
+                  difficultyKey: track
+                    ? timeDifficultyByTrack[track]
+                    : undefined,
+                };
+              }),
       });
       const order = await createOrderRequest(body);
       setQuoteSubmitted(true);
-      push({
-        title: "常规委托已提交",
-        description: `订单 ${order.code} 已进入匹配，平台将确认费用并委派设计师。`,
-        variant: "success",
-      });
-      router.push("/client/orders");
+      if (order.status === "pending_quote") {
+        push({
+          title: "报价单已生成",
+          description: `订单 ${order.code} 已按需求生成系统报价，请确认后进入设计师匹配。`,
+          variant: "success",
+        });
+        router.push(`/client/orders/${order.id}`);
+      } else {
+        push({
+          title: "常规委托已提交",
+          description: `订单 ${order.code} 已进入匹配，平台将确认费用并委派设计师。`,
+          variant: "success",
+        });
+        router.push("/client/orders");
+      }
     } catch (e) {
       push({
         title: "提交失败",
@@ -571,9 +701,6 @@ function RegularEntrustForm() {
                 ).map((t) => (
                   <option key={t} value={t}>
                     {t}
-                    {specialty === "landscape" && pricingConfig.landscapeProjectTypeCoefficient[t]
-                      ? `（${Math.round(pricingConfig.landscapeProjectTypeCoefficient[t] * 100)}%）`
-                      : ""}
                   </option>
                 ))}
               </select>
@@ -587,9 +714,9 @@ function RegularEntrustForm() {
           </div>
         </Card>
 
-        {/* 一级专业选择 */}
+        {/* 一级 / 二级专业 */}
         <Card className="p-6">
-          <SectionTitle icon={Sparkles} title="设计专业（必填）" />
+          <SectionTitle icon={Sparkles} title="一级专业（必填）" />
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
             {SPECIALTIES.map((s) => (
               <button
@@ -602,6 +729,11 @@ function RegularEntrustForm() {
                       ? "高层住宅"
                       : getProjectTypes(s.value)[0] ?? "",
                   );
+                  setSelectedL2([]);
+                  setTimeL3([]);
+                  setDaysByL3({});
+                  setMonthsByL3({});
+                  setTimeDifficultyByTrack({});
                 }}
                 className={cn(
                   "rounded-xl border p-3 text-left text-sm transition-all",
@@ -620,6 +752,60 @@ function RegularEntrustForm() {
               其他专业暂以悬赏委托或电话咨询方式下单。
             </div>
           ) : null}
+
+          <div className="mt-5 space-y-2">
+            <Label>
+              二级专业（可多选）
+              <span className="ml-1 text-rose-500">*</span>
+            </Label>
+            <BountyTrackMultiSelect
+              options={l2Options.map((o) => ({
+                value: o.value,
+                label: o.label,
+              }))}
+              value={selectedL2}
+              onChange={(next) => {
+                const resolved =
+                  specialty === "landscape"
+                    ? reconcileLandscapeL2Selection(selectedL2, next)
+                    : next;
+                if (
+                  specialty === "landscape" &&
+                  next.includes("preliminary") &&
+                  next.includes("construction_doc")
+                ) {
+                  push({
+                    title: "不可同时选择",
+                    description:
+                      "景观施工图设计已包含扩初设计，请二选一。",
+                    variant: "destructive",
+                  });
+                }
+                setSelectedL2(resolved);
+                const pruned = pruneL3ForL2s(specialty, resolved, timeL3);
+                setTimeL3(pruned);
+                setDaysByL3((prev) => {
+                  const keep: Record<string, number> = {};
+                  for (const l3 of pruned) {
+                    if (prev[l3] != null) keep[l3] = prev[l3];
+                  }
+                  return keep;
+                });
+                setMonthsByL3((prev) => {
+                  const keep: Record<string, number> = {};
+                  for (const l3 of pruned) {
+                    if (prev[l3] != null) keep[l3] = prev[l3];
+                  }
+                  return keep;
+                });
+              }}
+            />
+            {specialty === "landscape" ? (
+              <p className="text-xs text-ink-40">
+                可选：景观方案设计、景观扩初设计、景观施工图设计。施工图已包含扩初，二者不可同时勾选。
+              </p>
+            ) : null}
+          </div>
         </Card>
 
         {/* 计费方式 */}
@@ -627,7 +813,7 @@ function RegularEntrustForm() {
           <SectionTitle icon={Calculator} title="计费方式（必填）" />
           <div className="mb-4 flex flex-wrap gap-2">
             {[
-              { v: "area", l: "按面积报价（出图 / 扩初 / 竣工）", icon: Ruler },
+              { v: "area", l: "按面积报价", icon: Ruler },
               { v: "daily", l: "按天计费（远程 / 驻场）", icon: Calendar },
               { v: "monthly", l: "按月雇佣（远程 / 驻场）", icon: TimerReset },
             ].map((b) => {
@@ -656,7 +842,18 @@ function RegularEntrustForm() {
               <PlatformTimeBillingStandardCard
                 unit={billingMode === "daily" ? "day" : "month"}
                 config={pricingConfig}
-                highlightTrack={trackKey}
+                highlightTrack={
+                  (timePricingTracks.find((t) =>
+                    (
+                      [
+                        "hardscape",
+                        "softscape",
+                        "drainage",
+                        "electrical",
+                      ] as const
+                    ).includes(t as TrackKey),
+                  ) as TrackKey | undefined) ?? ""
+                }
                 showOnsiteDrawingNote={serviceMode === "onsite" && withDrawing}
               />
             </div>
@@ -836,23 +1033,7 @@ function RegularEntrustForm() {
               </Field>
             </div>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label={billingMode === "daily" ? "天数" : "月数"}>
-                <Input
-                  type="number"
-                  value={billingMode === "daily" ? days : months}
-                  onChange={(e) =>
-                    billingMode === "daily"
-                      ? setDays(Number(e.target.value) || 0)
-                      : setMonths(Number(e.target.value) || 0)
-                  }
-                />
-                <div className="mt-1 text-[11px] text-ink-40">
-                  {billingMode === "daily"
-                    ? "最小 0.5 天"
-                    : "最小 1 月，多余按 月费/20 折算"}
-                </div>
-              </Field>
+            <div className="space-y-4">
               <Field label="服务模式">
                 <div className="flex gap-2">
                   {[
@@ -885,83 +1066,183 @@ function RegularEntrustForm() {
                   </label>
                 ) : null}
               </Field>
-              <Field label="三级专业">
-                <select
-                  value={trackKey}
-                  onChange={(e) =>
-                    setTrackKey(e.target.value as TrackKey | "")
-                  }
-                  className="h-11 w-full rounded-xl border border-ink-20 bg-white px-3 text-sm"
-                >
-                  <option value="">请选择三级专业</option>
-                  {TRACK_OPTIONS.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              {trackKey && timeDiffUiEntrust ? (
-              <FieldFull
-                label={`难度系数 · ${
-                  TRACK_OPTIONS.find((s) => s.value === trackKey)?.label ??
-                  "专业分支"
-                }（按时间 · 文档 3.1.1.2.6）`}
-              >
-                {trackKey === "hardscape" ?
-                  <p className="mb-3 text-[11px] leading-relaxed text-ink-60">
-                    {getHardscapeScopeNote(landscapeDifficulty)}
-                  </p>
-                : null}
-                {timeDiffUiEntrust.kind === "select" ?
-                  <>
-                    <div className="flex flex-wrap gap-1.5">
-                      {timeDiffUiEntrust.options.map((opt) => (
-                        <button
-                          key={opt.value}
-                          type="button"
-                          onClick={() => setTimeDifficulty(opt.value)}
-                          className={cn(
-                            "rounded-full border px-3 py-1 text-[11px] transition-colors",
-                            timeDifficulty === opt.value ?
-                              "border-brand bg-brand text-white"
-                            : "border-ink-20 text-ink-60 hover:border-brand/60",
-                          )}
-                        >
-                          {opt.label} {Math.round(opt.value * 100)}%
-                        </button>
-                      ))}
-                    </div>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      {timeDiffUiEntrust.options.map((opt) => (
-                        <div
-                          key={opt.value}
-                          className={cn(
-                            "rounded-lg border px-2.5 py-2 text-[11px] leading-snug",
-                            timeDifficulty === opt.value ?
-                              "border-brand/40 bg-brand/5"
-                            : "border-ink-20/80 bg-white/60",
-                          )}
-                        >
-                          <span className="font-semibold text-ink">
-                            {opt.label} · {Math.round(opt.value * 100)}%
-                          </span>
-                          <span className="mt-1 block text-ink-60">{opt.remark}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                : <div className="space-y-2">
-                    <Badge variant="brand" className="tabular-nums text-xs font-semibold">
-                      固定 {Math.round(timeDiffUiEntrust.value * 100)}%
-                    </Badge>
-                    <p className="text-[11px] leading-relaxed text-ink-60">
-                      {timeDiffUiEntrust.note}
-                    </p>
-                  </div>
-                }
+
+              <FieldFull label="三级专业（可多选）" required>
+                <BountyTrackMultiSelect
+                  options={timeL3Options}
+                  value={timeL3}
+                  showGroup={selectedL2.length > 1}
+                  onChange={(next) => {
+                    const resolved =
+                      specialty === "landscape"
+                        ? reconcileLandscapeL3Selection(timeL3, next)
+                        : next;
+                    const conflict =
+                      specialty === "landscape"
+                        ? landscapeL3SelectionConflict(timeL3, next)
+                        : null;
+                    if (conflict) {
+                      push({
+                        title: "不可同时选择",
+                        description: conflict,
+                        variant: "destructive",
+                      });
+                    }
+                    setTimeL3(resolved);
+                    setDaysByL3((prev) => {
+                      const keep: Record<string, number> = {};
+                      for (const l3 of resolved) {
+                        keep[l3] = prev[l3] ?? 10;
+                      }
+                      return keep;
+                    });
+                    setMonthsByL3((prev) => {
+                      const keep: Record<string, number> = {};
+                      for (const l3 of resolved) {
+                        keep[l3] = prev[l3] ?? 1;
+                      }
+                      return keep;
+                    });
+                  }}
+                />
+                <p className="mt-1.5 text-xs text-ink-40">
+                  {selectedL2.length === 0
+                    ? "请先在上方选择二级专业。"
+                    : `每个勾选的三级专业需单独填写${billingMode === "daily" ? "天数" : "月数"}。园建与园建（含简单结构）、给排水与给排水+喷灌分别不可同时勾选。`}
+                </p>
               </FieldFull>
+
+              {timeL3.length > 0 ? (
+                <FieldFull
+                  label={
+                    billingMode === "daily"
+                      ? "各三级专业天数（必填）"
+                      : "各三级专业月数（必填）"
+                  }
+                  required
+                >
+                  <div className="space-y-2">
+                    {timeL3.map((l3) => {
+                      const opt = timeL3Options.find((o) => o.value === l3);
+                      const label =
+                        opt?.group ?
+                          `${opt.group} · ${opt.label}`
+                        : (opt?.label ?? getL3Label(specialty, l3));
+                      return (
+                        <div
+                          key={l3}
+                          className="flex flex-wrap items-center gap-3 rounded-xl border border-ink-20 bg-ink-20/10 px-3 py-2.5"
+                        >
+                          <div className="min-w-0 flex-1 text-sm font-medium text-ink">
+                            {label}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              min={billingMode === "daily" ? 0.5 : 1}
+                              step={billingMode === "daily" ? 0.5 : 1}
+                              className="h-9 w-28"
+                              value={
+                                billingMode === "daily"
+                                  ? (daysByL3[l3] ?? "")
+                                  : (monthsByL3[l3] ?? "")
+                              }
+                              onChange={(e) => {
+                                const n = Number(e.target.value) || 0;
+                                if (billingMode === "daily") {
+                                  setDaysByL3((prev) => ({ ...prev, [l3]: n }));
+                                } else {
+                                  setMonthsByL3((prev) => ({
+                                    ...prev,
+                                    [l3]: n,
+                                  }));
+                                }
+                              }}
+                            />
+                            <span className="text-xs text-ink-40">
+                              {billingMode === "daily" ? "天" : "月"}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-1.5 text-[11px] text-ink-40">
+                    {billingMode === "daily"
+                      ? "每个专业最小 0.5 天"
+                      : "每个专业最小 1 月，多余按 月费/20 折算"}
+                  </div>
+                </FieldFull>
               ) : null}
+
+              {specialty === "landscape"
+                ? timePricingTracks
+                    .filter(hasLandscapeTimeDifficultySelect)
+                    .map((tk) => {
+                      const ui = landscapeTimeDifficultyUI(
+                        tk,
+                        landscapeDifficulty,
+                      );
+                      if (ui.kind !== "select") return null;
+                      const selected = timeDifficultyByTrack[tk];
+                      return (
+                        <FieldFull
+                          key={tk}
+                          label={`难度系数 · ${LANDSCAPE_TIME_TRACK_LABELS[tk]}（按天 / 按月）`}
+                        >
+                          <div className="flex flex-wrap gap-1.5">
+                            {ui.options.map((opt) => {
+                              const key = difficultyOptionKey(opt);
+                              return (
+                                <button
+                                  key={key}
+                                  type="button"
+                                  onClick={() =>
+                                    setTimeDifficultyByTrack((prev) => ({
+                                      ...prev,
+                                      [tk]: key,
+                                    }))
+                                  }
+                                  className={cn(
+                                    "rounded-full border px-3 py-1 text-[11px] transition-colors",
+                                    selected === key
+                                      ? "border-brand bg-brand text-white"
+                                      : "border-ink-20 text-ink-60 hover:border-brand/60",
+                                  )}
+                                >
+                                  {opt.label} {Math.round(opt.value * 100)}%
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                            {ui.options.map((opt) => {
+                              const key = difficultyOptionKey(opt);
+                              return (
+                                <div
+                                  key={key}
+                                  className={cn(
+                                    "rounded-lg border px-2.5 py-2 text-[11px] leading-snug",
+                                    selected === key
+                                      ? "border-brand/40 bg-brand/5"
+                                      : "border-ink-20/80 bg-white/60",
+                                  )}
+                                >
+                                  <span className="font-semibold text-ink">
+                                    {opt.label} · {Math.round(opt.value * 100)}%
+                                  </span>
+                                  <span className="mt-1 block text-ink-60">
+                                    {opt.remark}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </FieldFull>
+                      );
+                    })
+                : null}
+
               <Field label="税率">
                 <div className="flex flex-wrap gap-2">
                   {pricingConfig.taxOptions.map((t) => (
@@ -1006,22 +1287,30 @@ function RegularEntrustForm() {
           </FieldFull>
           <div className="mt-4">
             <Label>项目附件</Label>
+            <p className="mt-1 text-xs text-ink-40">
+              请上传任务书、现状资料等真实文件（可选，单文件不超过 5MB）。
+            </p>
             <div className="mt-2 grid gap-2 md:grid-cols-2">
               {attachments.map((a, i) => (
                 <div
-                  key={i}
+                  key={`${a.name}-${i}`}
                   className="flex items-center justify-between rounded-xl border border-ink-20 bg-ink-20/20 px-3 py-2.5"
                 >
-                  <div className="flex items-center gap-2 text-sm text-ink">
-                    <Paperclip className="h-3.5 w-3.5 text-ink-60" />
-                    {a}
+                  <div className="min-w-0 flex items-center gap-2 text-sm text-ink">
+                    <Paperclip className="h-3.5 w-3.5 shrink-0 text-ink-60" />
+                    <span className="truncate">{a.name}</span>
+                    {a.size ? (
+                      <span className="shrink-0 text-xs text-ink-40">
+                        {formatAttachmentSize(a.size)}
+                      </span>
+                    ) : null}
                   </div>
                   <button
                     type="button"
                     onClick={() =>
                       setAttachments(attachments.filter((_, j) => j !== i))
                     }
-                    className="text-ink-40 hover:text-ink"
+                    className="ml-2 shrink-0 text-ink-40 hover:text-ink"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -1029,16 +1318,21 @@ function RegularEntrustForm() {
               ))}
               <button
                 type="button"
-                onClick={() =>
-                  setAttachments([
-                    ...attachments,
-                    `附件_${attachments.length + 1}.pdf`,
-                  ])
-                }
-                className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-ink-20 p-2.5 text-sm text-ink-60 hover:border-ink/40 hover:text-ink"
+                disabled={uploadingAttachment}
+                onClick={() => attachmentInputRef.current?.click()}
+                className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-ink-20 p-2.5 text-sm text-ink-60 hover:border-ink/40 hover:text-ink disabled:opacity-50"
               >
-                <Paperclip className="h-3.5 w-3.5" /> 上传附件
+                <Paperclip className="h-3.5 w-3.5" />
+                {uploadingAttachment ? "上传中..." : "上传附件"}
               </button>
+              <input
+                ref={attachmentInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.dwg,.dxf,.zip,.rar,.jpg,.jpeg,.png,.webp"
+                onChange={(e) => handleAttachmentFiles(e.target.files)}
+              />
             </div>
           </div>
         </Card>
@@ -1107,28 +1401,41 @@ function RegularEntrustForm() {
               <div className="space-y-3 text-sm leading-relaxed text-ink-80">
                 <p className="font-semibold text-ink">感谢提交</p>
                 <p>
-                  我们的客服会在 1 小时内跟您联系确认报价。另外您也可以直接拨打我们的服务电话：
+                  {billingMode === "daily" || billingMode === "monthly"
+                    ? "系统已生成报价单，请前往订单详情确认；确认后将通知管理员分配设计师。"
+                    : "我们的客服会在 1 小时内跟您联系确认报价。另外您也可以直接拨打我们的服务电话："}
                 </p>
-                <ul className="space-y-2 text-xs text-ink-60">
-                  {CUSTOMER_SERVICE_CONTACTS.map((c) => (
-                    <li key={c.id}>
-                      <a
-                        href={`tel:4006801231,${c.extension}`}
-                        className="font-medium text-ink hover:text-brand"
-                      >
-                        {formatCustomerServiceLine(c)}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
+                {billingMode === "area" ? (
+                  <ul className="space-y-2 text-xs text-ink-60">
+                    {CUSTOMER_SERVICE_CONTACTS.map((c) => (
+                      <li key={c.id}>
+                        <a
+                          href={`tel:4006801231,${c.extension}`}
+                          className="font-medium text-ink hover:text-brand"
+                        >
+                          {formatCustomerServiceLine(c)}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
             </div>
           </Card>
         ) : (
           <Card className="space-y-4 p-6">
-            <SectionTitle icon={Coins} title="人工报价" />
+            <SectionTitle
+              icon={Coins}
+              title={
+                billingMode === "daily" || billingMode === "monthly"
+                  ? "系统报价"
+                  : "人工报价"
+              }
+            />
             <p className="text-xs leading-relaxed text-ink-60">
-              填写完整项目信息后提交，客服将根据您的需求核算报价并在 1 小时内联系确认，本页不显示实时报价。
+              {billingMode === "daily" || billingMode === "monthly"
+                ? "提交后系统将按您选择的专业与工时自动生成报价单；您确认报价后，平台管理员将收到通知并分配设计师。"
+                : "填写完整项目信息后提交，客服将根据您的需求核算报价并在 1 小时内联系确认，本页不显示实时报价。"}
             </p>
             <Button
               variant="brand"
@@ -1138,7 +1445,11 @@ function RegularEntrustForm() {
               onClick={handleSubmitQuote}
             >
               <ClipboardList className="h-4 w-4" />{" "}
-              {submitting ? "提交中..." : "提交委托"}
+              {submitting
+                ? "提交中..."
+                : billingMode === "daily" || billingMode === "monthly"
+                  ? "提交并生成报价"
+                  : "提交委托"}
             </Button>
             {submitHint ? (
               <div className="text-[11px] text-rose-500">{submitHint}</div>
@@ -1163,7 +1474,6 @@ function BountyEntrustForm() {
   const push = useSessionStore((s) => s.pushNotification);
   const role = useRoleStore((s) => s.role);
   const identityId = useRoleStore((s) => s.identityId);
-  const setRole = useRoleStore((s) => s.setRole);
   const [submitting, setSubmitting] = useState(false);
 
   const [title, setTitle] = useState("");
@@ -1188,21 +1498,79 @@ function BountyEntrustForm() {
   >("city");
   const [projectType, setProjectType] = useState("");
   const [description, setDescription] = useState("");
-  const [reward, setReward] = useState(50000);
+  const [reward, setReward] = useState("");
   const [deadline, setDeadline] = useState("");
   const [reqs, setReqs] = useState<string[]>(["有相关项目实战案例"]);
   const [reqInput, setReqInput] = useState("");
-  const [attachments, setAttachments] = useState<string[]>(["项目任务书.pdf"]);
+  const [attachments, setAttachments] = useState<BountyAttachment[]>([]);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [subjectFilters, setSubjectFilters] = useState(EMPTY_BOUNTY_SUBJECT_FILTERS);
 
-  useEffect(() => {
-    if (role === "guest") setRole("client");
-  }, [role, setRole]);
+  const rewardAmount = Math.round(Number(reward));
+  const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 
   const addReq = () => {
     if (!reqInput.trim()) return;
     setReqs([...reqs, reqInput.trim()]);
     setReqInput("");
+  };
+
+  const formatAttachmentSize = (bytes?: number) => {
+    if (!bytes || bytes <= 0) return "";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const handleAttachmentFiles = (files: FileList | null) => {
+    if (!files?.length) return;
+    const list = Array.from(files);
+    const oversized = list.find((f) => f.size > MAX_ATTACHMENT_BYTES);
+    if (oversized) {
+      push({
+        title: "附件过大",
+        description: `「${oversized.name}」超过 5MB，请压缩后重试。`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setUploadingAttachment(true);
+    Promise.all(
+      list.map(
+        (file) =>
+          new Promise<BountyAttachment>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              if (typeof reader.result !== "string") {
+                reject(new Error("读取失败"));
+                return;
+              }
+              resolve({
+                name: file.name,
+                url: reader.result,
+                size: file.size,
+              });
+            };
+            reader.onerror = () => reject(new Error("读取失败"));
+            reader.readAsDataURL(file);
+          }),
+      ),
+    )
+      .then((items) => {
+        setAttachments((prev) => [...prev, ...items]);
+      })
+      .catch(() => {
+        push({
+          title: "附件上传失败",
+          description: "请重新选择文件后再试。",
+          variant: "destructive",
+        });
+      })
+      .finally(() => {
+        setUploadingAttachment(false);
+        if (attachmentInputRef.current) attachmentInputRef.current.value = "";
+      });
   };
 
   const l2Options = useMemo(() => getL2Options(specialty), [specialty]);
@@ -1217,7 +1585,8 @@ function BountyEntrustForm() {
     contactPhone.trim() &&
     description.trim() &&
     deadline &&
-    reward >= 1000 &&
+    Number.isFinite(rewardAmount) &&
+    rewardAmount >= 1000 &&
     trackL2.length > 0 &&
     trackL3.length > 0;
 
@@ -1225,7 +1594,7 @@ function BountyEntrustForm() {
     if (!canSubmit || submitting) {
       if (!canSubmit) {
         push({
-          title: "请完善必填项（项目名称、联系人、电话、描述、成果提交时间）",
+          title: "请完善必填项（项目名称、联系人、电话、描述、悬赏金额、成果提交时间）",
           variant: "destructive",
         });
       }
@@ -1254,10 +1623,10 @@ function BountyEntrustForm() {
           projectType,
           location,
           description,
-          reward,
+          reward: rewardAmount,
           deadline,
           requirements: reqs,
-          attachments: attachments.map((name) => ({ name })),
+          attachments,
           preferredDesignerCodes: parseDesignerCodesInput(preferredDesignerInput),
           subjectFilters: packBountySubjectFilters(subjectFilters),
           contactName,
@@ -1407,20 +1776,61 @@ function BountyEntrustForm() {
                 options={l2Options.map((o) => ({ value: o.value, label: o.label }))}
                 value={trackL2}
                 onChange={(next) => {
-                  setTrackL2(next);
-                  setTrackL3((prev) => pruneL3ForL2s(specialty, next, prev));
+                  const resolved =
+                    specialty === "landscape"
+                      ? reconcileLandscapeL2Selection(trackL2, next)
+                      : next;
+                  if (
+                    specialty === "landscape" &&
+                    next.includes("preliminary") &&
+                    next.includes("construction_doc")
+                  ) {
+                    push({
+                      title: "不可同时选择",
+                      description:
+                        "景观施工图设计已包含扩初设计，请二选一。",
+                      variant: "destructive",
+                    });
+                  }
+                  setTrackL2(resolved);
+                  setTrackL3((prev) => pruneL3ForL2s(specialty, resolved, prev));
                 }}
               />
+              {specialty === "landscape" ? (
+                <p className="mt-1.5 text-xs text-ink-40">
+                  施工图已包含扩初，二者不可同时勾选。
+                </p>
+              ) : null}
             </FieldFull>
             <FieldFull label="三级专业（可多选）" required>
               <BountyTrackMultiSelect
                 options={l3Options}
                 value={trackL3}
-                onChange={setTrackL3}
                 showGroup={trackL2.length > 1}
+                onChange={(next) => {
+                  const resolved =
+                    specialty === "landscape"
+                      ? reconcileLandscapeL3Selection(trackL3, next)
+                      : next;
+                  const conflict =
+                    specialty === "landscape"
+                      ? landscapeL3SelectionConflict(trackL3, next)
+                      : null;
+                  if (conflict) {
+                    push({
+                      title: "不可同时选择",
+                      description: conflict,
+                      variant: "destructive",
+                    });
+                  }
+                  setTrackL3(resolved);
+                }}
               />
               <p className="mt-1.5 text-xs text-ink-40">
                 设计师报名时将选择其中一个三级专业承接。
+                {specialty === "landscape"
+                  ? " 园建与园建（含简单结构）、给排水与给排水+喷灌分别不可同时勾选。"
+                  : ""}
               </p>
             </FieldFull>
           </div>
@@ -1486,11 +1896,12 @@ function BountyEntrustForm() {
                 type="number"
                 step={1000}
                 min={1000}
+                placeholder="请填写悬赏金额"
                 value={reward}
-                onChange={(e) => setReward(Number(e.target.value || 0))}
+                onChange={(e) => setReward(e.target.value)}
               />
               <p className="mt-1.5 text-xs text-ink-40">
-                悬赏须填写确定费用，选定设计师后转入平台托管。
+                请自行填写确定费用（不少于 ¥1,000），选定设计师后转入平台托管。
               </p>
             </FieldFull>
             <Field label="成果提交时间" required>
@@ -1508,22 +1919,30 @@ function BountyEntrustForm() {
 
         <Card className="p-6">
           <SectionTitle icon={Paperclip} title="项目附件" />
+          <p className="mb-3 text-xs text-ink-40">
+            请上传任务书、现状资料等真实文件（可选，单文件不超过 5MB）。
+          </p>
           <div className="grid gap-2 md:grid-cols-2">
             {attachments.map((a, i) => (
               <div
-                key={i}
+                key={`${a.name}-${i}`}
                 className="flex items-center justify-between rounded-xl border border-ink-20 bg-ink-20/20 px-3 py-2.5"
               >
-                <div className="flex items-center gap-2 text-sm text-ink">
-                  <Paperclip className="h-3.5 w-3.5 text-ink-60" />
-                  {a}
+                <div className="min-w-0 flex items-center gap-2 text-sm text-ink">
+                  <Paperclip className="h-3.5 w-3.5 shrink-0 text-ink-60" />
+                  <span className="truncate">{a.name}</span>
+                  {a.size ? (
+                    <span className="shrink-0 text-xs text-ink-40">
+                      {formatAttachmentSize(a.size)}
+                    </span>
+                  ) : null}
                 </div>
                 <button
                   type="button"
                   onClick={() =>
                     setAttachments(attachments.filter((_, j) => j !== i))
                   }
-                  className="text-ink-40 hover:text-ink"
+                  className="ml-2 shrink-0 text-ink-40 hover:text-ink"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -1531,16 +1950,21 @@ function BountyEntrustForm() {
             ))}
             <button
               type="button"
-              onClick={() =>
-                setAttachments([
-                  ...attachments,
-                  `附件_${attachments.length + 1}.pdf`,
-                ])
-              }
-              className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-ink-20 p-2.5 text-sm text-ink-60 hover:border-ink/40 hover:text-ink"
+              disabled={uploadingAttachment}
+              onClick={() => attachmentInputRef.current?.click()}
+              className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-ink-20 p-2.5 text-sm text-ink-60 hover:border-ink/40 hover:text-ink disabled:opacity-50"
             >
-              <Paperclip className="h-3.5 w-3.5" /> 上传附件
+              <Paperclip className="h-3.5 w-3.5" />
+              {uploadingAttachment ? "上传中..." : "上传附件"}
             </button>
+            <input
+              ref={attachmentInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.dwg,.dxf,.zip,.rar,.jpg,.jpeg,.png,.webp"
+              onChange={(e) => handleAttachmentFiles(e.target.files)}
+            />
           </div>
         </Card>
 
@@ -1549,7 +1973,7 @@ function BountyEntrustForm() {
             悬赏预算预览
           </div>
           <div className="text-3xl font-bold tracking-tight text-amber-600">
-            {formatCurrency(reward)}
+            {rewardAmount >= 1000 ? formatCurrency(rewardAmount) : "待填写"}
           </div>
           <p className="text-xs text-ink-60">选定设计师后金额转入平台托管</p>
 
@@ -1580,7 +2004,7 @@ function BountyEntrustForm() {
           </Button>
           {!canSubmit ? (
             <div className="text-[11px] text-rose-500">
-              请填写项目名称、联系人、电话、描述、成果提交时间
+              请填写项目名称、联系人、电话、描述、悬赏金额（≥¥1,000）、成果提交时间
             </div>
           ) : null}
         </Card>

@@ -26,105 +26,6 @@ const DEFAULT_SETTINGS: CalendarBatchSettings = {
   allDay: false,
 };
 
-const DEMO_EVENTS: Record<string, WorkCalendarEvent[]> = {
-  designer_chen: [
-    {
-      id: "we_chen_lh_1",
-      date: "2026-05-06",
-      period: "am",
-      title: "成都麓湖 · 高层住宅室内按月驻场",
-      source: "order",
-      orderCode: "ID2026031008",
-      workContents: [
-        { id: "wc_lh_1", text: "施工图节点核对与软装收口清单" },
-        { id: "wc_lh_2", text: "现场与施工方对接机电预留" },
-      ],
-      workContentsSavedAt: "2026-05-06T12:30:00+08:00",
-    },
-    {
-      id: "we_chen_lh_2",
-      date: "2026-05-06",
-      period: "pm",
-      title: "成都麓湖 · 高层住宅室内按月驻场",
-      source: "order",
-      orderCode: "ID2026031008",
-    },
-    {
-      id: "we_chen_lh_3",
-      date: "2026-05-08",
-      period: "am",
-      title: "成都麓湖 · 高层住宅室内按月驻场",
-      source: "order",
-      orderCode: "ID2026031008",
-      workContents: [{ id: "wc_lh_3", text: "补填：木作深化图纸审核" }],
-      workContentsSavedAt: "2026-06-05T09:00:00+08:00",
-    },
-    {
-      id: "we_chen_lh_4",
-      date: "2026-05-12",
-      period: "pm",
-      title: "成都麓湖 · 高层住宅室内按月驻场",
-      source: "order",
-      orderCode: "ID2026031008",
-    },
-    {
-      id: "we_chen_lh_5",
-      date: "2026-05-15",
-      period: "am",
-      title: "成都麓湖 · 高层住宅室内按月驻场",
-      source: "order",
-      orderCode: "ID2026031008",
-      workContents: [{ id: "wc_lh_5", text: "驻场材料样板确认" }],
-      workContentsSavedAt: "2026-05-15T11:00:00+08:00",
-    },
-    {
-      id: "we_chen_lh_6",
-      date: "2026-06-03",
-      period: "am",
-      title: "成都麓湖 · 高层住宅室内按月驻场",
-      source: "order",
-      orderCode: "ID2026031008",
-    },
-    {
-      id: "we_chen_1",
-      date: "2026-05-07",
-      period: "am",
-      title: "良渚文化村 · 施工图深化",
-      source: "order",
-      orderCode: "LA2026042210",
-      workContents: [
-        { id: "wc_demo_1", text: "园建铺装与小品节点深化" },
-        { id: "wc_demo_2", text: "与委托人确认中期成果清单" },
-      ],
-      workContentsSavedAt: "2026-06-05T08:00:00+08:00",
-    },
-    {
-      id: "we_chen_2",
-      date: "2026-05-06",
-      period: "pm",
-      title: "良渚文化村 · 施工图深化",
-      source: "order",
-      orderCode: "LA2026042210",
-    },
-    {
-      id: "we_chen_3",
-      date: "2026-05-08",
-      period: "am",
-      title: "苏州博物馆片区 · 概念方案",
-      source: "order",
-      orderCode: "AD2026040509",
-    },
-    {
-      id: "we_chen_4",
-      date: "2026-05-12",
-      period: "pm",
-      title: "团队内部方案评审",
-      source: "manual",
-      note: "线下会议室",
-    },
-  ],
-};
-
 interface DesignerCalendarState {
   calendars: Record<string, CalendarSlot[]>;
   events: Record<string, WorkCalendarEvent[]>;
@@ -171,14 +72,11 @@ export const useDesignerCalendarStore = create<DesignerCalendarState>()(
 
       ensureDesigner: (designerId, seed) => {
         if (get().initialized[designerId]) return;
-        const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE !== "off";
         const settings = DEFAULT_SETTINGS;
-        const events =
-          demoMode ? (DEMO_EVENTS[designerId] ?? []) : [];
         const cal = applyCalendarBatchRules([...seed], settings);
         set({
           calendars: { ...get().calendars, [designerId]: cal },
-          events: { ...get().events, [designerId]: events },
+          events: { ...get().events, [designerId]: [] },
           settings: { ...get().settings, [designerId]: settings },
           initialized: { ...get().initialized, [designerId]: true },
         });
@@ -186,14 +84,8 @@ export const useDesignerCalendarStore = create<DesignerCalendarState>()(
 
       /** 从 API 设计师资料灌入档期（覆盖本地内存） */
       hydrateFromDesigner: (designer) => {
-        const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE !== "off";
         const settings = designer.calendarBatchSettings ?? DEFAULT_SETTINGS;
-        const events =
-          designer.workCalendarEvents?.length ?
-            designer.workCalendarEvents
-          : demoMode ?
-            (DEMO_EVENTS[designer.id] ?? [])
-          : [];
+        const events = designer.workCalendarEvents ?? [];
         const cal = applyCalendarBatchRules(
           [...(designer.calendar ?? [])],
           settings,

@@ -6,6 +6,11 @@ import {
   designerHasL3,
   normalizeBountyTrack,
 } from "@/lib/bounty-tracks";
+import {
+  designerCanAcceptOrders,
+  designerCoversProjectType,
+  projectTypeMismatchMessage,
+} from "@/lib/designer-portfolio-readiness";
 import type { BountyApplicant } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +42,15 @@ export async function POST(
 
     const designer = await getDesigner(session.identityId);
     if (!designer) return fail(404, "设计师资料不存在");
+    if (!designerCanAcceptOrders(designer)) {
+      return fail(403, "请先在作品管理上传项目类型案例后再报名悬赏");
+    }
+    if (
+      bounty.projectType?.trim() &&
+      !designerCoversProjectType(designer, bounty.projectType)
+    ) {
+      return fail(403, projectTypeMismatchMessage(bounty.projectType.trim()));
+    }
     if (!designerHasL3(designer, appliedL3)) {
       return fail(403, "您的注册专业与所选三级专业不匹配");
     }

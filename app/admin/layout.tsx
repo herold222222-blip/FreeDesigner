@@ -1,7 +1,10 @@
 "use client";
 
+import { useMemo } from "react";
 import { ConsoleBasePathProvider } from "@/components/layout/console-base-path";
 import { ConsoleShell } from "@/components/layout/console-shell";
+import { withMessagesNavItem } from "@/lib/inbox-nav";
+import { useInboxUnreadCount } from "@/lib/use-inbox-unread";
 import {
   AlertCircle,
   ArrowDownToLine,
@@ -10,11 +13,12 @@ import {
   FileSignature,
   FileText,
   LayoutDashboard,
+  MessageSquare,
   PackageSearch,
   Users,
 } from "lucide-react";
 
-const NAV = [
+const BASE_NAV = [
   { href: "/admin", label: "工作台", icon: LayoutDashboard, exact: true },
   { href: "/admin/reviews", label: "入驻审核", icon: ClipboardCheck },
   { href: "/admin/orders", label: "订单监管", icon: PackageSearch },
@@ -31,9 +35,16 @@ export default function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const { count: unread } = useInboxUnreadCount();
+  const nav = useMemo(
+    () =>
+      withMessagesNavItem(BASE_NAV, "/admin/messages", MessageSquare, unread),
+    [unread],
+  );
+
   return (
     <ConsoleBasePathProvider basePath="/admin">
-      <ConsoleShell title="管理员后台" subtitle="平台总后台" nav={NAV}>
+      <ConsoleShell title="管理员后台" subtitle="平台总后台" nav={nav}>
         {children}
       </ConsoleShell>
     </ConsoleBasePathProvider>

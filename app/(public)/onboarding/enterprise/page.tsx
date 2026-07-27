@@ -108,11 +108,10 @@ function EnterpriseOnboardingInner() {
       return;
     }
     try {
-      const res = await sendCodeApi(normalizedPhone, "register");
+      await sendCodeApi(normalizedPhone, "register");
       setCodeSeconds(60);
       push({
         title: "验证码已发送",
-        description: res.demoCode ? `演示用验证码：${res.demoCode}` : undefined,
       });
     } catch (e) {
       push({

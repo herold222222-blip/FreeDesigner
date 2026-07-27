@@ -5,8 +5,11 @@ import {
   getReviewItem,
   updateReviewItemStatus,
   updateDesignerLevel,
+  setDesignerReviewStatus,
 } from "@/lib/server/repo";
 import { parsePromotionTargetLevel } from "@/lib/review-promotion";
+import { prisma } from "@/lib/server/db";
+import { createInboxMessage } from "@/lib/server/inbox";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +32,34 @@ export async function POST(
     const status = action === "approve" ? "approved" : "rejected";
     await updateReviewItemStatus(item.id, status);
 
-    if (action === "approve" && item.refId) {
+    if (item.type === "designer" && item.refId) {
+      await setDesignerReviewStatus(item.refId, status);
+      const designerRow = await prisma.designer.findUnique({
+        where: { id: item.refId },
+        select: { userId: true },
+      });
+      if (action === "approve" && designerRow?.userId) {
+        await prisma.user.updateMany({
+          where: { id: designerRow.userId, status: "pending" },
+          data: { status: "active" },
+        });
+      }
+      if (designerRow?.userId) {
+        await createInboxMessage({
+          userId: designerRow.userId,
+          kind: "system",
+          title:
+            action === "approve" ? "入驻审核已通过" : "入驻审核未通过",
+          body:
+            action === "approve"
+              ? "恭喜，您的设计师入驻资料已审核通过，可以开始接单与完善作品集。"
+              : "很抱歉，您的设计师入驻资料未通过审核。请根据平台规范完善资料后重新提交，或联系客服了解详情。",
+          linkHref: "/designer",
+        }).catch(() => {
+          /* ignore */
+        });
+      }
+    } else if (action === "approve" && item.refId) {
       if (item.type === "designer_promotion") {
         await updateDesignerLevel(item.refId, "mid_v1");
       } else if (item.type === "designer_level_promotion") {

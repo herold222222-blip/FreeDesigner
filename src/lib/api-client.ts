@@ -76,7 +76,7 @@ export interface SessionUserDTO {
 }
 
 export function sendCode(phone: string, purpose: "login" | "register") {
-  return apiFetch<{ sent: boolean; demoCode?: string }>("/api/auth/send-code", {
+  return apiFetch<{ sent: boolean }>("/api/auth/send-code", {
     method: "POST",
     body: JSON.stringify({ phone, purpose }),
   });
@@ -132,6 +132,23 @@ export function registerRequest(params: {
   businessScope?: string;
   companyQualificationNone?: boolean;
   companyQualifications?: CompanyQualification[];
+  /** 设计师入驻专业 */
+  specialty?: import("@/lib/types").Specialty;
+  primaryTrack?: {
+    l1: import("@/lib/types").Specialty;
+    l2: string;
+    l3: string;
+  };
+  secondaryTracks?: {
+    l1: import("@/lib/types").Specialty;
+    l2: string;
+    l3: string;
+  }[];
+  yearsOfExperience?: number;
+  isInJob?: boolean;
+  highestEducation?: import("@/lib/types").HighestEducation;
+  educationExperiences?: import("@/lib/types").EducationExperience[];
+  employmentExperiences?: import("@/lib/types").EmploymentExperience[];
 }) {
   return apiFetch<SessionUserDTO & { needsOnboarding?: boolean }>(
     "/api/auth/register",
@@ -170,6 +187,39 @@ export function claimRoleRequest(role: "client" | "designer") {
   );
 }
 
+/* --------------- 站内消息 --------------- */
+
+export interface InboxMessageDTO {
+  id: string;
+  kind: "system" | "user";
+  fromName: string;
+  fromUserId?: string | null;
+  title: string;
+  body: string;
+  linkHref?: string | null;
+  readAt?: string | null;
+  createdAt: string;
+  unread: boolean;
+}
+
+export function fetchInboxMessages() {
+  return apiFetch<{ messages: InboxMessageDTO[] }>("/api/inbox");
+}
+
+export function fetchInboxUnreadCount() {
+  return apiFetch<{ count: number }>("/api/inbox/unread-count");
+}
+
+export function markInboxMessageReadRequest(id: string) {
+  return apiFetch<{ message: InboxMessageDTO }>(`/api/inbox/${id}/read`, {
+    method: "POST",
+  });
+}
+
+export function markAllInboxReadRequest() {
+  return apiFetch<{ updated: number }>("/api/inbox", { method: "PATCH" });
+}
+
 /* --------------- 订单写操作 --------------- */
 
 export interface CreateOrderBody {
@@ -192,12 +242,61 @@ export interface CreateOrderBody {
   withAuditService?: boolean;
   withProjectManagement?: boolean;
   customStageRatios?: { name: string; ratio: number }[];
+  /** 常规委托等场景的项目附件（委托人实际上传） */
+  attachments?: import("@/lib/types").BountyAttachment[];
+  /** 按天/按月：用于服务端生成报价单 */
+  timeQuote?: {
+    unit: "day" | "month";
+    withDrawing?: boolean;
+    lines: Array<{
+      l3: string;
+      l3Label: string;
+      quantity: number;
+      difficultyKey?: string;
+    }>;
+  };
 }
 
 export function createOrderRequest(body: CreateOrderBody) {
   return apiFetch<Order>("/api/orders", {
     method: "POST",
     body: JSON.stringify(body),
+  });
+}
+
+/** 委托人确认按天/按月系统报价 → 进入待匹配并通知管理员 */
+export function confirmOrderQuoteRequest(orderId: string) {
+  return apiFetch<Order>(`/api/orders/${orderId}/confirm-quote`, {
+    method: "POST",
+  });
+}
+
+/** 待匹配设计师状态：委托人 / 管理员修改委托信息 */
+export function updateMatchingOrderRequest(
+  orderId: string,
+  body: {
+    title?: string;
+    description?: string;
+    projectType?: string;
+    totalAmount?: number;
+    expectedDeliveryAt?: string;
+    serviceMode?: import("@/lib/types").ServiceMode;
+    withAuditService?: boolean;
+    withProjectManagement?: boolean;
+    projectAreaSqm?: number;
+  },
+) {
+  return apiFetch<Order>(`/api/orders/${orderId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+/** 管理员取消待确认报价 / 待匹配订单 */
+export function cancelOrderRequest(orderId: string, reason?: string) {
+  return apiFetch<Order>(`/api/orders/${orderId}/cancel`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
   });
 }
 
@@ -454,6 +553,7 @@ export function updateDesignerProfileRequest(
     calendar?: import("@/lib/types").Designer["calendar"];
     workCalendarEvents?: import("@/lib/types").Designer["workCalendarEvents"];
     calendarBatchSettings?: import("@/lib/types").Designer["calendarBatchSettings"];
+    portfolio?: import("@/lib/types").PortfolioItem[];
   },
 ) {
   return apiFetch<import("@/lib/types").Designer>(

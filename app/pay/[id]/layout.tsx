@@ -1,8 +1,6 @@
-import { orders } from "@/mocks/orders";
-
-/** 支付页占位路由与订单 id 对齐即可（静态托管下仍可用查询串 mock） */
+/** 支付页占位路由（运行时按 id 动态渲染） */
 export function generateStaticParams() {
-  return orders.map((o) => ({ id: o.id }));
+  return [];
 }
 
 export default function PayLayout({

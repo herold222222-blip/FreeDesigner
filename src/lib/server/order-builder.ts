@@ -3,8 +3,10 @@ import { buildMonthlyStages } from "@/lib/monthly-billing";
 import { generateProjectId } from "@/lib/project-id";
 import type {
   BillingMode,
+  BountyAttachment,
   HalfDaySlot,
   Order,
+  OrderQuote,
   OrderSource,
   OrderStatus,
   PaymentStage,
@@ -37,6 +39,10 @@ export interface CreateOrderInput {
   expectedDeliveryAt?: string;
   /** 扫码下单等自定义付款阶段（ratio 为 0–1 或百分数 30 表示 30%） */
   customStageRatios?: { name: string; ratio: number }[];
+  /** 委托人实际上传的项目附件 */
+  attachments?: BountyAttachment[];
+  /** 系统报价单（按天/按月常规委托） */
+  quote?: OrderQuote;
 }
 
 function randomId(prefix: string) {
@@ -119,12 +125,26 @@ function resolveStages(input: CreateOrderInput, orderId: string): PaymentStage[]
 
 function resolveInitialStatus(input: CreateOrderInput): OrderStatus {
   const source = input.orderSource ?? "directed";
+  if (
+    source === "regular" &&
+    input.quote &&
+    (input.billingMode === "daily" || input.billingMode === "monthly")
+  ) {
+    return "pending_quote";
+  }
   if (source === "regular" || source === "bounty") return "matching";
   if (source === "scan") return "pending_schedule";
   return "pending_schedule";
 }
 
-function initialSystemMessage(source: OrderSource, hasDesigner: boolean): string {
+function initialSystemMessage(
+  source: OrderSource,
+  hasDesigner: boolean,
+  status: OrderStatus,
+): string {
+  if (source === "regular" && status === "pending_quote") {
+    return "系统已根据需求生成报价单，请委托人确认后进入设计师匹配。";
+  }
   if (source === "regular") {
     return "常规委托已发布，等待平台匹配设计师并确认费用。";
   }
@@ -157,6 +177,10 @@ export function buildOrder(input: CreateOrderInput): Order {
   const orderSource = input.orderSource ?? "directed";
   const designerId = input.designerId ?? "";
   const status: OrderStatus = resolveInitialStatus(input);
+  const totalAmount =
+    status === "pending_quote" && input.quote
+      ? input.quote.total
+      : input.totalAmount;
 
   return {
     id,
@@ -172,23 +196,25 @@ export function buildOrder(input: CreateOrderInput): Order {
     billingMode: input.billingMode,
     orderSource,
     projectAreaSqm: input.projectAreaSqm,
-    totalAmount: input.totalAmount,
+    totalAmount,
     feeRate: 0.08,
     createdAt: now.toISOString(),
     expectedDeliveryAt: expected,
     contractId: "",
-    stages: resolveStages(input, id),
+    stages: resolveStages({ ...input, totalAmount }, id),
     revisions: [],
     messages: [
       {
         id: randomId("msg"),
         authorId: "system",
         authorRole: "system",
-        content: initialSystemMessage(orderSource, !!designerId),
+        content: initialSystemMessage(orderSource, !!designerId, status),
         createdAt: now.toISOString(),
       },
     ],
     description: input.description,
+    quote: input.quote,
+    attachments: input.attachments?.length ? input.attachments : undefined,
     onsiteSchedule:
       input.serviceMode === "onsite" && input.address
         ? {

@@ -17,6 +17,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DESIGNER_LEVEL_META, SPECIALTIES, SUB_SPECIALTIES } from "@/lib/constants";
 import {
+  EducationExperienceEditor,
+  EmploymentExperienceEditor,
+  HighestEducationSelect,
+} from "@/components/domain/designer-education-employment-fields";
+import {
   designerDraftFromDesigner,
   mergeDesignerProfile,
   type DesignerProfileDraft,
@@ -189,11 +194,26 @@ export function AdminDesignerEditDialog({
                     onChange={(e) => patch({ location: e.target.value })}
                   />
                 </div>
-                <div className="space-y-1.5 sm:col-span-2">
-                  <Label>学历</Label>
-                  <Input
-                    value={form.education ?? ""}
-                    onChange={(e) => patch({ education: e.target.value })}
+                <div className="sm:col-span-2">
+                  <HighestEducationSelect
+                    value={form.highestEducation ?? ""}
+                    onChange={(highestEducation) => patch({ highestEducation })}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <EducationExperienceEditor
+                    value={form.educationExperiences ?? []}
+                    onChange={(educationExperiences) =>
+                      patch({ educationExperiences })
+                    }
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <EmploymentExperienceEditor
+                    value={form.employmentExperiences ?? []}
+                    onChange={(employmentExperiences) =>
+                      patch({ employmentExperiences })
+                    }
                   />
                 </div>
                 <div className="space-y-1.5 sm:col-span-2">

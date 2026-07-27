@@ -6,6 +6,7 @@ import type {
   OrderStatus,
   RatingBreakdown,
   ReviewItem,
+  ServiceMode,
   WalletTransaction,
 } from "@/lib/types";
 import {
@@ -27,6 +28,27 @@ import {
   saveBounty,
 } from "./repo";
 import { buildOrder, type CreateOrderInput } from "./order-builder";
+import {
+  designerCanAcceptOrders,
+  designerCoversProjectType,
+  projectTypeMismatchMessage,
+} from "@/lib/designer-portfolio-readiness";
+import {
+  notifyAdminsMatchingOrder,
+  notifyDeliverablesSubmitted,
+  notifyFinalSettlementConfirmed,
+  notifyOrderCancelledByAdmin,
+  notifyRevisionRequested,
+  notifySettlementRequested,
+  notifyStagePaid,
+  notifyStageReleased,
+} from "@/lib/server/inbox";
+
+/** 管理员可取消的早期订单状态（尚未进入履约） */
+export const ADMIN_CANCELLABLE_ORDER_STATUSES: OrderStatus[] = [
+  "pending_quote",
+  "matching",
+];
 
 function rebuildDefaultStages(order: Order) {
   const id = order.id;
@@ -164,6 +186,26 @@ const ACTIVE_ORDER_STATUSES: OrderStatus[] = [
 
 /** 委托人下单：创建订单并视来源生成档期申请 */
 export async function placeOrder(input: CreateOrderInput): Promise<Order> {
+  if (input.designerId) {
+    const designer = await getDesigner(input.designerId);
+    if (!designer) throw new AuthError(404, "设计师不存在");
+    if (!designerCanAcceptOrders(designer)) {
+      throw new AuthError(
+        403,
+        "该设计师尚未上传作品案例，暂不可承接订单",
+      );
+    }
+    if (
+      input.projectType?.trim() &&
+      !designerCoversProjectType(designer, input.projectType)
+    ) {
+      throw new AuthError(
+        403,
+        projectTypeMismatchMessage(input.projectType.trim()),
+      );
+    }
+  }
+
   const order = buildOrder(input);
   await createOrder(order);
 
@@ -191,6 +233,152 @@ export async function placeOrder(input: CreateOrderInput): Promise<Order> {
   return order;
 }
 
+export type MatchingOrderUpdateInput = {
+  title?: string;
+  description?: string;
+  projectType?: string;
+  totalAmount?: number;
+  expectedDeliveryAt?: string;
+  serviceMode?: ServiceMode;
+  withAuditService?: boolean;
+  withProjectManagement?: boolean;
+  projectAreaSqm?: number;
+};
+
+/** 委托人确认系统报价 → matching，并推送管理员分配设计师 */
+export async function confirmOrderQuote(
+  orderId: string,
+  clientId: string,
+): Promise<Order> {
+  const order = await getOrder(orderId);
+  if (!order) throw new AuthError(404, "订单不存在");
+  if (order.clientId !== clientId) throw new AuthError(403, "无权操作该订单");
+  if (order.status !== "pending_quote") {
+    throw new AuthError(409, "当前订单状态不可确认报价");
+  }
+  if (!order.quote || order.quote.status !== "pending") {
+    throw new AuthError(409, "报价单不存在或已确认");
+  }
+
+  order.quote = {
+    ...order.quote,
+    status: "confirmed",
+    confirmedAt: nowIso(),
+  };
+  order.totalAmount = order.quote.total;
+  rebuildDefaultStages(order);
+  order.status = "matching";
+  order.messages.push({
+    id: randomId("msg"),
+    authorId: "system",
+    authorRole: "system",
+    content: "委托人已确认报价，订单进入待匹配，已通知平台管理员分配设计师。",
+    createdAt: nowIso(),
+  });
+  await saveOrder(order);
+  await notifyAdminsMatchingOrder(order);
+  return order;
+}
+
+/** 修改待匹配设计师订单的委托信息（委托人或管理员） */
+export async function updateMatchingOrder(
+  orderId: string,
+  clientId: string | null,
+  patch: MatchingOrderUpdateInput,
+  options?: { asAdmin?: boolean },
+): Promise<Order> {
+  const order = await getOrder(orderId);
+  if (!order) throw new AuthError(404, "订单不存在");
+  if (!options?.asAdmin) {
+    if (!clientId || order.clientId !== clientId) {
+      throw new AuthError(403, "无权操作该订单");
+    }
+  }
+  if (order.status !== "matching") {
+    throw new AuthError(409, "仅待匹配设计师状态可修改委托信息");
+  }
+
+  if (patch.title !== undefined) {
+    const title = patch.title.trim();
+    if (!title) throw new AuthError(400, "项目标题不能为空");
+    order.title = title;
+  }
+  if (patch.description !== undefined) {
+    order.description = patch.description.trim();
+  }
+  if (patch.projectType !== undefined) {
+    order.projectType = patch.projectType.trim();
+  }
+  if (patch.expectedDeliveryAt !== undefined) {
+    order.expectedDeliveryAt = patch.expectedDeliveryAt;
+  }
+  if (patch.serviceMode !== undefined) {
+    order.serviceMode = patch.serviceMode;
+  }
+  if (patch.withAuditService !== undefined) {
+    order.withAuditService = patch.withAuditService;
+  }
+  if (patch.withProjectManagement !== undefined) {
+    order.withProjectManagement = patch.withProjectManagement;
+  }
+  if (patch.projectAreaSqm !== undefined) {
+    order.projectAreaSqm =
+      patch.projectAreaSqm > 0 ? patch.projectAreaSqm : undefined;
+  }
+  if (patch.totalAmount !== undefined) {
+    if (!(patch.totalAmount > 0)) {
+      throw new AuthError(400, "订单预算须大于 0");
+    }
+    const next = Math.round(patch.totalAmount);
+    if (next !== order.totalAmount) {
+      order.totalAmount = next;
+      rebuildDefaultStages(order);
+    }
+  }
+
+  order.messages.push({
+    id: randomId("msg"),
+    authorId: "system",
+    authorRole: "system",
+    content: options?.asAdmin
+      ? "管理员已更新委托信息，平台将按最新内容匹配设计师。"
+      : "委托人已更新委托信息，平台将按最新内容匹配设计师。",
+    createdAt: nowIso(),
+  });
+  await saveOrder(order);
+  return order;
+}
+
+/** 管理员取消尚未履约的订单 → cancelled，并通知委托人 */
+export async function cancelOrderByAdmin(
+  orderId: string,
+  reason?: string,
+): Promise<Order> {
+  const order = await getOrder(orderId);
+  if (!order) throw new AuthError(404, "订单不存在");
+  if (!ADMIN_CANCELLABLE_ORDER_STATUSES.includes(order.status)) {
+    throw new AuthError(
+      409,
+      "仅待确认报价或待匹配设计师的订单可由管理员取消",
+    );
+  }
+
+  const note = reason?.trim();
+  order.status = "cancelled";
+  order.messages.push({
+    id: randomId("msg"),
+    authorId: "system",
+    authorRole: "system",
+    content: note
+      ? `平台已取消本订单。原因：${note}`
+      : "平台已取消本订单。",
+    createdAt: nowIso(),
+  });
+  await saveOrder(order);
+  await notifyOrderCancelledByAdmin(order, note);
+  return order;
+}
+
 /** 管理员/平台为常规委托委派设计师：matching → pending_contract */
 export async function assignDesignerToOrder(
   orderId: string,
@@ -201,6 +389,20 @@ export async function assignDesignerToOrder(
   if (!order) throw new AuthError(404, "订单不存在");
   if (order.status !== "matching") {
     throw new AuthError(409, "订单当前状态不可委派设计师");
+  }
+  const designer = await getDesigner(designerId);
+  if (!designer) throw new AuthError(404, "设计师不存在");
+  if (!designerCanAcceptOrders(designer)) {
+    throw new AuthError(403, "该设计师尚未上传作品案例，暂不可委派");
+  }
+  if (
+    order.projectType?.trim() &&
+    !designerCoversProjectType(designer, order.projectType)
+  ) {
+    throw new AuthError(
+      403,
+      projectTypeMismatchMessage(order.projectType.trim()),
+    );
   }
   order.designerId = designerId;
   order.status = "pending_contract";
@@ -232,6 +434,21 @@ export async function awardBountyToDesigner(
   }
   const applicant = bounty.applicants.find((a) => a.designerId === designerId);
   if (!applicant) throw new AuthError(404, "该设计师未报名此悬赏");
+
+  const designer = await getDesigner(designerId);
+  if (!designer) throw new AuthError(404, "设计师不存在");
+  if (!designerCanAcceptOrders(designer)) {
+    throw new AuthError(403, "该设计师尚未上传作品案例，暂不可中标");
+  }
+  if (
+    bounty.projectType?.trim() &&
+    !designerCoversProjectType(designer, bounty.projectType)
+  ) {
+    throw new AuthError(
+      403,
+      projectTypeMismatchMessage(bounty.projectType.trim()),
+    );
+  }
 
   const order = buildOrder({
     designerId,
@@ -462,6 +679,8 @@ export async function payStage(
   };
   await createWalletTransaction(order.designerId, "designer", designerTx);
 
+  await notifyStagePaid(order, stage.name, stage.amount);
+
   return order;
 }
 
@@ -507,6 +726,7 @@ export async function submitStageDeliverables(
     createdAt: at,
   });
   await saveOrder(order);
+  await notifyDeliverablesSubmitted(order, stage.name);
   return order;
 }
 
@@ -545,6 +765,11 @@ export async function requestStageRevision(
     createdAt: at,
   });
   await saveOrder(order);
+  await notifyRevisionRequested(
+    order,
+    stage.name,
+    description.trim() || "请按沟通记录优化本阶段成果。",
+  );
   return order;
 }
 
@@ -560,12 +785,16 @@ async function releaseStageOnOrder(
   stageId: string,
   at: string,
   systemMessage?: string,
+  options?: { auto?: boolean },
 ): Promise<void> {
   const stage = order.stages.find((s) => s.id === stageId);
   if (!stage || stage.status !== "frozen") return;
 
   stage.status = "released";
   stage.releasedAt = at;
+  const stageAmount = stage.amount;
+  const stageName = stage.name;
+  const auto = Boolean(options?.auto);
 
   const allReleased = allStagesReleased(order);
   if (allReleased) {
@@ -627,6 +856,8 @@ async function releaseStageOnOrder(
       note: `平台手续费 ${Math.round((order.feeRate ?? 0.08) * 100)}%`,
     });
   }
+
+  await notifyStageReleased(order, stageName, stageAmount, auto);
 }
 
 /** 委托人确认验收某阶段：解冻设计师款项并扣除平台手续费 */
@@ -670,6 +901,7 @@ export async function requestProjectSettlement(
     createdAt: at,
   });
   await saveOrder(order);
+  await notifySettlementRequested(order);
   return order;
 }
 
@@ -698,6 +930,7 @@ export async function confirmFinalSettlement(
     createdAt: at,
   });
   await saveOrder(order);
+  await notifyFinalSettlementConfirmed(order);
   await maybeRequestPromotion(order);
   return order;
 }
@@ -806,6 +1039,7 @@ async function confirmSettlementOnOrder(order: Order, at: string, systemMessage:
     createdAt: at,
   });
   await saveOrder(order);
+  await notifyFinalSettlementConfirmed(order);
   await maybeRequestPromotion(order);
 }
 
@@ -826,6 +1060,7 @@ export async function applyOrderTimeouts(order: Order): Promise<Order> {
       stage.id,
       at,
       `「${stage.name}」验收期已满 ${ACCEPTANCE_DAYS} 天且无异议，系统已自动确认成果。`,
+      { auto: true },
     );
     changed = true;
   }

@@ -255,6 +255,26 @@ model WithdrawalRequest {
   data        String // JSON: WithdrawalRequest
 }
 
+/// 站内消息（系统通知 / 用户消息）
+model InboxMessage {
+  id         String    @id @default(cuid())
+  userId     String
+  /// system | user
+  kind       String    @default("system")
+  /// 发件方展示名（系统消息为「乐自由」）
+  fromName   String
+  fromUserId String?
+  title      String
+  body       String
+  /// 可选跳转链接（相对路径）
+  linkHref   String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+}
+
 /// 联系客服 · 在线留言
 model FeedbackMessage {
   id         String    @id @default(cuid())

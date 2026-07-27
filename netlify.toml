@@ -5,10 +5,8 @@
 #   DATABASE_URL   = postgresql://...（建议 Neon / Supabase 带连接池的 URL）
 #   AUTH_SECRET    = 随机长字符串（openssl rand -base64 48）
 #   PUBLIC_BASE_URL= https://你的站点.netlify.app
-#   DEMO_CODE_ENABLED=off
-#   NEXT_PUBLIC_DEMO_MODE=off
 #   COOKIE_SECURE=true
-#   SMS_PROVIDER / SMS_* （登录发短信）
+#   SMS_PROVIDER / SMS_* （登录发短信，必填）
 # 首次部署后需对数据库执行一次：npm run prod:db:push && npm run prod:db:seed
 # （或在本机指向同一 DATABASE_URL 执行）
 

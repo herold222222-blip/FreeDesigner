@@ -42,7 +42,7 @@ export function OrderWorkCalendarContentsPanel({
         </div>
         <p className="mt-2 text-sm text-ink-60">
           {perspective === "designer"
-            ? "请在「工作日历」中为已安排时段填写工作内容，保存后委托人与管理员可查看。"
+            ? "请在个人主页「接单档期」中为已安排时段填写工作内容，保存后委托人与管理员可查看。"
             : "设计师尚未提交本订单的工时工作内容。"}
         </p>
       </Card>

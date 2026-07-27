@@ -14,7 +14,7 @@ import {
 } from "@/lib/stage-collaborator";
 import { getDesignerTrackIds } from "@/lib/designer-order-scope";
 import { resolveTrackLabels } from "@/lib/constants";
-import { designers } from "@/mocks/designers";
+import { useDesigners } from "@/lib/use-data";
 import { useCollaboratorStore } from "@/store/collaborator-store";
 import { useSessionStore } from "@/store/session-store";
 import { Card } from "@/components/ui/card";
@@ -311,6 +311,7 @@ function AddCollaboratorDialog({
   onNotify: ReturnType<typeof useSessionStore.getState>["pushNotification"];
 }) {
   const addService = useCollaboratorStore((s) => s.addService);
+  const { data: allDesigners } = useDesigners();
   const assignments =
     order.trackAssignments?.filter((a) => a.stageId === stage.id) ?? [];
   const [trackId, setTrackId] = useState(assignments[0]?.id ?? "");
@@ -327,7 +328,7 @@ function AddCollaboratorDialog({
   const rate = Math.max(0, Number(dailyRate) || 0);
   const totalFee = calcCollaboratorFee(days, rate);
 
-  const candidateDesigners = designers.filter(
+  const candidateDesigners = allDesigners.filter(
     (d) => d.id !== primaryDesignerId,
   );
 

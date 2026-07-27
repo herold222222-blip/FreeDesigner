@@ -59,6 +59,69 @@ export function pruneL3ForL2s(l1: Specialty, l2Values: string[], l3Values: strin
   return l3Values.filter((v) => allowed.has(v));
 }
 
+/**
+ * 景观二级专业互斥：施工图已包含扩初，不可同时勾选。
+ * 若同时出现，保留本次新勾选的一项。
+ */
+export function reconcileLandscapeL2Selection(
+  prev: string[],
+  next: string[],
+): string[] {
+  const hasPre = next.includes("preliminary");
+  const hasCd = next.includes("construction_doc");
+  if (!hasPre || !hasCd) return next;
+
+  const addedPre = !prev.includes("preliminary") && hasPre;
+  const addedCd = !prev.includes("construction_doc") && hasCd;
+  if (addedCd) return next.filter((v) => v !== "preliminary");
+  if (addedPre) return next.filter((v) => v !== "construction_doc");
+  // 无新增时默认保留施工图
+  return next.filter((v) => v !== "preliminary");
+}
+
+/** 景观三级专业互斥对：园建 / 园建含结构；给排水 / 给排水+喷灌 */
+const LANDSCAPE_L3_EXCLUSIVE_PAIRS: Array<[string, string]> = [
+  ["ls_garden", "ls_garden_struct"],
+  ["ls_drainage", "ls_drainage_irrigation"],
+];
+
+/**
+ * 景观三级专业互斥。若某对同时出现，保留本次新勾选的一项。
+ */
+export function reconcileLandscapeL3Selection(
+  prev: string[],
+  next: string[],
+): string[] {
+  let resolved = next;
+  for (const [a, b] of LANDSCAPE_L3_EXCLUSIVE_PAIRS) {
+    const hasA = resolved.includes(a);
+    const hasB = resolved.includes(b);
+    if (!hasA || !hasB) continue;
+    const addedA = !prev.includes(a) && hasA;
+    const addedB = !prev.includes(b) && hasB;
+    if (addedB) resolved = resolved.filter((v) => v !== a);
+    else if (addedA) resolved = resolved.filter((v) => v !== b);
+    else resolved = resolved.filter((v) => v !== b);
+  }
+  return resolved;
+}
+
+export function landscapeL3SelectionConflict(
+  prev: string[],
+  next: string[],
+): string | null {
+  for (const [a, b] of LANDSCAPE_L3_EXCLUSIVE_PAIRS) {
+    if (next.includes(a) && next.includes(b)) {
+      if (a === "ls_garden") {
+        return "「景观园建专业」与「景观园建专业（含简单结构）」不可同时选择，请二选一。";
+      }
+      return "「景观给排水专业」与「景观给排水 + 自动喷灌」不可同时选择，请二选一。";
+    }
+  }
+  void prev;
+  return null;
+}
+
 export function designerHasL3(designer: Designer, l3: string) {
   if (designer.primaryTrack?.l3 === l3) return true;
   return (designer.secondaryTracks ?? []).some((t) => t.l3 === l3);

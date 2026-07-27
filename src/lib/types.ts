@@ -4,6 +4,8 @@ export type Role = "guest" | "client" | "designer" | "admin" | "super_admin";
 export interface AdminDesignerRow extends Designer {
   phone?: string;
   userId?: string;
+  /** 登录账号名（如 FD005）；无则可能仅用手机号登录 */
+  loginName?: string;
   accountStatus?: "active" | "disabled";
   ongoingOrdersCount?: number;
   /** 入驻 / 注册时间（管理员列表展示） */
@@ -14,6 +16,8 @@ export interface AdminDesignerRow extends Designer {
 export interface AdminClientRow extends Client {
   phone?: string;
   userId?: string;
+  /** 登录账号名 */
+  loginName?: string;
   accountStatus?: "active" | "disabled";
   ongoingOrdersCount?: number;
   /** 累计支付金额（钱包流水汇总） */
@@ -61,6 +65,40 @@ export interface CompanyQualification {
   categoryLabel: string;
   levelId: string;
   levelLabel: string;
+}
+
+/** 最高学历 */
+export type HighestEducation =
+  | "college_or_below"
+  | "bachelor"
+  | "master"
+  | "doctorate_or_above";
+
+/** 毕业经历中的学历 */
+export type EducationDegree =
+  | "college"
+  | "bachelor"
+  | "master"
+  | "doctorate"
+  | "postdoc";
+
+/** 毕业经历（年月为 YYYY-MM） */
+export interface EducationExperience {
+  id: string;
+  school?: string;
+  /** 该段学历（大专 / 本科 / 硕士 / 博士 / 博士后） */
+  degree?: EducationDegree;
+  major?: string;
+  graduatedAt?: string;
+}
+
+/** 曾任职经历（年月为 YYYY-MM） */
+export interface EmploymentExperience {
+  id: string;
+  company?: string;
+  title?: string;
+  startAt?: string;
+  endAt?: string;
 }
 
 // 设计师等级（v1.1 新增）
@@ -145,8 +183,17 @@ export interface PortfolioItem {
   id: string;
   category: string;
   title: string;
+  /** 封面图 URL（须属于 images；缺省取 images[0]） */
   cover: string;
+  /** 作品图集（多图）；旧数据可能仅有 cover */
+  images?: string[];
   year: number;
+  /** 业主名称（选填） */
+  owner?: string;
+  /** 景观面积（㎡，必填） */
+  landscapeAreaSqm?: number;
+  /** 项目介绍（选填） */
+  description?: string;
 }
 
 /** 半天时段：上午 / 下午 */
@@ -259,10 +306,18 @@ export interface Designer {
   isInJob: boolean;
   /** 接单开关（v1.1 新增） */
   acceptingOrders?: boolean;
-  /** 学历 */
+  /** 入驻审核状态：待审 / 通过 / 驳回；仅 approved 出现在公开设计师列表 */
+  reviewStatus?: "pending" | "approved" | "rejected";
+  /** @deprecated 旧版自由文本学历；新数据用 highestEducation + educationExperiences */
   education?: string;
-  /** 曾任职公司 */
+  /** @deprecated 旧版公司名列表；新数据用 employmentExperiences */
   formerEmployers?: string[];
+  /** 最高学历（必选） */
+  highestEducation?: HighestEducation;
+  /** 毕业经历（学校 / 专业 / 毕业年月，可多条） */
+  educationExperiences?: EducationExperience[];
+  /** 曾任职经历（公司 / 职务 / 起止年月，可多条） */
+  employmentExperiences?: EmploymentExperience[];
   /** 接受出差时的时长偏好 */
   travelDuration?: TravelDurationOption | null;
   /** 是否接受背靠背合同 */
@@ -285,7 +340,7 @@ export interface Designer {
   projectTypeTags: string[];
   dailyRate: number;
   monthlyRate: number;
-  /** 相对平台基数的自定义费率百分比（lineId -> 50–200） */
+  /** 相对平台基数的自定义费率百分比（lineId -> 百分比，无上限） */
   ratePercents?: Record<string, number>;
   rating: number;
   /** 三维度评价（v1.1 新增） */
@@ -333,6 +388,7 @@ export interface Client {
 }
 
 export type OrderStatus =
+  | "pending_quote"
   | "matching"
   | "pending_schedule"
   | "pending_contract"
@@ -342,6 +398,43 @@ export type OrderStatus =
   | "completed"
   | "terminated"
   | "cancelled";
+
+/** 常规委托按天/按月：系统生成的报价单快照 */
+export interface OrderQuoteLine {
+  track: string;
+  trackLabel: string;
+  l3?: string;
+  l3Label?: string;
+  quantity: number;
+  unit: "day" | "month";
+  difficulty: number;
+  difficultyLabel?: string;
+  basicFee: number;
+  platformFee: number;
+  subtotal: number;
+}
+
+export interface OrderQuote {
+  status: "pending" | "confirmed";
+  generatedAt: string;
+  confirmedAt?: string;
+  basicFee: number;
+  platformFee: number;
+  auditFee: number;
+  projectManagementFee: number;
+  subtotal: number;
+  taxCoefficient: number;
+  total: number;
+  lines: OrderQuoteLine[];
+  assumptions: {
+    designerLevel: DesignerLevel;
+    designerRegion: RegionTier;
+    clientLevel: ClientLevel;
+    serviceMode: "remote" | "onsite";
+    withDrawing: boolean;
+    note: string;
+  };
+}
 
 export interface PaymentStage {
   id: string;
@@ -358,6 +451,16 @@ export interface PaymentStage {
   deliverables?: DeliverableFile[];
   /** 更换设计师后，管理员更新的本阶段各设计师支付比例拆分 */
   designerPaymentSplits?: StageDesignerPaymentSplit[];
+}
+
+/** 增值服务人员（审图师 / 施工图项目管理员） */
+export interface ServiceProvider {
+  id: string;
+  name: string;
+  avatar: string;
+  role: "auditor" | "project_manager";
+  title: string;
+  credential?: string;
 }
 
 /** 某付款阶段内的费用拆分（设计师 / 审图师 / 项目管理员等） */
@@ -441,6 +544,10 @@ export interface Order {
   revisions: RevisionRequest[];
   messages: OrderMessage[];
   description: string;
+  /** 按天/按月常规委托的系统报价单 */
+  quote?: OrderQuote;
+  /** 委托人上传的项目附件（任务书、现状资料等） */
+  attachments?: BountyAttachment[];
   onsiteSchedule?: { from: string; to: string; address: string };
   /** 已确认的半天档期（定向下单 / 上门预约） */
   selectedSlots?: HalfDaySlot[];
@@ -625,6 +732,13 @@ export interface BountyLocation {
   label: string;
 }
 
+/** 悬赏项目附件（url 为本地上传后的 data URL 或可下载地址） */
+export interface BountyAttachment {
+  name: string;
+  url?: string;
+  size?: number;
+}
+
 export interface Bounty {
   id: string;
   code: string;
@@ -644,7 +758,7 @@ export interface Bounty {
   publishedAt: string;
   publisherId: string;
   status: "open" | "paused" | "in_review" | "awarded" | "completed" | "closed";
-  attachments: { name: string }[];
+  attachments: BountyAttachment[];
   requirements: string[];
   applicants: BountyApplicant[];
   /** 公开场景隐藏报名明细时保留的报名人数 */

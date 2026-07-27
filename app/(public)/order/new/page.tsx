@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useDesigner } from "@/lib/use-data";
@@ -43,6 +43,7 @@ import { useRoleStore } from "@/store/role-store";
 import { createOrderRequest } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { DesignerName } from "@/components/domain/designer-name";
+import { GuestAccessGate } from "@/components/domain/guest-access-gate";
 import {
   DesignerLevelBadge,
   DesignerLevelCoefficientBadge,
@@ -63,9 +64,11 @@ import {
 
 export default function NewOrderPage() {
   return (
-    <Suspense fallback={<div className="container-page py-20 text-center text-ink-60">加载下单表单...</div>}>
-      <NewOrderInner />
-    </Suspense>
+    <GuestAccessGate intent="browse">
+      <Suspense fallback={<div className="container-page py-20 text-center text-ink-60">加载下单表单...</div>}>
+        <NewOrderInner />
+      </Suspense>
+    </GuestAccessGate>
   );
 }
 
@@ -92,7 +95,6 @@ function NewOrderInner() {
 
   const { data: designer } = useDesigner(designerId);
   const push = useSessionStore((s) => s.pushNotification);
-  const setRole = useRoleStore((s) => s.setRole);
   const role = useRoleStore((s) => s.role);
   const identityId = useRoleStore((s) => s.identityId);
 
@@ -108,12 +110,6 @@ function NewOrderInner() {
 
   const hasScheduleSelection =
     billingMode === "daily" ? selectedSlots.length >= 1 : selectedMonths.length >= 1;
-
-  useEffect(() => {
-    if (role === "guest") {
-      setRole("client");
-    }
-  }, [role, setRole]);
 
   const projectTypes = designer ? getProjectTypes(designer.specialty) : [];
   const subSpecialties = designer ? SUB_SPECIALTIES[designer.specialty] : [];

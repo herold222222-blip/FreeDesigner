@@ -1,10 +1,12 @@
-import Link from "next/link";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { DesignerCard } from "@/components/domain/designer-card";
 import { BountyCard } from "@/components/domain/bounty-card";
+import { PublishEntrustCta } from "@/components/domain/publish-entrust-cta";
+import { HomeHeroBrowseCta } from "@/components/domain/home-hero-browse-cta";
+import { MemberLink } from "@/components/domain/member-link";
 import { listDesigners, listBounties } from "@/lib/server/repo";
 import { SPECIALTIES } from "@/lib/constants";
 import {
@@ -42,7 +44,10 @@ export default async function HomePage() {
       return bo - ao;
     })
     .slice(0, 6);
-  const hotBounties = allBounties.slice(0, 3);
+  /** 与悬赏大厅同源：优先展示开放报名中的项目 */
+  const hotBounties = allBounties
+    .filter((b) => b.status === "open")
+    .slice(0, 3);
 
   return (
     <>
@@ -66,16 +71,15 @@ export default async function HomePage() {
                 平台托管资金、自动签署电子合同、分阶段结算，让合作干净透明。
               </p>
               <div className="flex flex-wrap gap-3">
-                <Button asChild size="lg" variant="brand" className="gap-2">
-                  <Link href="/entrust/new">
-                    发布委托项目 <ArrowRight className="h-4 w-4" />
-                  </Link>
-                </Button>
-                <Button asChild size="lg" variant="outline">
-                  <Link href="/designers">
-                    浏览全部设计师 <ArrowRight className="h-4 w-4" />
-                  </Link>
-                </Button>
+                <PublishEntrustCta
+                  href="/entrust/new"
+                  size="lg"
+                  variant="brand"
+                  className="gap-2"
+                >
+                  发布委托项目 <ArrowRight className="h-4 w-4" />
+                </PublishEntrustCta>
+                <HomeHeroBrowseCta />
               </div>
               <div className="grid grid-cols-3 gap-6 border-t border-ink-20 pt-6 text-center md:max-w-md md:text-left">
                 <div>
@@ -201,16 +205,22 @@ export default async function HomePage() {
             </h2>
           </div>
           <Button asChild variant="outline">
-            <Link href="/bounties">
+            <MemberLink href="/bounties">
               全部悬赏 <ArrowRight className="h-4 w-4" />
-            </Link>
+            </MemberLink>
           </Button>
         </div>
-        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-          {hotBounties.map((b) => (
-            <BountyCard key={b.id} bounty={b} />
-          ))}
-        </div>
+        {hotBounties.length === 0 ? (
+          <Card className="p-12 text-center text-sm text-ink-60">
+            暂无开放报名中的悬赏，请稍后再来或前往悬赏大厅查看全部项目。
+          </Card>
+        ) : (
+          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+            {hotBounties.map((b) => (
+              <BountyCard key={b.id} bounty={b} />
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="container-page py-10">
@@ -227,9 +237,9 @@ export default async function HomePage() {
             </p>
           </div>
           <Button asChild variant="outline">
-            <Link href="/designers">
+            <MemberLink href="/designers">
               查看全部 <ArrowRight className="h-4 w-4" />
-            </Link>
+            </MemberLink>
           </Button>
         </div>
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -254,9 +264,9 @@ export default async function HomePage() {
             </p>
           </div>
           <Button asChild variant="outline">
-            <Link href="/calculator">
+            <MemberLink href="/calculator">
               <Coins className="h-4 w-4" /> 试用费用计算器
-            </Link>
+            </MemberLink>
           </Button>
         </div>
         <div className="grid gap-5 md:grid-cols-3">
@@ -369,16 +379,16 @@ export default async function HomePage() {
               </p>
               <div className="flex flex-wrap gap-3 pt-2">
                 <Button asChild size="lg" variant="brand">
-                  <Link href="/designers">浏览设计师</Link>
+                  <MemberLink href="/designers">浏览设计师</MemberLink>
                 </Button>
-                <Button
-                  asChild
+                <PublishEntrustCta
+                  href="/entrust/new?mode=bounty"
                   size="lg"
                   variant="outline"
                   className="border-white/30 bg-transparent text-white hover:bg-white/10"
                 >
-                  <Link href="/entrust/new?mode=bounty">发布悬赏</Link>
-                </Button>
+                  发布悬赏
+                </PublishEntrustCta>
               </div>
             </div>
             <div className="grid gap-3">

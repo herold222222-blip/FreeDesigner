@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { Designer, PaymentStage, StageDesignerPaymentSplit } from "@/lib/types";
-import type { ServiceProvider } from "@/mocks/service-providers";
+import type { Designer, PaymentStage, StageDesignerPaymentSplit, ServiceProvider } from "@/lib/types";
 import {
   stageHasAuditorSplits,
   stageHasCollaboratorSplits,
