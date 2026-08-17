@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { DesignerLevelBadge } from "@/components/domain/level-badges";
 import { formatDesignerRatingDisplay } from "@/lib/designer-rating";
 import { designerHasL3 } from "@/lib/bounty-tracks";
+import { trackPoolTitle } from "@/lib/client-quote-match";
 import { needsCsQuoteConfirm } from "@/lib/order-supervision";
 import { LevelQuoteCards } from "@/components/domain/level-quote-cards";
 

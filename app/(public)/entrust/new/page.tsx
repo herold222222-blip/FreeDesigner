@@ -568,7 +568,7 @@ function RegularEntrustForm() {
     selectedL2.length > 0 &&
     !!tax &&
     (billingMode === "area"
-      ? area > 0 && tracks.length > 0 && !!buildType && areaDifficultyComplete
+      ? typeof area === "number" && area > 0 && tracks.length > 0 && !!buildType && areaDifficultyComplete
       : timeL3.length > 0 &&
         timeDifficultyComplete &&
         timeL3.every((l3) => {
@@ -603,7 +603,7 @@ function RegularEntrustForm() {
         billingMode &&
         (selectedL2.length === 0 ||
           (billingMode === "area"
-            ? !(area > 0 && tracks.length > 0)
+            ? !(typeof area === "number" && area > 0 && tracks.length > 0)
             : timeL3.length === 0))
       ) {
         missing.push(billingMode === "area" ? "三级专业" : "三级专业工时");
@@ -626,7 +626,7 @@ function RegularEntrustForm() {
     if (selectedL2.length === 0) return "field-l2";
     if (!billingMode) return "field-billing-mode";
     if (billingMode === "area") {
-      if (!(area > 0)) return "field-area";
+      if (!(typeof area === "number" && area > 0)) return "field-area";
       if (tracks.length === 0 || !areaDifficultyComplete) return "field-tracks";
       if (!buildType) return "field-build-type";
       if (!tax) return "field-tax";
@@ -712,7 +712,7 @@ function RegularEntrustForm() {
         projectCity,
         committerName,
         billingMode,
-        area,
+        area: typeof area === "number" ? area : undefined,
         tracks,
         timeL2Labels: getL2Labels(specialty, selectedL2),
         timeL3Units:
@@ -755,7 +755,7 @@ function RegularEntrustForm() {
         billingMode,
         serviceMode: serviceMode === "remote" ? "online" : "onsite",
         description: fullDescription,
-        area,
+        area: typeof area === "number" ? area : undefined,
         budget,
         withAudit,
         withPM,

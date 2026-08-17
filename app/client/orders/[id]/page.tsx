@@ -149,12 +149,17 @@ function ClientOrderDetailInner({ id }: { id: string }) {
   const runAction = async (
     fn: () => Promise<unknown>,
     successTitle: string,
+    successDescription?: string,
   ) => {
     if (busy) return;
     setBusy(true);
     try {
       await fn();
-      push({ title: successTitle, variant: "success" });
+      push({
+        title: successTitle,
+        description: successDescription,
+        variant: "success",
+      });
       refresh();
     } catch (e) {
       push({
@@ -491,7 +496,7 @@ function ClientOrderDetailInner({ id }: { id: string }) {
                         designer={designer}
                         className="text-sm font-medium"
                       />
-                      {designer.verified ? (
+                      {(designer.reviewStatus ?? "approved") === "approved" ? (
                         <Badge variant="brand" className="gap-1">
                           <CheckCircle2 className="h-3 w-3" /> 已认证
                         </Badge>

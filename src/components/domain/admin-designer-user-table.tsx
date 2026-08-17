@@ -35,6 +35,7 @@ import {
 } from "@/lib/api-client";
 import type { AdminDesignerRow, Designer } from "@/lib/types";
 import { formatDesignerRatingDisplay } from "@/lib/designer-rating";
+import { formatDate } from "@/lib/utils";
 import { useSessionStore } from "@/store/session-store";
 
 export function AdminDesignerUserTable({

@@ -8,6 +8,7 @@ import { SpecialtyBadge } from "@/components/domain/status-badges";
 import { Star } from "lucide-react";
 import type { Bounty, Designer } from "@/lib/types";
 import { formatDesignerRatingDisplay } from "@/lib/designer-rating";
+import { getL3Label } from "@/lib/bounty-tracks";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { useSessionStore } from "@/store/session-store";
 

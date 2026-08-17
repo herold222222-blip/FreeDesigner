@@ -394,7 +394,7 @@ export function OrderScheduleBillingPanel({
                   </div>
                 </div>
 
-                {showParticipants ? (
+                {stage && showParticipants ? (
                   <StageParticipantDeliverables
                     order={order}
                     stage={stage}
