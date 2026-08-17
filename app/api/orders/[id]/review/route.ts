@@ -19,6 +19,7 @@ export async function POST(
       content: string;
       impressionTags?: string[];
       clientDisplayName?: string;
+      anonymous?: boolean;
     };
     const order = await submitOrderReview(params.id, session.identityId, body);
     return ok(order);

@@ -1,4 +1,8 @@
-import { getPayablePendingStage } from "@/lib/order-payment-overdue";
+import {
+  isAwaitingClientPaymentOrder,
+  isAwaitingReviewOrder,
+} from "@/lib/order-supervision";
+import { isPrepaymentStage } from "@/lib/order-payment-stages";
 import type { Order, PaymentStage } from "@/lib/types";
 import type { UnifiedProjectItem } from "@/lib/unified-project-list";
 
@@ -36,15 +40,12 @@ export const CLIENT_ORDER_FOCUS_META: Record<
 
 /** 有待付款阶段且已进入履约流程 */
 export function isPendingPaymentOrder(order: Order): boolean {
-  return getPayablePendingStage(order) !== null;
+  return isAwaitingClientPaymentOrder(order);
 }
 
 /** 待确认成果（含返修后待验收） */
 export function isPendingAcceptanceOrder(order: Order): boolean {
-  if (order.status === "pending_review") return true;
-  return order.stages.some(
-    (s) => s.status === "frozen" && (s.deliverables?.length ?? 0) > 0,
-  );
+  return isAwaitingReviewOrder(order);
 }
 
 /** 待成果确认阶段（列表特殊展示用） */
@@ -52,9 +53,18 @@ export function getPendingReviewStage(order: Order): PaymentStage | null {
   if (order.status !== "pending_review") return null;
   return (
     order.stages.find(
-      (s) => s.status === "frozen" && (s.deliverables?.length ?? 0) > 0,
+      (s) =>
+        !isPrepaymentStage(order, s) &&
+        !s.deliverablesConfirmedAt &&
+        (s.status === "pending" || s.status === "frozen") &&
+        (s.deliverables?.length ?? 0) > 0,
     ) ??
-    order.stages.find((s) => s.status === "frozen") ??
+    order.stages.find(
+      (s) =>
+        !isPrepaymentStage(order, s) &&
+        !s.deliverablesConfirmedAt &&
+        (s.status === "pending" || s.status === "frozen"),
+    ) ??
     null
   );
 }

@@ -17,13 +17,17 @@ export function getL2Label(l1: Specialty, l2: string) {
 }
 
 export function getL3Label(l1: Specialty, l3: string) {
+  const legacy: Record<string, string> = {
+    ls_garden_struct: "景观园建专业（含简单结构）",
+    ls_drainage_irrigation: "景观给排水 + 自动喷灌",
+  };
   const root = SPECIALTY_TRACKS.find((t) => t.value === l1);
-  if (!root) return l3;
+  if (!root) return legacy[l3] ?? l3;
   for (const l2 of root.l2) {
     const hit = l2.l3.find((x) => x.value === l3);
     if (hit) return hit.label;
   }
-  return l3;
+  return legacy[l3] ?? l3;
 }
 
 export function getL2Labels(l1: Specialty, values: string[]) {

@@ -6,10 +6,13 @@ import {
 } from "@/lib/constants";
 import type {
   OnlineStatus,
+  Order,
   OrderStatus,
   Specialty,
   WorkloadStatus,
 } from "@/lib/types";
+import { resolveDisplayOrderStatus } from "@/lib/order-lifecycle";
+import { isAwaitingClientPaymentOrder } from "@/lib/order-supervision";
 import { cn } from "@/lib/utils";
 
 export function OnlineDot({ status }: { status: OnlineStatus }) {
@@ -20,6 +23,42 @@ export function OnlineDot({ status }: { status: OnlineStatus }) {
         status === "online" ? "bg-emerald-500" : "bg-ink-40",
       )}
     />
+  );
+}
+
+/** 设计师是否开启接单（acceptingOrders 缺省视为正常接单） */
+export function AcceptingOrdersBadge({
+  accepting,
+  className,
+  /** overlay：卡片封面半透明白底；solid：实色更醒目（主页姓名旁） */
+  tone = "overlay",
+}: {
+  accepting?: boolean;
+  className?: string;
+  tone?: "overlay" | "solid";
+}) {
+  const on = accepting !== false;
+  return (
+    <Badge
+      variant={tone === "solid" ? (on ? "emerald" : "amber") : "default"}
+      className={cn(
+        "gap-1.5",
+        tone === "overlay" && "bg-white/90 text-ink",
+        tone === "solid" && "px-2.5 py-1 text-xs font-semibold",
+        className,
+      )}
+    >
+      <span
+        className={cn(
+          "inline-block rounded-full",
+          tone === "solid" ? "h-2 w-2" : "h-1.5 w-1.5",
+          on ? "bg-emerald-500" : "bg-amber-500",
+          tone === "solid" && on && "bg-emerald-700",
+          tone === "solid" && !on && "bg-amber-700",
+        )}
+      />
+      {on ? "正常接单" : "暂停接单"}
+    </Badge>
   );
 }
 
@@ -36,6 +75,7 @@ export function WorkloadBadge({ status }: { status: WorkloadStatus }) {
 const ORDER_VARIANT_MAP = {
   pending_quote: "amber",
   matching: "muted",
+  pending_designer_accept: "blue",
   pending_schedule: "blue",
   pending_contract: "amber",
   in_progress: "brand",
@@ -49,14 +89,46 @@ const ORDER_VARIANT_MAP = {
 export function OrderStatusBadge({
   status,
   label,
+  order,
 }: {
-  status: OrderStatus;
+  status?: OrderStatus;
   label?: string;
+  order?: Pick<
+    Order,
+    "status" | "clientSignedContract" | "designerSignedContract" | "stages"
+  >;
 }) {
-  const variant = ORDER_VARIANT_MAP[status];
+  const resolved = order
+    ? resolveDisplayOrderStatus(order)
+    : (status as OrderStatus);
+  const paymentAlsoShown =
+    !!order &&
+    "stages" in order &&
+    Array.isArray(order.stages) &&
+    isAwaitingClientPaymentOrder(order as Order);
+  const deemphasizeInProgress =
+    paymentAlsoShown && resolved === "in_progress";
+  const variant = deemphasizeInProgress
+    ? "amber"
+    : ORDER_VARIANT_MAP[resolved];
   return (
-    <Badge variant={variant as any}>
-      {label ?? ORDER_STATUS_META[status].label}
+    <Badge
+      variant={variant as any}
+      className={deemphasizeInProgress ? "bg-amber-100 text-ink" : undefined}
+    >
+      {label ?? ORDER_STATUS_META[resolved].label}
+    </Badge>
+  );
+}
+
+export function AwaitingClientPaymentBadge({
+  perspective = "client",
+}: {
+  perspective?: "client" | "designer" | "admin";
+}) {
+  return (
+    <Badge variant="brand">
+      {perspective === "designer" ? "待委托人支付" : "待支付"}
     </Badge>
   );
 }

@@ -1,17 +1,35 @@
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import type { DesignerProjectReview } from "@/lib/types";
+import {
+  maskAnonymousClientName,
+  maskAnonymousProjectTitle,
+} from "@/lib/review-anonymize";
 import { formatDate } from "@/lib/utils";
 import { Star } from "lucide-react";
 
 export function DesignerReviewCard({ review }: { review: DesignerProjectReview }) {
+  const projectTitle = review.anonymous
+    ? maskAnonymousProjectTitle(review.projectTitle)
+    : review.projectTitle;
+  const clientName = review.anonymous
+    ? maskAnonymousClientName(review.clientDisplayName)
+    : review.clientDisplayName;
+
   return (
     <Card className="p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="font-semibold text-ink">{review.projectTitle}</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-semibold text-ink">{projectTitle}</h3>
+            {review.anonymous ? (
+              <Badge variant="muted" className="text-[10px]">
+                匿名
+              </Badge>
+            ) : null}
+          </div>
           <p className="mt-1 text-xs text-ink-60">
-            {review.orderCode} · {review.projectType} · 委托人 {review.clientDisplayName}
+            {review.orderCode} · {review.projectType} · 委托人 {clientName}
           </p>
         </div>
         <div className="flex items-center gap-1 rounded-full bg-amber-50 px-3 py-1">

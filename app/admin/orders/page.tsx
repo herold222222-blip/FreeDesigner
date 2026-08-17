@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Card } from "@/components/ui/card";
@@ -9,14 +9,18 @@ import { AdminOrderListToolbar } from "@/components/domain/admin-order-list-tool
 import { OrderRow } from "@/components/domain/order-row";
 import { useConsoleBasePath } from "@/components/layout/console-base-path";
 import {
+  ADMIN_DEFAULT_TAB_PRIORITY,
   buildAdminOrderPartyIndex,
   countAdminOrdersBySpecialty,
   countAdminOrdersByStatus,
+  countAdminOrdersByType,
   filterAdminOrders,
   parseAdminOrderStatusParam,
   type AdminOrderSpecialtyFilter,
   type AdminOrderStatusFilter,
+  type AdminOrderTypeFilter,
 } from "@/lib/admin-order-filters";
+import { isInProgressSupervisionOrder, pickDefaultSupervisionTab } from "@/lib/order-supervision";
 import {
   countPaymentOverdueOrders,
   getOrderPaymentOverdueInfo,
@@ -38,8 +42,10 @@ function AdminOrdersInner() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] =
     useState<AdminOrderStatusFilter>("all");
+  const defaultTabPicked = useRef(false);
   const [specialtyFilter, setSpecialtyFilter] =
     useState<AdminOrderSpecialtyFilter>("all");
+  const [typeFilter, setTypeFilter] = useState<AdminOrderTypeFilter>("all");
 
   const designerIdFilter = searchParams.get("designerId") ?? undefined;
   const clientIdFilter = searchParams.get("clientId") ?? undefined;
@@ -61,10 +67,6 @@ function AdminOrdersInner() {
     ? clients.find((c) => c.id === clientIdFilter)
     : undefined;
 
-  useEffect(() => {
-    setStatusFilter(parseAdminOrderStatusParam(searchParams.get("status")));
-  }, [searchParams]);
-
   const partyIndex = useMemo(
     () => buildAdminOrderPartyIndex(designers, clients),
     [designers, clients],
@@ -72,13 +74,38 @@ function AdminOrdersInner() {
 
   const statusCounts = useMemo(
     () =>
-      countAdminOrdersByStatus(orders, query, specialtyFilter, partyIndex),
-    [orders, query, specialtyFilter, partyIndex],
+      countAdminOrdersByStatus(
+        orders,
+        query,
+        specialtyFilter,
+        partyIndex,
+        typeFilter,
+      ),
+    [orders, query, specialtyFilter, partyIndex, typeFilter],
   );
 
   const specialtyCounts = useMemo(
-    () => countAdminOrdersBySpecialty(orders, query, statusFilter, partyIndex),
-    [orders, query, statusFilter, partyIndex],
+    () =>
+      countAdminOrdersBySpecialty(
+        orders,
+        query,
+        statusFilter,
+        partyIndex,
+        typeFilter,
+      ),
+    [orders, query, statusFilter, partyIndex, typeFilter],
+  );
+
+  const typeCounts = useMemo(
+    () =>
+      countAdminOrdersByType(
+        orders,
+        query,
+        statusFilter,
+        specialtyFilter,
+        partyIndex,
+      ),
+    [orders, query, statusFilter, specialtyFilter, partyIndex],
   );
 
   const filteredOrders = useMemo(
@@ -91,6 +118,7 @@ function AdminOrdersInner() {
         partyIndex,
         designerIdFilter,
         clientIdFilter,
+        typeFilter,
       ),
     [
       orders,
@@ -100,6 +128,7 @@ function AdminOrdersInner() {
       partyIndex,
       designerIdFilter,
       clientIdFilter,
+      typeFilter,
     ],
   );
 
@@ -108,8 +137,26 @@ function AdminOrdersInner() {
     [orders],
   );
 
+  useEffect(() => {
+    const raw = searchParams.get("status");
+    if (raw) {
+      setStatusFilter(parseAdminOrderStatusParam(raw));
+      defaultTabPicked.current = true;
+      return;
+    }
+    if (loading || defaultTabPicked.current) return;
+    defaultTabPicked.current = true;
+    setStatusFilter(
+      pickDefaultSupervisionTab(
+        statusCounts,
+        ADMIN_DEFAULT_TAB_PRIORITY,
+        "all",
+      ),
+    );
+  }, [searchParams, loading, statusCounts]);
+
   const inProgressCount = orders.filter((o) =>
-    ["in_progress", "pending_review", "in_revision"].includes(o.status),
+    isInProgressSupervisionOrder(o),
   ).length;
 
   return (
@@ -248,11 +295,14 @@ function AdminOrdersInner() {
 
       <AdminOrderListToolbar
         query={query}
+        typeFilter={typeFilter}
         statusFilter={statusFilter}
         specialtyFilter={specialtyFilter}
+        typeCounts={typeCounts}
         statusCounts={statusCounts}
         specialtyCounts={specialtyCounts}
         onQueryChange={setQuery}
+        onTypeFilterChange={setTypeFilter}
         onStatusFilterChange={setStatusFilter}
         onSpecialtyFilterChange={setSpecialtyFilter}
         resultCount={filteredOrders.length}
@@ -265,7 +315,9 @@ function AdminOrdersInner() {
           <Card className="p-12 text-center text-ink-60">
             {orders.length === 0
               ? "暂无订单。"
-              : "没有符合当前搜索或筛选条件的订单。"}
+              : statusFilter === "all"
+                ? "暂无进行中的订单。"
+                : "没有符合当前搜索或筛选条件的订单。"}
           </Card>
         ) : (
           filteredOrders.map((o) => (
@@ -279,6 +331,9 @@ function AdminOrdersInner() {
               }
               perspective="admin"
               paymentOverdue={getOrderPaymentOverdueInfo(o)}
+              paymentHighlight={statusFilter === "pending_payment"}
+              reviewHighlight={statusFilter === "pending_review"}
+              clientReviewHighlight={statusFilter === "pending_client_review"}
             />
           ))
         )}

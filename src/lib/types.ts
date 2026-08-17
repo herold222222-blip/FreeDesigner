@@ -133,7 +133,7 @@ export interface ImpressionTag {
   count: number; // 累计被点击 +1 次数
 }
 
-/** 项目验收后委托人对设计师的历史评价 */
+/** 最后一笔费用支付后，委托人对设计师的项目评价 */
 export interface DesignerProjectReview {
   id: string;
   designerId: string;
@@ -146,6 +146,8 @@ export interface DesignerProjectReview {
   breakdown: RatingBreakdown;
   content: string;
   impressionTags?: string[];
+  /** 匿名评价：历史评价中隐藏项目全称与委托人全名 */
+  anonymous?: boolean;
 }
 
 export type OnlineStatus = "online" | "offline";
@@ -390,6 +392,7 @@ export interface Client {
 export type OrderStatus =
   | "pending_quote"
   | "matching"
+  | "pending_designer_accept"
   | "pending_schedule"
   | "pending_contract"
   | "in_progress"
@@ -436,6 +439,49 @@ export interface OrderQuote {
   };
 }
 
+/** 常规委托：某一等级报价卡对应的备选设计师池（旧版，按等级） */
+export interface OrderMatchPool {
+  level: DesignerLevel;
+  quoteTotal: number;
+  candidates: Array<{ designerId: string }>;
+}
+
+/** 常规委托：某一三级专业槽位的备选设计师 */
+export interface OrderMatchTrackPool {
+  trackKey: string;
+  l1: Specialty;
+  l2: string;
+  l3: string;
+  l2Label: string;
+  l3Label: string;
+  quantityHint?: string;
+  candidates: Array<{ designerId: string; level: DesignerLevel }>;
+  selectedDesignerId?: string;
+  offerDesignerId?: string;
+  offerLevel?: DesignerLevel;
+  offerStatus?: "pending" | "accepted" | "rejected";
+}
+
+/**
+ * 委托人驱动的等级报价匹配进度。
+ * 选卡 → 按三级专业匹配备选 → 每专业确认一人 → 设计师接单/拒绝再匹配。
+ */
+export interface OrderClientMatch {
+  selectedLevels: DesignerLevel[];
+  /** @deprecated 旧版按等级池；新流程用 trackPools */
+  pools?: OrderMatchPool[];
+  /** 按三级专业拆分的备选池 */
+  trackPools?: OrderMatchTrackPool[];
+  matchedAt?: string;
+  /** @deprecated 整单单人确认字段；多专业时看 trackPools */
+  selectedDesignerId?: string;
+  selectedLevel?: DesignerLevel;
+  excludedDesignerIds: string[];
+  offerDesignerId?: string;
+  offerLevel?: DesignerLevel;
+  offerStatus?: "pending" | "accepted" | "rejected";
+}
+
 export interface PaymentStage {
   id: string;
   name: string;
@@ -449,6 +495,8 @@ export interface PaymentStage {
   /** 委托人应付截止日（超时未付则计入监管「超时订单」） */
   dueAt?: string;
   deliverables?: DeliverableFile[];
+  /** 委托人确认本阶段成果的时间 */
+  deliverablesConfirmedAt?: string;
   /** 更换设计师后，管理员更新的本阶段各设计师支付比例拆分 */
   designerPaymentSplits?: StageDesignerPaymentSplit[];
 }
@@ -497,6 +545,8 @@ export interface DeliverableFile {
   type: string;
   uploadedAt: string;
   thumbnail?: string;
+  /** 文件地址（本地上传为 data URL） */
+  url?: string;
   locked: boolean;
   /** 上传该成果的设计师 */
   designerId?: string;
@@ -506,9 +556,12 @@ export interface RevisionRequest {
   id: string;
   stageId: string;
   description: string;
-  attachments: { name: string }[];
+  attachments: { name: string; url?: string; size?: number }[];
   createdAt: string;
   status: "pending" | "responded";
+  /** 针对某一成果文件的返修 */
+  fileId?: string;
+  fileName?: string;
 }
 
 export interface OrderMessage {
@@ -544,8 +597,16 @@ export interface Order {
   revisions: RevisionRequest[];
   messages: OrderMessage[];
   description: string;
-  /** 按天/按月常规委托的系统报价单 */
+  /** 按天/按月常规委托的系统报价单（兼容：默认中级卡） */
   quote?: OrderQuote;
+  /** 常规委托多档等级报价卡（见习 / 中级 / 高级 / 特级） */
+  levelQuotes?: OrderQuote[];
+  /** 委托人选卡匹配设计师进度 */
+  clientMatch?: OrderClientMatch;
+  /** 客服二次确认报价卡时间；确认前委托人不可选卡匹配 */
+  csQuoteConfirmedAt?: string;
+  /** 确认人（管理员 identity / user id） */
+  csQuoteConfirmedBy?: string;
   /** 委托人上传的项目附件（任务书、现状资料等） */
   attachments?: BountyAttachment[];
   onsiteSchedule?: { from: string; to: string; address: string };
@@ -585,9 +646,9 @@ export interface Order {
   settlementRequestedAt?: string;
   /** 委托人确认最终服务完成时间 */
   settlementConfirmedAt?: string;
-  /** 评价有效期截止（结案后 3 个月） */
+  /** 评价有效期截止（最后一笔费用支付后 30 天） */
   reviewDeadlineAt?: string;
-  /** 评价期已结束且委托人未评价 */
+  /** 评价期已结束且委托人未评价（评论关闭） */
   reviewExpired?: boolean;
   /** 关联悬赏 id（悬赏委托来源） */
   bountyId?: string;

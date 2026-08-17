@@ -301,7 +301,7 @@ function NewOrderInner() {
                   description={
                     selectedSlots.length > 0
                       ? `已选 ${workDays} 工日 · 小计 ${formatCurrency(unitDaily * workDays)}`
-                      : `v1.1 单价（${serviceMode === "online" ? "线上远程" : "线下驻场"} · ${v11Rates?.trackLabel ?? ""}）× 等级 × 地区`
+                      : `v1.1 单价（${serviceMode === "online" ? "线上远程 · 地区系数 1.0" : "线下驻场 · 含地区梯队"} · ${v11Rates?.trackLabel ?? ""}）× 等级`
                   }
                 />
                 <ChoiceCard

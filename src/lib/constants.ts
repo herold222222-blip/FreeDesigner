@@ -128,23 +128,19 @@ export const SPECIALTY_TRACKS: SpecialtyTrackL1[] = [
         label: "景观扩初设计",
         l3: [
           { value: "ls_garden", label: "景观园建专业" },
-          { value: "ls_garden_struct", label: "景观园建专业（含简单结构）" },
           { value: "ls_greening", label: "景观绿化专业" },
           { value: "ls_drainage", label: "景观给排水专业" },
-          { value: "ls_drainage_irrigation", label: "景观给排水 + 自动喷灌" },
           { value: "ls_electrical", label: "景观电气专业" },
           { value: "ls_struct", label: "景观结构专业" },
         ],
       },
       {
         value: "construction_doc",
-        label: "景观施工图设计",
+        label: "景观施工图设计（含扩初设计）",
         l3: [
           { value: "ls_garden", label: "景观园建专业" },
-          { value: "ls_garden_struct", label: "景观园建专业（含简单结构）" },
           { value: "ls_greening", label: "景观绿化专业" },
           { value: "ls_drainage", label: "景观给排水专业" },
-          { value: "ls_drainage_irrigation", label: "景观给排水 + 自动喷灌" },
           { value: "ls_electrical", label: "景观电气专业" },
           { value: "ls_struct", label: "景观结构专业" },
         ],
@@ -856,7 +852,7 @@ export const LANDSCAPE_SCHEME_DIFFICULTY = [
 export type LandscapeSchemeDifficultyKey =
   (typeof LANDSCAPE_SCHEME_DIFFICULTY)[number]["key"];
 
-/** 景观施工图按面积 / 按时间项目付款阶段（默认 30 / 40 / 30） */
+/** 景观施工图按面积项目付款阶段（默认 30 / 40 / 30） */
 export const LANDSCAPE_CONSTRUCTION_PAYMENT_STAGES = [
   { name: "预付款", ratio: 0.3, note: "合同签订并双方签署后 2 个工作日内支付" },
   {
@@ -916,6 +912,7 @@ export const SUPPORTED_LANGUAGES = [
 export const ORDER_STATUS_META = {
   pending_quote: { label: "待确认报价", tone: "amber" as const },
   matching: { label: "待匹配设计师", tone: "muted" as const },
+  pending_designer_accept: { label: "待设计师确认委派", tone: "blue" as const },
   pending_schedule: { label: "待确认档期", tone: "blue" as const },
   pending_contract: { label: "待签约", tone: "amber" as const },
   in_progress: { label: "进行中", tone: "brand" as const },

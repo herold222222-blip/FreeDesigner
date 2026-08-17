@@ -16,6 +16,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { formatDesignerRatingDisplay } from "@/lib/designer-rating";
 import { useMemo } from "react";
 
 export default function DesignerDashboardPage() {
@@ -172,7 +173,11 @@ export default function DesignerDashboardPage() {
                     平台综合评分(满分 5.0)
                   </div>
                   <div className="mt-1 text-3xl font-bold tracking-tight">
-                    {designer.rating}
+                    {formatDesignerRatingDisplay(
+                      designer.rating,
+                      designer.reviewCount,
+                      "0.0",
+                    )}
                   </div>
                   <div className="mt-1 text-xs text-white/60">
                     基于 {designer.reviewCount} 条委托人评价

@@ -38,8 +38,16 @@ import {
   type PlatformPricingConfig,
 } from "@/lib/platform-pricing";
 import { formatClientCode } from "@/lib/client-code";
+import {
+  normalizeConfirmedReviewStatus,
+  normalizePaymentStages,
+} from "@/lib/order-payment-stages";
+import { hydrateClientReviewWindow } from "@/lib/client-review";
+import { normalizeCompletedStatus } from "@/lib/order-lifecycle";
+import { syncTrackAssignmentStatuses } from "@/lib/order-track-status";
 import { resolveDesignerRegionTier } from "@/lib/constants";
 import { formatDesignerCode, normalizeDesignerCode } from "@/lib/designer-code";
+import { applyReviewStatsToDesigner } from "@/lib/designer-rating";
 import { buildDesignerOnboardingReviewItem } from "@/lib/designer-onboarding-review";
 import {
   notifyLevelUpgraded,
@@ -62,10 +70,22 @@ function parse<T>(json: string): T {
   return JSON.parse(json) as T;
 }
 
+function parseDesignerReview(row: {
+  data: string;
+  overall?: number | null;
+}): DesignerProjectReview {
+  const review = parse<DesignerProjectReview>(row.data);
+  if (typeof review.overall !== "number" || !Number.isFinite(review.overall)) {
+    review.overall = row.overall ?? 0;
+  }
+  return review;
+}
+
 type DesignerRow = {
   data: string;
   code: string | null;
   reviewStatus?: string | null;
+  acceptingOrders?: boolean | null;
 };
 
 function mergeDesignerRow(row: DesignerRow): Designer {
@@ -80,7 +100,19 @@ function mergeDesignerRow(row: DesignerRow): Designer {
     (row.reviewStatus as Designer["reviewStatus"] | undefined) ??
     d.reviewStatus ??
     "approved";
-  return { ...d, code, portfolio, projectTypeTags, regionTier, reviewStatus };
+  const acceptingOrders =
+    typeof row.acceptingOrders === "boolean"
+      ? row.acceptingOrders
+      : d.acceptingOrders !== false;
+  return {
+    ...d,
+    code,
+    portfolio,
+    projectTypeTags,
+    regionTier,
+    reviewStatus,
+    acceptingOrders,
+  };
 }
 
 function mergeDesignerContact(
@@ -89,6 +121,30 @@ function mergeDesignerContact(
   const designer = mergeDesignerRow(row);
   const phone = row.user?.phone ?? designer.phone;
   return phone ? { ...designer, phone } : designer;
+}
+
+async function loadReviewsByDesignerId(): Promise<
+  Map<string, DesignerProjectReview[]>
+> {
+  const rows = await prisma.designerReview.findMany();
+  const map = new Map<string, DesignerProjectReview[]>();
+  for (const row of rows) {
+    const review = parseDesignerReview(row);
+    const list = map.get(row.designerId) ?? [];
+    list.push(review);
+    map.set(row.designerId, list);
+  }
+  return map;
+}
+
+function attachReviewStats(
+  designer: Designer,
+  reviewsByDesigner: Map<string, DesignerProjectReview[]>,
+): Designer {
+  return applyReviewStatsToDesigner(
+    designer,
+    reviewsByDesigner.get(designer.id) ?? [],
+  );
 }
 
 /** 分配唯一的设计师对外编号 */
@@ -130,16 +186,22 @@ function sumClientTotalPaid(transactions: WalletTransaction[]): number {
 /* ---------------- 设计师 ---------------- */
 
 export async function listDesigners(): Promise<Designer[]> {
-  const rows = await prisma.designer.findMany({
-    where: { reviewStatus: "approved" },
-    orderBy: { createdAt: "asc" },
-    include: { user: { select: { phone: true } } },
-  });
-  return rows.map((r) => mergeDesignerContact(r));
+  const [rows, reviewsByDesigner] = await Promise.all([
+    prisma.designer.findMany({
+      where: { reviewStatus: "approved" },
+      orderBy: { createdAt: "asc" },
+      include: { user: { select: { phone: true } } },
+    }),
+    loadReviewsByDesignerId(),
+  ]);
+  return rows.map((r) =>
+    attachReviewStats(mergeDesignerContact(r), reviewsByDesigner),
+  );
 }
 
 const ONGOING_ORDER_STATUSES = new Set([
   "matching",
+  "pending_designer_accept",
   "pending_schedule",
   "pending_contract",
   "in_progress",
@@ -157,9 +219,12 @@ export async function listDesignersForAdmin() {
     },
   });
 
-  const orderRows = await prisma.order.findMany({
-    select: { designerId: true, status: true },
-  });
+  const [orderRows, reviewsByDesigner] = await Promise.all([
+    prisma.order.findMany({
+      select: { designerId: true, status: true },
+    }),
+    loadReviewsByDesignerId(),
+  ]);
   const ongoingByDesigner = new Map<string, number>();
   for (const o of orderRows) {
     if (!o.designerId) continue;
@@ -172,7 +237,7 @@ export async function listDesignersForAdmin() {
   }
 
   return rows.map((r) => ({
-    ...mergeDesignerRow(r),
+    ...attachReviewStats(mergeDesignerRow(r), reviewsByDesigner),
     phone: r.user?.phone,
     userId: r.user?.id,
     loginName: r.user?.loginName ?? undefined,
@@ -187,7 +252,9 @@ export async function getDesigner(id: string): Promise<Designer | null> {
     where: { id },
     include: { user: { select: { phone: true } } },
   });
-  return row ? mergeDesignerContact(row) : null;
+  if (!row) return null;
+  const reviews = await listDesignerReviews(id);
+  return applyReviewStatsToDesigner(mergeDesignerContact(row), reviews);
 }
 
 export async function getDesignerByCode(code: string): Promise<Designer | null> {
@@ -197,13 +264,17 @@ export async function getDesignerByCode(code: string): Promise<Designer | null> 
     where: { code: normalized },
     include: { user: { select: { phone: true } } },
   });
-  if (row) return mergeDesignerContact(row);
+  const attach = async (designer: Designer) => {
+    const reviews = await listDesignerReviews(designer.id);
+    return applyReviewStatsToDesigner(designer, reviews);
+  };
+  if (row) return attach(mergeDesignerContact(row));
   const rows = await prisma.designer.findMany({
     include: { user: { select: { phone: true } } },
   });
   for (const r of rows) {
     const d = mergeDesignerContact(r);
-    if (normalizeDesignerCode(d.code) === normalized) return d;
+    if (normalizeDesignerCode(d.code) === normalized) return attach(d);
   }
   return null;
 }
@@ -542,23 +613,89 @@ export async function listClientPaymentsForAdmin(clientId: string) {
 
 /* ---------------- 订单 ---------------- */
 
+function hydrateOrder(order: Order): Order {
+  normalizePaymentStages(order);
+  normalizeConfirmedReviewStatus(order);
+  syncTrackAssignmentStatuses(order);
+  normalizeCompletedStatus(order);
+  hydrateClientReviewWindow(order);
+  return order;
+}
+
 export async function listOrders(filter?: {
   clientId?: string;
   designerId?: string;
 }): Promise<Order[]> {
-  const rows = await prisma.order.findMany({
+  if (!filter?.designerId) {
+    const rows = await prisma.order.findMany({
+      where: {
+        clientId: filter?.clientId,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return rows.map((r) => hydrateOrder(parse<Order>(r.data)));
+  }
+
+  const designerId = filter.designerId;
+  const primaryRows = await prisma.order.findMany({
     where: {
-      clientId: filter?.clientId,
-      designerId: filter?.designerId,
+      clientId: filter.clientId,
+      designerId,
     },
     orderBy: { createdAt: "desc" },
   });
-  return rows.map((r) => parse<Order>(r.data));
+  const primaryIds = new Set(primaryRows.map((r) => r.id));
+  const primary = primaryRows.map((r) => hydrateOrder(parse<Order>(r.data)));
+
+  // 专业分工中的非主设计师：列不在 designerId 上，需从 JSON 数据中匹配
+  const otherRows = await prisma.order.findMany({
+    where: {
+      clientId: filter.clientId,
+      NOT: { designerId },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  const tracked = otherRows
+    .map((r) => hydrateOrder(parse<Order>(r.data)))
+    .filter(
+      (o) =>
+        !primaryIds.has(o.id) &&
+        (o.trackAssignments ?? []).some((a) => a.designerId === designerId),
+    );
+
+  return [...primary, ...tracked].sort(
+    (a, b) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+}
+
+export async function hasOrderBetweenClientAndDesigner(
+  clientId: string,
+  designerId: string,
+): Promise<boolean> {
+  if (!clientId || !designerId) return false;
+  const orders = await listOrders({ clientId, designerId });
+  return orders.length > 0;
+}
+
+export async function getClientWithAccountPhone(
+  id: string,
+): Promise<Client | null> {
+  const row = await prisma.client.findUnique({
+    where: { id },
+    include: { user: { select: { phone: true } } },
+  });
+  if (!row) return null;
+  const client = parse<Client>(row.data);
+  return {
+    ...client,
+    phone: row.user?.phone ?? client.phone,
+  };
 }
 
 export async function getOrder(id: string): Promise<Order | null> {
   const row = await prisma.order.findUnique({ where: { id } });
-  return row ? parse<Order>(row.data) : null;
+  return row ? hydrateOrder(parse<Order>(row.data)) : null;
 }
 
 export async function findOrderByContractId(
@@ -566,7 +703,7 @@ export async function findOrderByContractId(
 ): Promise<Order | null> {
   const rows = await prisma.order.findMany({ select: { data: true } });
   for (const row of rows) {
-    const order = parse<Order>(row.data);
+    const order = hydrateOrder(parse<Order>(row.data));
     if (order.contractId === contractId) return order;
   }
   return null;
@@ -605,6 +742,10 @@ export async function createOrder(order: Order) {
 }
 
 export async function saveOrder(order: Order) {
+  normalizePaymentStages(order);
+  normalizeConfirmedReviewStatus(order);
+  syncTrackAssignmentStatuses(order);
+  normalizeCompletedStatus(order);
   await prisma.order.update({
     where: { id: order.id },
     data: {
@@ -616,6 +757,11 @@ export async function saveOrder(order: Order) {
     },
   });
   return order;
+}
+
+/** 永久删除订单记录（不可恢复） */
+export async function deleteOrder(id: string): Promise<void> {
+  await prisma.order.delete({ where: { id } });
 }
 
 /* ---------------- 悬赏 ---------------- */
@@ -679,6 +825,50 @@ export async function listServiceProviders(): Promise<ServiceProvider[]> {
 
 /* ---------------- 设计师评价 ---------------- */
 
+function isPlaceholderClientDisplayName(name?: string) {
+  const value = (name ?? "").trim();
+  return !value || value === "委托人";
+}
+
+async function hydrateDesignerReviewClientNames(
+  reviews: DesignerProjectReview[],
+): Promise<DesignerProjectReview[]> {
+  const pending = reviews.filter(
+    (review) =>
+      isPlaceholderClientDisplayName(review.clientDisplayName) &&
+      Boolean(review.orderCode),
+  );
+  if (pending.length === 0) return reviews;
+
+  const codes = [...new Set(pending.map((review) => review.orderCode))];
+  const orderRows = await prisma.order.findMany({
+    where: { code: { in: codes } },
+    select: { code: true, clientId: true },
+  });
+  const clientIds = [...new Set(orderRows.map((row) => row.clientId))];
+  const clients = await Promise.all(clientIds.map((id) => getClient(id)));
+  const clientById = new Map(
+    clients.filter((c): c is NonNullable<typeof c> => Boolean(c)).map((c) => [c.id, c]),
+  );
+  const clientIdByCode = new Map(orderRows.map((row) => [row.code, row.clientId]));
+
+  const resolved = await Promise.all(
+    reviews.map(async (review) => {
+      if (!isPlaceholderClientDisplayName(review.clientDisplayName)) return review;
+      const clientId = clientIdByCode.get(review.orderCode);
+      const name = clientId ? clientById.get(clientId)?.name?.trim() : "";
+      if (!name || name === "委托人") return review;
+      const next = { ...review, clientDisplayName: name };
+      await prisma.designerReview.update({
+        where: { id: review.id },
+        data: { data: JSON.stringify(next) },
+      });
+      return next;
+    }),
+  );
+  return resolved;
+}
+
 export async function listDesignerReviews(
   designerId: string
 ): Promise<DesignerProjectReview[]> {
@@ -686,7 +876,7 @@ export async function listDesignerReviews(
     where: { designerId },
     orderBy: { createdAt: "desc" },
   });
-  return rows.map((r) => parse<DesignerProjectReview>(r.data));
+  return hydrateDesignerReviewClientNames(rows.map((r) => parseDesignerReview(r)));
 }
 
 export async function createDesignerReview(review: DesignerProjectReview) {
@@ -699,6 +889,20 @@ export async function createDesignerReview(review: DesignerProjectReview) {
       data: JSON.stringify(review),
     },
   });
+  const [designer, reviews] = await Promise.all([
+    prisma.designer.findUnique({
+      where: { id: review.designerId },
+      include: { user: { select: { phone: true } } },
+    }),
+    listDesignerReviews(review.designerId),
+  ]);
+  if (designer) {
+    const next = applyReviewStatsToDesigner(
+      mergeDesignerContact(designer),
+      reviews,
+    );
+    await saveDesigner(next);
+  }
   return review;
 }
 

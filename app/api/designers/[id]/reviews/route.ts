@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { handle, ok } from "@/lib/server/api";
 import { listDesignerReviews } from "@/lib/server/repo";
+import { toPublicDesignerReview } from "@/lib/review-anonymize";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,6 @@ export async function GET(
 ) {
   return handle(async () => {
     const reviews = await listDesignerReviews(params.id);
-    return ok(reviews);
+    return ok(reviews.map(toPublicDesignerReview));
   });
 }

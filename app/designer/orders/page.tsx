@@ -20,7 +20,7 @@ export default function DesignerOrdersPage() {
       <UnifiedProjectList
         perspective="designer"
         identityId={identityId ?? ""}
-        emptyLabel="该分类下暂无项目，可切换「全部」查看所有类型。"
+        emptyLabel="该分类下暂无项目。"
       />
     </div>
   );

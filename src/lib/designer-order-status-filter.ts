@@ -1,44 +1,62 @@
 import type { Order, OrderStatus } from "@/lib/types";
 import type { ScanOrder } from "@/lib/scan-order";
 import type { UnifiedProjectItem } from "@/lib/unified-project-list";
+import {
+  DESIGNER_DEFAULT_TAB_PRIORITY,
+  compareByCreatedAtDesc,
+  designerAllSortRank,
+  isActiveSupervisionOrder,
+  isAwaitingClientPaymentOrder,
+  isDesignerAwaitingConfirmOrder,
+  isDesignerAwaitingReviewOrder,
+  isDesignerMatchingOthersOrder,
+  isDesignerNeedsSignOrder,
+  isInProgressSupervisionOrder,
+  isInRevisionSupervisionOrder,
+  scanMatchesSupervision,
+  type OrderSupervisionStatus,
+} from "@/lib/order-supervision";
+import { isAwaitingClientReviewOrder } from "@/lib/client-review";
 
-/** 设计师我的项目 · 状态筛选 */
-export type DesignerOrderStatusFilter =
-  | OrderStatus
-  | "all"
-  | "pending_fee_confirm"
-  | "pending_revision"
-  | "pending_collection";
+export type DesignerOrderStatusFilter = OrderSupervisionStatus;
 
 export const DESIGNER_PROJECT_STATUS_TABS: {
   value: DesignerOrderStatusFilter;
   label: string;
 }[] = [
-  { value: "all", label: "全部状态" },
-  { value: "pending_fee_confirm", label: "待确认费用" },
-  { value: "pending_contract", label: "待签约" },
+  { value: "all", label: "全部" },
   { value: "in_progress", label: "进行中" },
+  { value: "pending_payment", label: "待委托人支付" },
+  { value: "awaiting_confirm", label: "待确认匹配" },
+  { value: "matching", label: "匹配中" },
+  { value: "pending_client_sign", label: "待委托人签约" },
   { value: "pending_review", label: "待成果确认" },
-  { value: "pending_revision", label: "待修改" },
-  { value: "pending_collection", label: "待收款" },
+  { value: "pending_designer_sign", label: "待签约" },
+  { value: "in_revision", label: "返修中" },
   { value: "completed", label: "已完成" },
-  { value: "terminated", label: "已终止" },
+  { value: "cancelled", label: "已取消" },
 ];
+
+export { DESIGNER_DEFAULT_TAB_PRIORITY };
 
 /** 有待项目时需高亮的状态 Tab */
 export const DESIGNER_STATUS_TAB_HIGHLIGHT: DesignerOrderStatusFilter[] = [
-  "pending_fee_confirm",
-  "pending_contract",
-  "pending_revision",
+  "awaiting_confirm",
+  "pending_designer_sign",
+  "in_revision",
 ];
 
 export const DESIGNER_ORDER_STATUS_LABEL: Partial<Record<OrderStatus, string>> = {
-  pending_schedule: "待确认费用",
+  pending_quote: "待匹配",
+  matching: "待匹配",
+  pending_designer_accept: "待确认匹配",
+  pending_schedule: "待确认匹配",
   pending_contract: "待签约",
   in_progress: "进行中",
   pending_review: "待成果确认",
-  in_revision: "待修改",
+  in_revision: "返修中",
   completed: "已完成",
+  cancelled: "已取消",
   terminated: "已终止",
 };
 
@@ -60,68 +78,92 @@ export function isPendingCollectionOrder(order: Order): boolean {
   return order.stages.some((s) => s.status === "frozen");
 }
 
-function scanMatchesDesignerStatus(
-  scan: ScanOrder,
-  status: DesignerOrderStatusFilter,
-): boolean {
-  if (status === "pending_fee_confirm") {
-    return isPendingFeeConfirmScan(scan);
-  }
-  if (status === "pending_contract") {
-    return scan.status === "pending_contract" || scan.status === "pending_prepay";
-  }
-  if (status === "in_progress") {
-    return scan.status === "in_service";
-  }
-  return false;
-}
-
 export function orderMatchesDesignerStatus(
   order: Order,
   status: DesignerOrderStatusFilter,
+  designerId: string,
 ): boolean {
   switch (status) {
     case "all":
-      return true;
-    case "pending_fee_confirm":
-      return isPendingFeeConfirmOrder(order);
-    case "pending_revision":
-      return isPendingRevisionOrder(order);
-    case "pending_collection":
-      return isPendingCollectionOrder(order);
+      return isActiveSupervisionOrder(order);
     case "in_progress":
-      return order.status === "in_progress" && !isPendingCollectionOrder(order);
+      return isInProgressSupervisionOrder(order);
+    case "pending_payment":
+      return isAwaitingClientPaymentOrder(order);
+    case "awaiting_confirm":
+      return isDesignerAwaitingConfirmOrder(order, designerId);
+    case "matching":
+      return isDesignerMatchingOthersOrder(order, designerId);
+    case "pending_client_sign":
+      return (
+        order.status === "pending_contract" &&
+        order.designerSignedContract === true &&
+        order.clientSignedContract !== true
+      );
+    case "pending_designer_sign":
+      return isDesignerNeedsSignOrder(order);
+    case "pending_review":
+      return isDesignerAwaitingReviewOrder(order, designerId);
+    case "pending_client_review":
+      return false;
+    case "in_revision":
+      return isInRevisionSupervisionOrder(order);
+    case "completed":
+      return order.status === "completed" && !isAwaitingClientReviewOrder(order);
+    case "cancelled":
+      return order.status === "cancelled";
     default:
-      return order.status === status;
+      return false;
   }
 }
 
 export function filterItemsByDesignerStatus(
   items: UnifiedProjectItem[],
   status: DesignerOrderStatusFilter,
+  designerId?: string,
 ): UnifiedProjectItem[] {
-  if (status === "all") return items;
-  return items.filter((item) => {
+  const id =
+    designerId ||
+    items.find((i) => i.order)?.order?.designerId ||
+    items.find((i) => i.scan)?.scan?.designerId ||
+    "";
+
+  const filtered = items.filter((item) => {
     if (item.kind === "order" && item.order) {
-      return orderMatchesDesignerStatus(item.order, status);
+      return orderMatchesDesignerStatus(item.order, status, id);
     }
     if (item.kind === "scan" && item.scan) {
-      return scanMatchesDesignerStatus(item.scan, status);
+      return scanMatchesSupervision(item.scan, status, "designer");
     }
     return false;
   });
+
+  if (status === "all") {
+    return filtered.sort((a, b) => {
+      if (a.order && b.order) {
+        const rank =
+          designerAllSortRank(a.order, id) - designerAllSortRank(b.order, id);
+        if (rank !== 0) return rank;
+      }
+      return compareByCreatedAtDesc(a, b);
+    });
+  }
+  return filtered;
 }
 
 export function designerStatusCounts(
   items: UnifiedProjectItem[],
+  designerId?: string,
 ): Record<DesignerOrderStatusFilter, number> {
   const counts = Object.fromEntries(
     DESIGNER_PROJECT_STATUS_TABS.map((t) => [t.value, 0]),
   ) as Record<DesignerOrderStatusFilter, number>;
-  counts.all = items.length;
   for (const tab of DESIGNER_PROJECT_STATUS_TABS) {
-    if (tab.value === "all") continue;
-    counts[tab.value] = filterItemsByDesignerStatus(items, tab.value).length;
+    counts[tab.value] = filterItemsByDesignerStatus(
+      items,
+      tab.value,
+      designerId,
+    ).length;
   }
   return counts;
 }

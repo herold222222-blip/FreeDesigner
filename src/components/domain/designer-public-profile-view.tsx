@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { ActivityDot } from "@/components/domain/activity-dot";
 import {
+  AcceptingOrdersBadge,
   OnlineDot,
   SpecialtyBadge,
   WorkloadBadge,
@@ -40,7 +41,12 @@ import {
   formatEmploymentExperienceLine,
   highestEducationLabel,
 } from "@/lib/designer-education";
-import { getDesignerV11TimeRates } from "@/lib/designer-rates";
+import { formatDesignerTimeRateNote, getDesignerV11TimeRates } from "@/lib/designer-rates";
+import {
+  designerHasReviews,
+  formatDesignerRating,
+  formatDesignerRatingDisplay,
+} from "@/lib/designer-rating";
 import { normalizePortfolioItem, portfolioCoverUrl } from "@/lib/portfolio-images";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { getOnlineMeetingTimeLabel } from "@/lib/designer-service-settings";
@@ -98,11 +104,16 @@ export function DesignerPublicProfileView({
                 </div>
               </div>
               <div className="flex-1 space-y-3">
-                <h1 className="text-3xl font-semibold tracking-tight text-ink">
+                <h1 className="flex flex-wrap items-center gap-3 text-3xl font-semibold tracking-tight text-ink">
                   <DesignerName
                     designer={designer}
                     displayName={displayName}
                     symbolClassName="h-8 w-8 stroke-[3.5]"
+                  />
+                  <AcceptingOrdersBadge
+                    accepting={designer.acceptingOrders}
+                    tone="solid"
+                    className="align-middle"
                   />
                 </h1>
                 {designer.code ? (
@@ -137,8 +148,8 @@ export function DesignerPublicProfileView({
                     title="查看历史评价"
                   >
                     <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-                    {(designer.reviewCount ?? 0) > 0
-                      ? `${designer.rating} (${designer.reviewCount} 条好评)`
+                    {designerHasReviews(designer.reviewCount)
+                      ? `${formatDesignerRating(designer.rating)} (${designer.reviewCount} 条评价)`
                       : "暂无"}
                   </Link>
                   <span className="inline-flex items-center gap-1">
@@ -231,7 +242,11 @@ export function DesignerPublicProfileView({
                 >
                   <Star className="h-5 w-5 fill-amber-400 text-amber-400" />
                   <span className="text-3xl font-semibold tracking-tight text-ink">
-                    {designer.rating}
+                    {formatDesignerRatingDisplay(
+                      designer.rating,
+                      designer.reviewCount,
+                      "0.0",
+                    )}
                   </span>
                   <span className="text-sm text-ink-60">/ 5</span>
                 </Link>
@@ -418,8 +433,8 @@ export function DesignerPublicProfileView({
               定向下单 · 立即合作
             </div>
             <p className="mt-2 text-[11px] leading-relaxed text-ink-50">
-              v1.1 按时间报价（{timeRates.trackLabel}）：文档线上/线下基准 × 综合系数{" "}
-              {Math.round(timeRates.multiplier * 100)}%（等级 × 地区）
+              v1.1 按时间报价（{timeRates.trackLabel}）：
+              {formatDesignerTimeRateNote(timeRates)}
             </p>
             <div className="mt-3 grid gap-3">
               <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/50 p-4">

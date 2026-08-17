@@ -9,6 +9,7 @@ out
 prisma/dev.db
 prisma/dev.db-journal
 backups/
+tmp/
 .vercel
 .cache
 *.tsbuildinfo

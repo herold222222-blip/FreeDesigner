@@ -14,11 +14,13 @@ export function UnifiedProjectRow({
   perspective,
   paymentHighlight = false,
   reviewHighlight = false,
+  clientReviewHighlight = false,
 }: {
   item: UnifiedProjectItem;
   perspective: "client" | "designer";
   paymentHighlight?: boolean;
   reviewHighlight?: boolean;
+  clientReviewHighlight?: boolean;
 }) {
   if (item.order) {
     return (
@@ -29,6 +31,7 @@ export function UnifiedProjectRow({
         tags={item.tags}
         paymentHighlight={paymentHighlight}
         reviewHighlight={reviewHighlight}
+        clientReviewHighlight={clientReviewHighlight}
       />
     );
   }

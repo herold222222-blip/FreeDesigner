@@ -32,7 +32,6 @@ function formatTime(iso: string) {
 export function InboxMessagesPanel() {
   const [messages, setMessages] = useState<InboxMessageDTO[]>([]);
   const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState<string | null>(null);
   const [markingAll, setMarkingAll] = useState(false);
 
   const load = useCallback(async () => {
@@ -54,18 +53,20 @@ export function InboxMessagesPanel() {
   const unread = messages.filter((m) => m.unread).length;
 
   const markRead = async (id: string) => {
-    if (busyId) return;
-    setBusyId(id);
-    try {
-      const { message } = await markInboxMessageReadRequest(id);
-      setMessages((prev) =>
-        prev.map((m) => (m.id === id ? { ...m, ...message, unread: false } : m)),
+    setMessages((prev) => {
+      const target = prev.find((m) => m.id === id);
+      if (!target?.unread) return prev;
+      return prev.map((m) =>
+        m.id === id
+          ? { ...m, unread: false, readAt: m.readAt ?? new Date().toISOString() }
+          : m,
       );
+    });
+    try {
+      await markInboxMessageReadRequest(id);
       notifyInboxChanged();
     } catch {
       /* ignore */
-    } finally {
-      setBusyId(null);
     }
   };
 
@@ -131,8 +132,11 @@ export function InboxMessagesPanel() {
               <Card
                 className={cn(
                   "p-4 transition-colors",
-                  m.unread && "border-brand/40 bg-brand/[0.04]",
+                  m.unread && "cursor-pointer border-brand/40 bg-brand/[0.04]",
                 )}
+                onClick={() => {
+                  if (m.unread) void markRead(m.id);
+                }}
               >
                 <div className="flex items-start gap-3">
                   <div
@@ -151,14 +155,29 @@ export function InboxMessagesPanel() {
                   </div>
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2
-                        className={cn(
-                          "text-sm font-semibold text-ink",
-                          m.unread && "text-brand",
-                        )}
-                      >
-                        {m.title}
-                      </h2>
+                      {m.linkHref ? (
+                        <Link
+                          href={m.linkHref}
+                          className={cn(
+                            "text-sm font-semibold text-ink hover:underline",
+                            m.unread && "text-brand",
+                          )}
+                          onClick={() => {
+                            if (m.unread) void markRead(m.id);
+                          }}
+                        >
+                          {m.title}
+                        </Link>
+                      ) : (
+                        <h2
+                          className={cn(
+                            "text-sm font-semibold text-ink",
+                            m.unread && "text-brand",
+                          )}
+                        >
+                          {m.title}
+                        </h2>
+                      )}
                       {m.unread ? (
                         <Badge className="bg-brand text-white hover:bg-brand">
                           未读
@@ -174,24 +193,20 @@ export function InboxMessagesPanel() {
                     <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-80">
                       {m.body}
                     </p>
-                    <div className="flex flex-wrap items-center gap-2 pt-1">
-                      {m.unread ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="soft"
-                          disabled={busyId === m.id}
-                          onClick={() => markRead(m.id)}
-                        >
-                          标为已读
-                        </Button>
-                      ) : null}
-                      {m.linkHref ? (
+                    {m.linkHref ? (
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
                         <Button asChild size="sm" variant="outline">
-                          <Link href={m.linkHref}>查看详情</Link>
+                          <Link
+                            href={m.linkHref}
+                            onClick={() => {
+                              if (m.unread) void markRead(m.id);
+                            }}
+                          >
+                            查看详情
+                          </Link>
                         </Button>
-                      ) : null}
-                    </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </Card>

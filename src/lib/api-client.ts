@@ -248,6 +248,7 @@ export interface CreateOrderBody {
   timeQuote?: {
     unit: "day" | "month";
     withDrawing?: boolean;
+    taxCoefficient?: number;
     lines: Array<{
       l3: string;
       l3Label: string;
@@ -271,6 +272,44 @@ export function confirmOrderQuoteRequest(orderId: string) {
   });
 }
 
+/** 委托人勾选等级报价卡 → 系统匹配备选设计师 */
+export function matchQuoteCardsRequest(
+  orderId: string,
+  levels: import("@/lib/types").DesignerLevel[],
+) {
+  return apiFetch<Order>(`/api/orders/${orderId}/match-quotes`, {
+    method: "POST",
+    body: JSON.stringify({ levels }),
+  });
+}
+
+/** 管理员二次确认委托需求 → 开放委托人选卡匹配 */
+export function confirmCsQuoteRequest(orderId: string) {
+  return apiFetch<Order>(`/api/orders/${orderId}/confirm-cs-quote`, {
+    method: "POST",
+  });
+}
+
+/** 委托人从备选中确认设计师（可按三级专业分别确认） */
+export function confirmMatchedDesignerRequest(
+  orderId: string,
+  input:
+    | string
+    | {
+        designerId?: string;
+        selections?: Array<{ trackKey: string; designerId: string }>;
+      },
+) {
+  const body =
+    typeof input === "string"
+      ? { designerId: input }
+      : input;
+  return apiFetch<Order>(`/api/orders/${orderId}/confirm-match`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 /** 待匹配设计师状态：委托人 / 管理员修改委托信息 */
 export function updateMatchingOrderRequest(
   orderId: string,
@@ -284,6 +323,16 @@ export function updateMatchingOrderRequest(
     withAuditService?: boolean;
     withProjectManagement?: boolean;
     projectAreaSqm?: number;
+    taxCoefficient?: number;
+    attachments?: import("@/lib/types").BountyAttachment[];
+    timeQuoteLines?: Array<{
+      l3: string;
+      l3Label: string;
+      quantity: number;
+      difficulty?: number;
+      difficultyLabel?: string;
+      difficultyKey?: string;
+    }>;
   },
 ) {
   return apiFetch<Order>(`/api/orders/${orderId}`, {
@@ -297,6 +346,13 @@ export function cancelOrderRequest(orderId: string, reason?: string) {
   return apiFetch<Order>(`/api/orders/${orderId}/cancel`, {
     method: "POST",
     body: JSON.stringify({ reason }),
+  });
+}
+
+/** 永久删除已取消 / 已完成订单（不可恢复） */
+export function deleteOrderRequest(orderId: string) {
+  return apiFetch<{ deleted: boolean }>(`/api/orders/${orderId}`, {
+    method: "DELETE",
   });
 }
 
@@ -465,16 +521,29 @@ export function submitStageDeliverablesRequest(
   );
 }
 
+export function confirmStageDeliverablesRequest(
+  orderId: string,
+  stageId: string,
+) {
+  return apiFetch<Order>(
+    `/api/orders/${orderId}/stages/${stageId}/confirm-deliverables`,
+    { method: "POST" },
+  );
+}
+
 export function requestStageRevisionRequest(
   orderId: string,
   stageId: string,
   description?: string,
+  attachments?: { name: string; url?: string; size?: number }[],
+  fileId?: string,
+  fileName?: string,
 ) {
   return apiFetch<Order>(
     `/api/orders/${orderId}/stages/${stageId}/revision`,
     {
       method: "POST",
-      body: JSON.stringify({ description }),
+      body: JSON.stringify({ description, attachments, fileId, fileName }),
     },
   );
 }
@@ -497,6 +566,7 @@ export function submitOrderReviewRequest(
     content: string;
     impressionTags?: string[];
     clientDisplayName?: string;
+    anonymous?: boolean;
   },
 ) {
   return apiFetch<Order>(`/api/orders/${orderId}/review`, {
@@ -554,6 +624,7 @@ export function updateDesignerProfileRequest(
     workCalendarEvents?: import("@/lib/types").Designer["workCalendarEvents"];
     calendarBatchSettings?: import("@/lib/types").Designer["calendarBatchSettings"];
     portfolio?: import("@/lib/types").PortfolioItem[];
+    acceptingOrders?: boolean;
   },
 ) {
   return apiFetch<import("@/lib/types").Designer>(
@@ -574,12 +645,45 @@ export function fetchContractViewRequest(contractId: string) {
 
 export function assignDesignerToOrderRequest(
   orderId: string,
-  designerId: string,
+  input:
+    | string
+    | {
+        designerId?: string;
+        totalAmount?: number;
+        assignments?: Array<{
+          l1?: string;
+          l2: string;
+          l3: string;
+          designerId: string;
+        }>;
+      },
   totalAmount?: number,
 ) {
+  const body =
+    typeof input === "string"
+      ? { designerId: input, totalAmount }
+      : input;
   return apiFetch<Order>(`/api/orders/${orderId}/assign`, {
     method: "POST",
-    body: JSON.stringify({ designerId, totalAmount }),
+    body: JSON.stringify(body),
+  });
+}
+
+/** 设计师同意平台委派 */
+export function acceptDesignerAssignmentRequest(orderId: string) {
+  return apiFetch<Order>(`/api/orders/${orderId}/accept-assignment`, {
+    method: "POST",
+  });
+}
+
+/** 设计师拒绝平台委派 */
+export function rejectDesignerAssignmentRequest(
+  orderId: string,
+  reason?: string,
+) {
+  return apiFetch<Order>(`/api/orders/${orderId}/reject-assignment`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
   });
 }
 

@@ -10,6 +10,7 @@ import { UnifiedProjectList } from "@/components/domain/unified-project-list";
 import { useScheduleRequests } from "@/lib/use-data";
 import { useRoleStore } from "@/store/role-store";
 import type { ClientOrderFocus } from "@/lib/client-order-focus";
+import { Megaphone } from "lucide-react";
 
 export default function ClientOrdersPage() {
   return (
@@ -62,11 +63,18 @@ function ClientOrdersInner() {
               : "定向下单、扫码下单、按工时/按月等常规委托项目，可按类型与状态筛选。"}
           </p>
         </div>
-        {focus ? (
-          <Button asChild variant="outline" size="sm">
-            <Link href="/client/orders">查看全部平台订单</Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {focus ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href="/client/orders">查看全部平台订单</Link>
+            </Button>
+          ) : null}
+          <Button asChild variant="brand">
+            <Link href="/entrust/new">
+              <Megaphone className="h-4 w-4" /> 发布委托项目
+            </Link>
           </Button>
-        ) : null}
+        </div>
       </div>
 
       {myScheduleRequests.length > 0 ? (
@@ -85,7 +93,7 @@ function ClientOrdersInner() {
         emptyLabel={
           focus
             ? "该分类下暂无相关订单。"
-            : "暂无平台订单，可切换「全部」查看各类型。"
+            : "该分类下暂无订单。"
         }
       />
     </div>

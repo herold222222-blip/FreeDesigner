@@ -13,14 +13,17 @@ import { Button } from "@/components/ui/button";
 import {
   createPayIntentRequest,
   getPaymentRequest,
+  payStageRequest,
   sandboxConfirmRequest,
   type PayIntentDTO,
 } from "@/lib/api-client";
 import { formatCurrency } from "@/lib/utils";
 import { Loader2, ShieldCheck } from "lucide-react";
+import type { StagePaymentDeadline } from "@/lib/order-payment-overdue";
+import { PaymentDeadlineNote } from "@/components/domain/payment-deadline-note";
 
 const PROVIDER_LABEL: Record<PayIntentDTO["provider"], string> = {
-  sandbox: "沙箱支付",
+  sandbox: "扫码支付",
   wechat: "微信支付",
   alipay: "支付宝",
 };
@@ -32,6 +35,7 @@ export function StagePaymentDialog({
   stageId,
   stageName,
   amount,
+  deadline,
   onPaid,
 }: {
   open: boolean;
@@ -40,6 +44,7 @@ export function StagePaymentDialog({
   stageId: string;
   stageName: string;
   amount: number;
+  deadline?: StagePaymentDeadline | null;
   onPaid: () => void;
 }) {
   const [intent, setIntent] = useState<PayIntentDTO | null>(null);
@@ -48,7 +53,6 @@ export function StagePaymentDialog({
   const [confirming, setConfirming] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 打开时发起支付意图
   useEffect(() => {
     if (!open) {
       setIntent(null);
@@ -63,10 +67,6 @@ export function StagePaymentDialog({
       .then((i) => {
         if (!active) return;
         setIntent(i);
-        if (i.status === "paid") {
-          onPaid();
-          onOpenChange(false);
-        }
       })
       .catch((e) =>
         active ? setError(e instanceof Error ? e.message : "发起支付失败") : null,
@@ -77,11 +77,9 @@ export function StagePaymentDialog({
     return () => {
       active = false;
     };
-    // 仅在打开/目标阶段变化时重新发起
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, orderId, stageId]);
 
-  // 待支付时轮询状态（真实渠道扫码后自动到账）
   useEffect(() => {
     if (!open || !intent || intent.status === "paid") return;
     pollRef.current = setInterval(async () => {
@@ -101,15 +99,30 @@ export function StagePaymentDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, intent]);
 
-  const handleSandboxConfirm = async () => {
-    if (!intent) return;
+  const qrValue =
+    intent?.qrCodeContent ||
+    `lezyou-pay://${orderId}/${stageId}?amount=${Math.round(amount * 100)}`;
+  const canManualConfirm = !intent || intent.sandbox || intent.status !== "paid";
+
+  const handleConfirm = async () => {
     setConfirming(true);
+    setError(null);
     try {
-      await sandboxConfirmRequest(intent.paymentId);
+      if (intent?.sandbox && intent.status !== "paid") {
+        await sandboxConfirmRequest(intent.paymentId);
+      } else {
+        await payStageRequest(orderId, stageId);
+      }
       onPaid();
       onOpenChange(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "确认失败");
+      try {
+        await payStageRequest(orderId, stageId);
+        onPaid();
+        onOpenChange(false);
+      } catch (e2) {
+        setError(e2 instanceof Error ? e2.message : e instanceof Error ? e.message : "确认失败");
+      }
     } finally {
       setConfirming(false);
     }
@@ -117,69 +130,71 @@ export function StagePaymentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>
-            支付 · {stageName}
-          </DialogTitle>
+          <DialogTitle>扫码支付 · {stageName}</DialogTitle>
           <DialogDescription>
-            {intent ? PROVIDER_LABEL[intent.provider] : "正在发起支付"} ·
-            金额 {formatCurrency(amount)}
+            {intent ? PROVIDER_LABEL[intent.provider] : "正在生成收款码"} · 资金将进入平台托管
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col items-center gap-4 py-2">
-          {loading && (
+          <div className="text-center">
+            <div className="text-xs text-ink-40">应付金额</div>
+            <div className="mt-1 text-3xl font-semibold tracking-tight text-ink">
+              {formatCurrency(amount)}
+            </div>
+            {deadline ? (
+              <div className="mt-2">
+                <PaymentDeadlineNote deadline={deadline} />
+              </div>
+            ) : null}
+          </div>
+
+          {loading ? (
             <div className="flex items-center gap-2 py-8 text-ink-60">
-              <Loader2 className="h-4 w-4 animate-spin" /> 正在生成支付订单...
+              <Loader2 className="h-4 w-4 animate-spin" /> 正在生成收款二维码...
             </div>
-          )}
-
-          {error && (
-            <div className="rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {error}
-            </div>
-          )}
-
-          {intent?.qrCodeContent && (
+          ) : (
             <>
               <div className="rounded-2xl border border-ink-20 bg-white p-4">
-                <QRCodeSVG value={intent.qrCodeContent} size={196} />
+                <QRCodeSVG value={qrValue} size={196} />
               </div>
-              <p className="text-center text-xs text-ink-60">
-                {intent.provider === "wechat"
-                  ? "请使用微信扫一扫完成支付，支付后自动到账平台托管。"
-                  : intent.provider === "alipay"
-                    ? "请使用支付宝扫一扫完成支付，支付后自动到账平台托管。"
-                    : "沙箱二维码：点击下方按钮模拟支付成功。"}
+              <p className="text-center text-xs leading-relaxed text-ink-60">
+                请使用微信或支付宝扫一扫完成支付。
+                支付系统尚未接入，扫码仅作示意，点击下方确认即可完成支付。
               </p>
             </>
           )}
 
-          {intent?.redirectUrl && (
-            <Button asChild variant="brand">
+          {error ? (
+            <div className="w-full rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {error}
+            </div>
+          ) : null}
+
+          {intent?.redirectUrl ? (
+            <Button asChild variant="outline" className="w-full">
               <a href={intent.redirectUrl} target="_blank" rel="noreferrer">
                 前往支付页面
               </a>
             </Button>
-          )}
+          ) : null}
 
-          {intent && !intent.sandbox && (
-            <div className="flex items-center gap-1.5 text-xs text-ink-40">
-              <ShieldCheck className="h-3.5 w-3.5" /> 支付完成后本弹窗会自动关闭
-            </div>
-          )}
-
-          {intent?.sandbox && intent.status !== "paid" && (
+          {canManualConfirm && !loading ? (
             <Button
               variant="brand"
               className="w-full"
               disabled={confirming}
-              onClick={handleSandboxConfirm}
+              onClick={handleConfirm}
             >
-              {confirming ? "处理中..." : "模拟支付成功（沙箱）"}
+              {confirming ? "处理中..." : "确认支付"}
             </Button>
-          )}
+          ) : null}
+
+          <div className="flex items-center gap-1.5 text-xs text-ink-40">
+            <ShieldCheck className="h-3.5 w-3.5" /> 确认后款项进入平台托管，验收通过后解冻
+          </div>
         </div>
       </DialogContent>
     </Dialog>

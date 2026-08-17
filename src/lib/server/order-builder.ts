@@ -1,6 +1,6 @@
 import "server-only";
-import { buildMonthlyStages } from "@/lib/monthly-billing";
 import { generateProjectId } from "@/lib/project-id";
+import { buildDefaultPaymentStages } from "@/lib/order-payment-stages";
 import type {
   BillingMode,
   BountyAttachment,
@@ -41,44 +41,16 @@ export interface CreateOrderInput {
   customStageRatios?: { name: string; ratio: number }[];
   /** 委托人实际上传的项目附件 */
   attachments?: BountyAttachment[];
-  /** 系统报价单（按天/按月常规委托） */
+  /** 系统报价单（按天/按月常规委托，兼容中级卡） */
   quote?: OrderQuote;
+  /** 多档等级报价卡 */
+  levelQuotes?: OrderQuote[];
 }
 
 function randomId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}${Math.random()
     .toString(36)
     .slice(2, 6)}`;
-}
-
-/** 默认三阶段托管：预付款 30% / 中期成果 40% / 尾款 30% */
-function buildStages(orderId: string, total: number): PaymentStage[] {
-  const prepay = Math.round(total * 0.3);
-  const mid = Math.round(total * 0.4);
-  const final = total - prepay - mid;
-  return [
-    {
-      id: `${orderId}_s1`,
-      name: "预付款",
-      amount: prepay,
-      ratio: 0.3,
-      status: "pending",
-    },
-    {
-      id: `${orderId}_s2`,
-      name: "中期成果",
-      amount: mid,
-      ratio: 0.4,
-      status: "pending",
-    },
-    {
-      id: `${orderId}_s3`,
-      name: "尾款验收",
-      amount: final,
-      ratio: 0.3,
-      status: "pending",
-    },
-  ];
 }
 
 function normalizeRatio(r: number): number {
@@ -117,10 +89,12 @@ function resolveStages(input: CreateOrderInput, orderId: string): PaymentStage[]
   if (input.customStageRatios?.length) {
     return buildCustomStages(orderId, input.totalAmount, input.customStageRatios);
   }
-  if (input.billingMode === "monthly" && input.selectedMonths?.length) {
-    return buildMonthlyStages(orderId, input.totalAmount, input.selectedMonths);
-  }
-  return buildStages(orderId, input.totalAmount);
+  return buildDefaultPaymentStages({
+    orderId,
+    totalAmount: input.totalAmount,
+    billingMode: input.billingMode,
+    selectedMonths: input.selectedMonths,
+  });
 }
 
 function resolveInitialStatus(input: CreateOrderInput): OrderStatus {
@@ -214,6 +188,7 @@ export function buildOrder(input: CreateOrderInput): Order {
     ],
     description: input.description,
     quote: input.quote,
+    levelQuotes: input.levelQuotes?.length ? input.levelQuotes : undefined,
     attachments: input.attachments?.length ? input.attachments : undefined,
     onsiteSchedule:
       input.serviceMode === "onsite" && input.address

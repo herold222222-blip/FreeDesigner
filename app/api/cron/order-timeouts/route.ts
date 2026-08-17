@@ -4,7 +4,7 @@ import { processAllOrderTimeouts } from "@/lib/server/order-service";
 
 export const dynamic = "force-dynamic";
 
-/** 定时处理订单超时（10 天验收 / 30 天结案 / 评价期结束） */
+/** 定时处理订单超时（10 天验收 / 30 天结案 / 评价 30 天关闭） */
 export async function POST(req: NextRequest) {
   return handle(async () => {
     const secret = process.env.CRON_SECRET?.trim();

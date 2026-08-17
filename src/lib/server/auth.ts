@@ -32,6 +32,10 @@ export interface SessionUser {
   availableRoles: Array<"client" | "designer">;
 }
 
+export function isStaffRole(role: string | null | undefined): boolean {
+  return role === "admin" || role === "super_admin";
+}
+
 /** 根据资料推导可用业务身份（不含管理员） */
 export async function listBusinessRoles(
   userId: string,
@@ -102,17 +106,19 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     return null;
   }
 
-  const isAdmin =
-    session.role === "admin" || session.role === "super_admin";
-  const availableRoles = isAdmin
+  const accountRole = session.user.role as Role;
+  const sessionRole = session.role as Role;
+  /** 管理员 / 超级管理员以账号角色为准，避免会话身份过期或未同步时被拦 */
+  const role: Role = isStaffRole(accountRole) ? accountRole : sessionRole;
+  const availableRoles = isStaffRole(role)
     ? []
     : await listBusinessRoles(session.userId);
 
   return {
     sessionId: session.id,
     userId: session.userId,
-    role: session.role as Role,
-    identityId: session.identityId,
+    role,
+    identityId: isStaffRole(role) ? session.userId : session.identityId,
     phone: session.user.phone,
     name: session.user.name,
     avatar: session.user.avatar,
@@ -134,6 +140,15 @@ export async function requireRole(...roles: Role[]): Promise<SessionUser> {
   const user = await requireSession();
   if (!roles.includes(user.role)) {
     throw new AuthError(403, "无权访问");
+  }
+  return user;
+}
+
+/** 管理员与超级管理员均可 */
+export async function requireStaff(): Promise<SessionUser> {
+  const user = await requireSession();
+  if (!isStaffRole(user.role)) {
+    throw new AuthError(403, "仅管理员或超级管理员可执行此操作");
   }
   return user;
 }

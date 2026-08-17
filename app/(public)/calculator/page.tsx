@@ -1557,7 +1557,7 @@ function TimeBasedCalculator({
         <Card className="p-6">
           <SectionTitle icon={Clock} title="施工图 · 按时间专项" />
           <p className="mb-4 text-[11px] text-ink-40">
-            项目区域系数固定 100%；设计师区域系数取自上方共用信息。
+            项目区域系数固定 100%；远程服务设计师地区系数统一 1.0，驻场取自上方共用信息。
           </p>
           <SectionTitle icon={Clock} title="计费方式" />
           <div className="grid gap-4 sm:grid-cols-2">

@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
 import { handle, ok, fail } from "@/lib/server/api";
-import { listOrders } from "@/lib/server/repo";
-import { requireSession } from "@/lib/server/auth";
+import { getClient, listOrders } from "@/lib/server/repo";
+import { AuthError, requireSession } from "@/lib/server/auth";
 import { placeOrder } from "@/lib/server/order-service";
 import type { CreateOrderInput } from "@/lib/server/order-builder";
 import type { CreateOrderBody } from "@/lib/api-client";
-import { buildRegularTimeQuote } from "@/lib/regular-entrust-quote";
-import { AuthError } from "@/lib/server/auth";
+import { buildRegularTimeQuote, buildRegularTimeQuotesByLevel } from "@/lib/regular-entrust-quote";
+import { DEFAULT_CLIENT_LEVEL } from "@/lib/level-management";
 
 export const dynamic = "force-dynamic";
 
@@ -40,18 +40,28 @@ export async function POST(req: NextRequest) {
       billingMode === "daily" || billingMode === "monthly";
 
     let quote: CreateOrderInput["quote"];
+    let levelQuotes: CreateOrderInput["levelQuotes"];
     let totalAmount = body.totalAmount ?? 1;
 
     if (source === "regular" && isTimeBilling && body.timeQuote?.lines?.length) {
       try {
-        quote = buildRegularTimeQuote({
+        const client = await getClient(session.identityId);
+        const quoteInput = {
           unit: body.timeQuote.unit,
-          serviceMode: body.serviceMode === "onsite" ? "onsite" : "remote",
+          serviceMode:
+            body.serviceMode === "onsite" ? ("onsite" as const) : ("remote" as const),
           withDrawing: body.timeQuote.withDrawing,
           withAudit: body.withAuditService,
           withPM: body.withProjectManagement,
           lines: body.timeQuote.lines,
-        });
+          taxCoefficient: body.timeQuote.taxCoefficient,
+          clientLevel: client?.level ?? DEFAULT_CLIENT_LEVEL,
+        };
+        levelQuotes = buildRegularTimeQuotesByLevel(quoteInput);
+        quote =
+          levelQuotes.find((q) => q.assumptions.designerLevel === "mid_v1") ??
+          levelQuotes[0] ??
+          buildRegularTimeQuote({ ...quoteInput, designerLevel: "mid_v1" });
         totalAmount = quote.total;
       } catch (e) {
         throw new AuthError(
@@ -88,6 +98,7 @@ export async function POST(req: NextRequest) {
       customStageRatios: body.customStageRatios,
       attachments: body.attachments,
       quote,
+      levelQuotes,
     });
     return ok(order, { status: 201 });
   });

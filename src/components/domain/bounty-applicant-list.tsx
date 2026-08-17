@@ -7,7 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { SpecialtyBadge } from "@/components/domain/status-badges";
 import { Star } from "lucide-react";
 import type { Bounty, Designer } from "@/lib/types";
-import { getL3Label } from "@/lib/bounty-tracks";
+import { formatDesignerRatingDisplay } from "@/lib/designer-rating";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { useSessionStore } from "@/store/session-store";
 
@@ -56,7 +56,7 @@ export function BountyApplicantList({
                   <SpecialtyBadge specialty={d.specialty} />
                   <span className="inline-flex items-center gap-1 text-xs text-ink-60">
                     <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
-                    {d.rating} · {d.completedProjects} 单经验
+                    {formatDesignerRatingDisplay(d.rating, d.reviewCount)} · {d.completedProjects} 单经验
                   </span>
                 </div>
                 <p className="text-sm text-ink-80">{a.proposal}</p>

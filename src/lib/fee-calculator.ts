@@ -12,6 +12,7 @@
  * 公式（按时间）：
  *   基础服务费 = 设计费基数 × 项目区域系数 × 项目类型系数 × 设计师等级系数
  *               × 设计师区域系数 × 服务范围系数 × 三级专业难度系数 × 客户等级系数
+ *   远程服务：设计师区域系数统一 1.0；客户等级按委托人实际等级
  *   平台管理费 = 基础服务费 × 10% + 商务费（商务费 = 服务费 × 3% / 97%）
  *   总服务费 = (基础服务费 + 平台管理费) × 税率系数
  */
@@ -157,6 +158,16 @@ export function calculateAreaBasedFee(
   };
 }
 
+/** 常规委托按工时远程：设计师地区所有梯队统一按 1.0；驻场仍按所在梯队 */
+export function timeDesignerRegionCoefficient(
+  mode: "remote" | "onsite",
+  designerRegion: RegionTier,
+  config: PlatformPricingConfig = DEFAULT_PLATFORM_PRICING_CONFIG,
+): number {
+  if (mode === "remote") return 1;
+  return config.regionTierCoefficient[designerRegion] ?? 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* 按时间计费                                                            */
 /* ------------------------------------------------------------------ */
@@ -295,7 +306,11 @@ export function calculateTimeBasedFee(
     input.unit === "day" ? config.landscapeDailyRate : config.landscapeMonthlyRate;
   const perUnitBase = rateTable[input.mode][input.track];
   const designerLevelCoeff = config.designerLevelCoefficient[input.designerLevel];
-  const designerRegionCoeff = config.regionTierCoefficient[input.designerRegion];
+  const designerRegionCoeff = timeDesignerRegionCoefficient(
+    input.mode,
+    input.designerRegion,
+    config,
+  );
   const clientLevelCoeff = config.clientLevelCoefficient[input.clientLevel];
   // 服务范围系数：远程 100% / 驻场不含图 100% / 驻场含图 110%
   const serviceRangeCoeff =

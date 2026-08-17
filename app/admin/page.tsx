@@ -26,6 +26,7 @@ import {
   Users,
 } from "lucide-react";
 import { useConsoleBasePath } from "@/components/layout/console-base-path";
+import { isAwaitingMatchOrder } from "@/lib/order-supervision";
 
 export default function AdminDashboardPage() {
   const base = useConsoleBasePath();
@@ -37,7 +38,7 @@ export default function AdminDashboardPage() {
   const { data: clients } = useAdminClients();
   const { data: disputeCounts } = useDisputeCounts();
 
-  const matchingOrderCount = orders.filter((o) => o.status === "matching").length;
+  const matchingOrderCount = orders.filter(isAwaitingMatchOrder).length;
   const openBountyCount = bounties.filter((b) => b.status === "open").length;
 
   const designerQueue = reviewQueue.filter(
@@ -75,10 +76,10 @@ export default function AdminDashboardPage() {
     {
       label: "待匹配委托",
       value: matchingOrderCount,
-      hint: matchingOrderCount > 0 ? "点击查看并指派" : "暂无待处理",
+      hint: matchingOrderCount > 0 ? "已填资料，尚未最终选定设计师" : "暂无待处理",
       icon: PackageSearch,
       tone: "amber",
-      href: `${base}/orders?status=matching`,
+      href: `${base}/orders?status=awaiting_match`,
     },
     {
       label: "进行中悬赏",

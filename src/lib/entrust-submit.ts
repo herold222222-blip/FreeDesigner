@@ -6,6 +6,30 @@ import type {
 } from "@/lib/types";
 import type { CreateOrderBody } from "@/lib/api-client";
 import type { BillingMode } from "@/lib/types";
+import { formatTimeDifficultySuffix } from "@/lib/landscape-area-difficulty";
+
+function formatTimeL3DescriptionLine(row: {
+  label: string;
+  units: number;
+  unitLabel: string;
+  pending?: boolean;
+  difficultyLabel?: string;
+  difficulty?: number;
+  remark?: string;
+}): string {
+  const qty = row.pending
+    ? "待系统评估"
+    : `${row.units} ${row.unitLabel}`.trim();
+  const base = `· ${row.label}：${qty}`;
+  if (!row.difficultyLabel && row.difficulty == null && !row.remark) return base;
+  return `${base} · ${formatTimeDifficultySuffix({
+    label: row.difficultyLabel ?? "",
+    value: row.difficulty ?? 1,
+    percent:
+      row.difficulty != null ? `${Math.round(row.difficulty * 100)}%` : "",
+    remark: row.remark,
+  })}`;
+}
 
 export function buildRegularEntrustDescription(input: {
   description: string;
@@ -21,18 +45,26 @@ export function buildRegularEntrustDescription(input: {
   trackKey?: string;
   /** 二级专业标签 */
   timeL2Labels?: string[];
-  /** 各三级专业工时：标签 + 天数/月数 */
-  timeL3Units?: Array<{ label: string; units: number; unitLabel: string }>;
+  /** 各三级专业工时：标签 + 天数/月数 + 难度 */
+  timeL3Units?: Array<{
+    label: string;
+    units: number;
+    unitLabel: string;
+    pending?: boolean;
+    difficultyLabel?: string;
+    difficulty?: number;
+    remark?: string;
+  }>;
   withAudit?: boolean;
   withPM?: boolean;
+  buildType?: "new" | "renovation" | null;
+  taxLabel?: string;
 }): string {
   const timeLines =
     input.timeL3Units?.length ?
       [
         `二级专业：${(input.timeL2Labels ?? []).join("、") || "—"}`,
-        ...input.timeL3Units.map(
-          (row) => `· ${row.label}：${row.units} ${row.unitLabel}`,
-        ),
+        ...input.timeL3Units.map((row) => formatTimeL3DescriptionLine(row)),
       ]
     : null;
 
@@ -64,6 +96,10 @@ export function buildRegularEntrustDescription(input: {
           ? `工时：${input.days ?? 0} 工日 · ${input.trackKey ?? "—"}`
           : `雇佣：${input.months ?? 0} 个月 · ${input.trackKey ?? "—"}`
       : null,
+    input.billingMode === "area" && input.buildType
+      ? `建造类型：${input.buildType === "renovation" ? "改扩建（110%）" : "新建（100%）"}`
+      : null,
+    input.taxLabel ? `税率：${input.taxLabel}` : null,
     input.withAudit ? "增值服务：第三方审图" : null,
     input.withPM ? "增值服务：项目管理" : null,
     "",
@@ -85,6 +121,7 @@ export function buildRegularEntrustOrderBody(input: {
   withPM?: boolean;
   attachments?: BountyAttachment[];
   withDrawing?: boolean;
+  taxCoefficient?: number;
   timeQuoteLines?: Array<{
     l3: string;
     l3Label: string;
@@ -114,6 +151,7 @@ export function buildRegularEntrustOrderBody(input: {
         ? {
             unit: input.billingMode === "daily" ? "day" : "month",
             withDrawing: input.withDrawing,
+            taxCoefficient: input.taxCoefficient,
             lines: input.timeQuoteLines,
           }
         : undefined,

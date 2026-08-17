@@ -14,9 +14,11 @@ import type { Order } from "@/lib/types";
 export function OrderWorkCalendarContentsPanel({
   order,
   perspective,
+  embedded,
 }: {
   order: Order;
   perspective: "client" | "admin" | "designer";
+  embedded?: boolean;
 }) {
   const designerId = order.designerId;
   const { data: designer } = useDesigner(designerId);
@@ -33,24 +35,27 @@ export function OrderWorkCalendarContentsPanel({
   if (events.length === 0 && order.billingMode !== "daily") return null;
   const withContents = events.filter((e) => (e.workContents?.length ?? 0) > 0);
 
+  const empty = (
+    <>
+      <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+        <ClipboardList className="h-4 w-4 text-ink-60" />
+        工时工作内容
+      </div>
+      <p className="mt-2 text-sm text-ink-60">
+        {perspective === "designer"
+          ? "请在个人主页「接单档期」中为已安排时段填写工作内容，保存后委托人与管理员可查看。"
+          : "设计师尚未提交本订单的工时工作内容。"}
+      </p>
+    </>
+  );
+
   if (withContents.length === 0) {
-    return (
-      <Card className="p-5">
-        <div className="flex items-center gap-2 text-sm font-semibold text-ink">
-          <ClipboardList className="h-4 w-4 text-ink-60" />
-          工时工作内容
-        </div>
-        <p className="mt-2 text-sm text-ink-60">
-          {perspective === "designer"
-            ? "请在个人主页「接单档期」中为已安排时段填写工作内容，保存后委托人与管理员可查看。"
-            : "设计师尚未提交本订单的工时工作内容。"}
-        </p>
-      </Card>
-    );
+    if (embedded) return <div className="mt-6">{empty}</div>;
+    return <Card className="p-5">{empty}</Card>;
   }
 
-  return (
-    <Card className="p-6">
+  const list = (
+    <>
       <div className="mb-4 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <ClipboardList className="h-5 w-5 text-ink-60" />
@@ -91,6 +96,9 @@ export function OrderWorkCalendarContentsPanel({
           </div>
         ))}
       </div>
-    </Card>
+    </>
   );
+
+  if (embedded) return <div className="mt-6">{list}</div>;
+  return <Card className="p-6">{list}</Card>;
 }

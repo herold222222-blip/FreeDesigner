@@ -1,10 +1,16 @@
 import {
-  DESIGNER_LEVEL_META,
   LANDSCAPE_DAILY_RATE,
-  LANDSCAPE_MONTHLY_RATE,
-  REGION_TIER_META,
   resolveDesignerRegionTier,
 } from "@/lib/constants";
+import {
+  calculateTimeBasedFee,
+  timeDesignerRegionCoefficient,
+} from "@/lib/fee-calculator";
+import { DEFAULT_CLIENT_LEVEL } from "@/lib/level-management";
+import {
+  DEFAULT_PLATFORM_PRICING_CONFIG,
+  type PlatformPricingConfig,
+} from "@/lib/platform-pricing";
 import type { Designer, DesignerLevel, RegionTier } from "@/lib/types";
 
 /** 与 v1.1 文档中 LANDSCAPE_DAILY_RATE / MONTHLY 表一致的四级专业 key */
@@ -57,39 +63,67 @@ export interface DesignerV11TimeRates {
   /** 线上 = 文档 remote；线下 = 文档 onsite（驻场基准，不含绘图加成） */
   remote: { daily: number; monthly: number };
   onsite: { daily: number; monthly: number };
-  /** 叠加：等级系数 × 地区梯队系数 */
-  multiplier: number;
+  /** 远程：等级 × 客户等级（地区系数固定 1.0） */
+  remoteMultiplier: number;
+  /** 驻场：等级 × 地区梯队 × 客户等级 */
+  onsiteMultiplier: number;
 }
 
 /**
- * v1.1 景观按时间报价：基准单价（文档）× 设计师等级系数 × 地区梯队系数。
- * 与日 / 月费计算器中单价的组合方式一致（不含税额与平台费）。
+ * 景观按时间参考价：与 `calculateTimeBasedFee` 基础服务费口径一致。
+ * 远程地区系数统一 1.0；驻场按设计师所在梯队；按普通客户、难度 100%、不含税与驻场含绘图加成。
  */
-export function getDesignerV11TimeRates(designer: Designer): DesignerV11TimeRates {
-  const track = inferDesignerLandscapeTimeTrack(designer);
+export function getDesignerV11TimeRates(
+  designer: Designer,
+  options?: {
+    track?: LandscapeTimeRateTrack;
+    config?: PlatformPricingConfig;
+  },
+): DesignerV11TimeRates {
+  const track = options?.track ?? inferDesignerLandscapeTimeTrack(designer);
   const level: DesignerLevel = designer.level ?? "mid_v1";
   const tier: RegionTier = resolveDesignerRegionTier(designer);
+  const config = options?.config ?? DEFAULT_PLATFORM_PRICING_CONFIG;
+  const levelCoeff = config.designerLevelCoefficient[level];
+  const clientCoeff = config.clientLevelCoefficient[DEFAULT_CLIENT_LEVEL];
+  const remoteMultiplier =
+    levelCoeff * timeDesignerRegionCoefficient("remote", tier, config) * clientCoeff;
+  const onsiteMultiplier =
+    levelCoeff * timeDesignerRegionCoefficient("onsite", tier, config) * clientCoeff;
 
-  const levelCoeff = DESIGNER_LEVEL_META[level].coefficient;
-  const regionCoeff = REGION_TIER_META[tier].coefficient;
-  const multiplier = levelCoeff * regionCoeff;
-
-  const rd = LANDSCAPE_DAILY_RATE.remote[track];
-  const od = LANDSCAPE_DAILY_RATE.onsite[track];
-  const rm = LANDSCAPE_MONTHLY_RATE.remote[track];
-  const om = LANDSCAPE_MONTHLY_RATE.onsite[track];
+  const unitOf = (mode: "remote" | "onsite", unit: "day" | "month") =>
+    calculateTimeBasedFee(
+      {
+        unit,
+        quantity: 1,
+        mode,
+        track,
+        designerLevel: level,
+        designerRegion: tier,
+        clientLevel: DEFAULT_CLIENT_LEVEL,
+        withDrawing: false,
+        difficulty: 1,
+        taxCoefficient: 1,
+      },
+      config,
+    ).basicFee;
 
   return {
     track,
     trackLabel: LANDSCAPE_TIME_TRACK_LABELS[track],
     remote: {
-      daily: Math.round(rd * multiplier),
-      monthly: Math.round(rm * multiplier),
+      daily: unitOf("remote", "day"),
+      monthly: unitOf("remote", "month"),
     },
     onsite: {
-      daily: Math.round(od * multiplier),
-      monthly: Math.round(om * multiplier),
+      daily: unitOf("onsite", "day"),
+      monthly: unitOf("onsite", "month"),
     },
-    multiplier,
+    remoteMultiplier,
+    onsiteMultiplier,
   };
+}
+
+export function formatDesignerTimeRateNote(rates: DesignerV11TimeRates): string {
+  return `远程系数 ${Math.round(rates.remoteMultiplier * 100)}%（等级，地区 1.0）；驻场系数 ${Math.round(rates.onsiteMultiplier * 100)}%（等级 × 地区）。按普通客户测算，不含税与驻场含绘图加成。`;
 }

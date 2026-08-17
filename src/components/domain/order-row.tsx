@@ -4,20 +4,51 @@ import { useState } from "react";
 import Link from "next/link";
 import type { Order } from "@/lib/types";
 import type { OrderPaymentOverdueInfo } from "@/lib/order-payment-overdue";
-import { getPayablePendingStage } from "@/lib/order-payment-overdue";
+import {
+  getPayablePendingStage,
+  getPayableStageDeadline,
+} from "@/lib/order-payment-overdue";
+import {
+  PaymentDeadlineBadge,
+  PaymentDeadlineNote,
+} from "@/components/domain/payment-deadline-note";
 import { getPendingReviewStage } from "@/lib/client-order-focus";
 import { DESIGNER_ORDER_STATUS_LABEL } from "@/lib/designer-order-status-filter";
+import { resolveDisplayOrderStatus } from "@/lib/order-lifecycle";
+import { getOrderPaymentProgress, needsClientReview, isAwaitingClientReviewOrder } from "@/lib/client-review";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { ProjectIdCopy } from "@/components/domain/project-id-copy";
 import {
   MatchingOrderEditDialog,
   type MatchingOrderEditPayload,
 } from "@/components/domain/matching-order-edit-dialog";
-import { OrderStatusBadge, SpecialtyBadge } from "./status-badges";
-import { ArrowRight, Ban, Coins, MapPin, Pencil, User2 } from "lucide-react";
+import {
+  AwaitingClientPaymentBadge,
+  OrderStatusBadge,
+  SpecialtyBadge,
+} from "./status-badges";
+import {
+  AlertTriangle,
+  ArrowRight,
+  Ban,
+  Coins,
+  MapPin,
+  Pencil,
+  User2,
+} from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
   cancelOrderRequest,
@@ -25,6 +56,11 @@ import {
 } from "@/lib/api-client";
 import { invalidateApiPath, useDesigners, useClients } from "@/lib/use-data";
 import { useSessionStore } from "@/store/session-store";
+import { OrderDeleteButton } from "@/components/domain/order-delete-button";
+import {
+  clientCanEditEntrust,
+  isAwaitingClientPaymentOrder,
+} from "@/lib/order-supervision";
 
 interface Props {
   order: Order;
@@ -36,6 +72,8 @@ interface Props {
   paymentHighlight?: boolean;
   /** 待成果确认筛选下的高亮展示 */
   reviewHighlight?: boolean;
+  /** 待评价 / 待委托人评价筛选下的高亮展示 */
+  clientReviewHighlight?: boolean;
 }
 
 const ADMIN_CANCELLABLE = new Set(["pending_quote", "matching"]);
@@ -48,11 +86,14 @@ export function OrderRow({
   paymentOverdue,
   paymentHighlight = false,
   reviewHighlight = false,
+  clientReviewHighlight = false,
 }: Props) {
   const { data: designers } = useDesigners();
   const { data: clients } = useClients();
   const push = useSessionStore((s) => s.pushNotification);
   const [editOpen, setEditOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const designer = designers.find((d) => d.id === order.designerId);
@@ -63,8 +104,8 @@ export function OrderRow({
       : perspective === "admin"
         ? client
         : designer;
-  const canEditMatching =
-    perspective === "client" && order.status === "matching";
+  const canEditEntrust =
+    perspective === "client" && clientCanEditEntrust(order);
   const canAdminCancel =
     perspective === "admin" && ADMIN_CANCELLABLE.has(order.status);
   const needsQuoteConfirm =
@@ -92,18 +133,16 @@ export function OrderRow({
 
   const handleAdminCancel = async () => {
     if (cancelling) return;
-    const ok = window.confirm(
-      `确认取消订单「${order.title}」？\n取消后将通知委托人，订单归入已取消列表。`,
-    );
-    if (!ok) return;
     setCancelling(true);
     try {
-      await cancelOrderRequest(order.id);
+      await cancelOrderRequest(order.id, cancelReason.trim() || undefined);
       push({
         title: "订单已取消",
         description: "已通知委托人，订单已归入已取消列表。",
         variant: "success",
       });
+      setCancelOpen(false);
+      setCancelReason("");
       invalidateApiPath("/api/orders");
       invalidateApiPath(`/api/orders/${order.id}`);
     } catch (e) {
@@ -117,16 +156,16 @@ export function OrderRow({
     }
   };
 
-  const paid = order.stages.filter((s) => s.status !== "pending");
-  const paidAmount = paid.reduce((sum, s) => sum + s.amount, 0);
-  const progress = order.totalAmount
-    ? Math.round((paidAmount / order.totalAmount) * 100)
-    : 0;
+  const progress = getOrderPaymentProgress(order);
 
   const payable =
     perspective === "client" && paymentHighlight
       ? getPayablePendingStage(order)
       : null;
+
+  const paymentDeadline = isAwaitingClientPaymentOrder(order)
+    ? getPayableStageDeadline(order)
+    : null;
 
   const reviewStage =
     perspective === "client" && reviewHighlight
@@ -145,6 +184,8 @@ export function OrderRow({
         reviewHighlight &&
           reviewStage &&
           "border-blue-300 bg-gradient-to-br from-blue-50 to-sky-50/80 ring-1 ring-blue-200/60 hover:border-blue-400",
+        clientReviewHighlight &&
+          "border-amber-300 bg-gradient-to-br from-amber-50 to-yellow-50/80 ring-1 ring-amber-200/60 hover:border-amber-400",
       )}
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -152,16 +193,25 @@ export function OrderRow({
           <div className="flex flex-wrap items-center gap-2">
             <SpecialtyBadge specialty={order.specialty} />
             <OrderStatusBadge
-              status={order.status}
+              order={order}
+              status={resolveDisplayOrderStatus(order)}
               label={
                 perspective === "designer"
-                  ? DESIGNER_ORDER_STATUS_LABEL[order.status]
+                  ? DESIGNER_ORDER_STATUS_LABEL[resolveDisplayOrderStatus(order)]
                   : undefined
               }
             />
-            {paymentHighlight && payable ? (
-              <Badge variant="amber" className="text-[10px]">
-                待支付
+            {isAwaitingClientPaymentOrder(order) ? (
+              <AwaitingClientPaymentBadge perspective={perspective} />
+            ) : null}
+            {perspective === "client" && needsClientReview(order) ? (
+              <Badge variant="brand" className="text-[10px]">
+                待评价
+              </Badge>
+            ) : null}
+            {perspective === "admin" && isAwaitingClientReviewOrder(order) ? (
+              <Badge variant="brand" className="text-[10px]">
+                待委托人评价
               </Badge>
             ) : null}
             {reviewHighlight && reviewStage ? (
@@ -169,9 +219,11 @@ export function OrderRow({
                 待成果确认
               </Badge>
             ) : null}
-            {paymentOverdue ? (
+            {paymentDeadline ? (
+              <PaymentDeadlineBadge deadline={paymentDeadline} />
+            ) : paymentOverdue ? (
               <Badge variant="rose" className="text-[10px]">
-                超时未付 {paymentOverdue.overdueDays} 天
+                支付超时 · 已超过 {paymentOverdue.overdueLabel ?? `${paymentOverdue.overdueDays} 天`}
               </Badge>
             ) : null}
             {(tags ?? []).map((t) => (
@@ -205,11 +257,18 @@ export function OrderRow({
               {order.serviceMode === "onsite" ? "线下上门" : "线上远程"}
             </span>
             <span>下单 {formatDate(order.createdAt)}</span>
-            {paymentOverdue ? (
+            {paymentDeadline ? (
+              <span className={paymentDeadline.overdue ? "text-rose-600" : "text-amber-800"}>
+                {paymentDeadline.stage.name} ·{" "}
+                {paymentDeadline.overdue
+                  ? `支付超时 · 已超过 ${paymentDeadline.overdueLabel}`
+                  : `支付时限 ${formatDate(paymentDeadline.dueAt)}`}
+              </span>
+            ) : paymentOverdue ? (
               <span className="text-rose-600">
                 {paymentOverdue.stage.name} · 应付{" "}
-                {formatCurrency(paymentOverdue.stage.amount)} · 已超时{" "}
-                {paymentOverdue.overdueDays} 天
+                {formatCurrency(paymentOverdue.stage.amount)} · 支付超时 · 已超过{" "}
+                {paymentOverdue.overdueLabel ?? `${paymentOverdue.overdueDays} 天`}
               </span>
             ) : null}
           </div>
@@ -255,6 +314,11 @@ export function OrderRow({
               <div className="mt-1 text-lg font-bold tabular-nums text-brand">
                 {formatCurrency(payable.stage.amount)}
               </div>
+              {paymentDeadline ? (
+                <div className="mt-2 text-left">
+                  <PaymentDeadlineNote deadline={paymentDeadline} />
+                </div>
+              ) : null}
               <Link
                 href={href}
                 className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand/90"
@@ -277,7 +341,7 @@ export function OrderRow({
                 </div>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
-                {canEditMatching ? (
+                {canEditEntrust ? (
                   <Button
                     type="button"
                     variant="outline"
@@ -295,12 +359,16 @@ export function OrderRow({
                     size="sm"
                     className="h-8 gap-1 px-2.5 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800"
                     disabled={cancelling}
-                    onClick={handleAdminCancel}
+                    onClick={() => setCancelOpen(true)}
                   >
                     <Ban className="h-3.5 w-3.5" />
-                    {cancelling ? "取消中..." : "取消订单"}
+                    取消订单
                   </Button>
                 ) : null}
+                <OrderDeleteButton
+                  order={order}
+                  perspective={perspective}
+                />
                 <Link
                   href={href}
                   className="inline-flex items-center gap-1 text-xs font-medium text-brand hover:gap-2 transition-all"
@@ -312,7 +380,7 @@ export function OrderRow({
           )}
         </div>
       </div>
-      {canEditMatching ? (
+      {canEditEntrust ? (
         <MatchingOrderEditDialog
           open={editOpen}
           onOpenChange={setEditOpen}
@@ -320,6 +388,63 @@ export function OrderRow({
           onSave={handleSaveMatching}
           saving={saving}
         />
+      ) : null}
+      {canAdminCancel ? (
+        <Dialog
+          open={cancelOpen}
+          onOpenChange={(open) => {
+            if (cancelling) return;
+            setCancelOpen(open);
+            if (!open) setCancelReason("");
+          }}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-start gap-2.5">
+                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+                  <AlertTriangle className="h-4 w-4" />
+                </span>
+                <span className="pt-1">确认取消订单？</span>
+              </DialogTitle>
+              <DialogDescription className="pl-[2.625rem] text-sm leading-relaxed text-ink-60">
+                即将取消「{order.title}」（{order.code}
+                ）。取消后将通知委托人，订单归入已取消列表，此操作不可恢复。
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-1.5 pl-[2.625rem]">
+              <Label htmlFor={`cancel-reason-${order.id}`}>
+                取消原因（选填）
+              </Label>
+              <Textarea
+                id={`cancel-reason-${order.id}`}
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="可填写原因，将一并通知委托人"
+                rows={3}
+                disabled={cancelling}
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={cancelling}
+                onClick={() => setCancelOpen(false)}
+              >
+                返回
+              </Button>
+              <Button
+                type="button"
+                variant="brand"
+                className="bg-rose-600 hover:bg-rose-700"
+                disabled={cancelling}
+                onClick={handleAdminCancel}
+              >
+                {cancelling ? "取消中..." : "确认取消"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       ) : null}
     </Card>
   );

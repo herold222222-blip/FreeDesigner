@@ -34,7 +34,7 @@ import {
   updateAdminDesignerRequest,
 } from "@/lib/api-client";
 import type { AdminDesignerRow, Designer } from "@/lib/types";
-import { formatDate } from "@/lib/utils";
+import { formatDesignerRatingDisplay } from "@/lib/designer-rating";
 import { useSessionStore } from "@/store/session-store";
 
 export function AdminDesignerUserTable({
@@ -209,7 +209,10 @@ export function AdminDesignerUserTable({
                           <div className="mt-0.5 flex items-center gap-x-2 text-[10px] text-ink-60">
                             <span className="inline-flex shrink-0 items-center gap-0.5">
                               <Star className="h-2.5 w-2.5 fill-amber-400 text-amber-400" />
-                              {d.rating.toFixed(1)}
+                              {formatDesignerRatingDisplay(
+                                d.rating,
+                                d.reviewCount,
+                              )}
                             </span>
                             <span className="inline-flex shrink-0 items-center gap-1">
                               <OnlineDot status={d.onlineStatus} />

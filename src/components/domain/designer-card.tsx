@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
+  AcceptingOrdersBadge,
   OnlineDot,
   SpecialtyBadge,
   WorkloadBadge,
@@ -17,8 +18,9 @@ import { DesignerCodeCopy } from "@/components/domain/designer-code-copy";
 import { DesignerName } from "@/components/domain/designer-name";
 import { MemberLink } from "@/components/domain/member-link";
 import { MapPin, Star, Briefcase, Plane, PencilLine, Phone } from "lucide-react";
+import { designerHasReviews, formatDesignerRatingDisplay } from "@/lib/designer-rating";
 import { formatCurrency } from "@/lib/utils";
-import { getDesignerV11TimeRates } from "@/lib/designer-rates";
+import { formatDesignerTimeRateNote, getDesignerV11TimeRates } from "@/lib/designer-rates";
 import { portfolioCoverUrl } from "@/lib/portfolio-images";
 import { SUBJECT_TYPE_META } from "@/lib/constants";
 import { Users, Building2, User } from "lucide-react";
@@ -56,7 +58,8 @@ export function DesignerCard({ designer }: { designer: Designer }) {
               />
             )
           ) : null}
-          <div className="absolute left-4 top-4 flex items-center gap-2">
+          <div className="absolute left-4 top-4 flex flex-wrap items-center gap-2">
+            <AcceptingOrdersBadge accepting={designer.acceptingOrders} />
             <Badge variant="default" className="bg-white/90 text-ink">
               <OnlineDot status={designer.onlineStatus} />
               {designer.onlineStatus === "online" ? "在线" : "离线"}
@@ -121,43 +124,45 @@ export function DesignerCard({ designer }: { designer: Designer }) {
             ) : null}
           </div>
 
-          <div className="mt-3 flex items-center justify-between text-xs text-ink-60">
-            <span className="inline-flex items-center gap-1">
-              <MapPin className="h-3.5 w-3.5" />
-              {designer.location}
+          <div className="mt-3 flex items-center gap-3 text-xs text-ink-60">
+            <span className="inline-flex min-w-0 flex-1 items-center gap-1">
+              <MapPin className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate" title={designer.location}>
+                {designer.location}
+              </span>
             </span>
-            <span className="inline-flex items-center gap-1">
-              <Briefcase className="h-3.5 w-3.5" />
+            <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap">
+              <Briefcase className="h-3.5 w-3.5 shrink-0" />
               {designer.yearsOfExperience} 年经验
             </span>
-            <span className="inline-flex items-center gap-1">
-              <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-              {(designer.reviewCount ?? 0) > 0 ? designer.rating : "暂无"}
+            <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap">
+              <Star className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-400" />
+              {formatDesignerRatingDisplay(
+                designer.rating,
+                designer.reviewCount,
+              )}
             </span>
           </div>
 
-          {designer.ratingBreakdown ? (
-            <div className="mt-3 grid grid-cols-3 gap-1.5 rounded-xl bg-ink-20/30 p-2 text-center text-[10px] text-ink-60">
-              <div>
+          <div className="mt-3 grid grid-cols-3 gap-1.5 rounded-xl bg-ink-20/30 p-2 text-center text-[10px] text-ink-60">
+            {(
+              [
+                ["professional", "专业"],
+                ["service", "服务"],
+                ["responsiveness", "响应"],
+              ] as const
+            ).map(([key, label]) => (
+              <div key={key}>
                 <div className="font-semibold text-ink">
-                  {designer.ratingBreakdown.professional.toFixed(1)}
+                  {designerHasReviews(designer.reviewCount) &&
+                  designer.ratingBreakdown
+                    ? designer.ratingBreakdown[key].toFixed(1)
+                    : "暂无"}
                 </div>
-                <div>专业</div>
+                <div>{label}</div>
               </div>
-              <div>
-                <div className="font-semibold text-ink">
-                  {designer.ratingBreakdown.service.toFixed(1)}
-                </div>
-                <div>服务</div>
-              </div>
-              <div>
-                <div className="font-semibold text-ink">
-                  {designer.ratingBreakdown.responsiveness.toFixed(1)}
-                </div>
-                <div>响应</div>
-              </div>
-            </div>
-          ) : null}
+            ))}
+          </div>
 
           {designer.impressions && designer.impressions.length ? (
             <div className="mt-3 flex flex-wrap gap-1">
@@ -203,9 +208,7 @@ export function DesignerCard({ designer }: { designer: Designer }) {
               </div>
             </div>
             <p className="mt-2 text-[10px] leading-snug text-ink-40">
-              单价 = v1.1 文档基准 × 综合系数{" "}
-              {Math.round(rates.multiplier * 100)}
-              %（设计师等级 × 地区梯队）；不含税与驻场含绘图加成。
+              {formatDesignerTimeRateNote(rates)}
             </p>
           </div>
         </MemberLink>

@@ -5,6 +5,7 @@ import { ConsoleBasePathProvider } from "@/components/layout/console-base-path";
 import { ConsoleShell } from "@/components/layout/console-shell";
 import { withMessagesNavItem } from "@/lib/inbox-nav";
 import { useInboxUnreadCount } from "@/lib/use-inbox-unread";
+import { RequireConsoleRoles } from "@/components/layout/require-console-roles";
 import {
   AlertCircle,
   ArrowDownToLine,
@@ -19,6 +20,8 @@ import {
   TrendingUp,
   Users,
 } from "lucide-react";
+
+const SUPER_ADMIN_ROLES = ["super_admin"] as const;
 
 const BASE_NAV = [
   { href: "/super-admin", label: "工作台", icon: LayoutDashboard, exact: true },
@@ -53,9 +56,11 @@ export default function SuperAdminLayout({
 
   return (
     <ConsoleBasePathProvider basePath="/super-admin">
-      <ConsoleShell title="超级管理员后台" subtitle="全局参数与平台治理" nav={nav}>
-        {children}
-      </ConsoleShell>
+      <RequireConsoleRoles roles={SUPER_ADMIN_ROLES}>
+        <ConsoleShell title="超级管理员后台" subtitle="全局参数与平台治理" nav={nav}>
+          {children}
+        </ConsoleShell>
+      </RequireConsoleRoles>
     </ConsoleBasePathProvider>
   );
 }

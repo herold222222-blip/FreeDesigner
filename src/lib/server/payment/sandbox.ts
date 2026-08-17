@@ -4,12 +4,11 @@ import type { CreatePaymentParams, CreatePaymentResult } from "./provider";
 /**
  * 沙箱支付渠道：不对接真实网关，用于本地与试用环境跑通完整下单/托管流程。
  *
- * - 默认 PAYMENT_SANDBOX_AUTOCONFIRM=true：创建即视为支付成功（保持一键体验）。
- * - 设为 false：返回一个可扫描的占位二维码，需调用 sandbox-confirm 接口
- *   （或前端「确认支付」按钮）后才置为成功，便于沙箱扫码轮询联调。
+ * - 默认不自动到账：返回占位二维码，需点「确认支付」或调用 sandbox-confirm。
+ * - 仅当 PAYMENT_SANDBOX_AUTOCONFIRM=true 时创建即视为支付成功。
  */
 export function sandboxAutoConfirm() {
-  return process.env.PAYMENT_SANDBOX_AUTOCONFIRM !== "false";
+  return process.env.PAYMENT_SANDBOX_AUTOCONFIRM === "true";
 }
 
 export async function createSandboxPayment(

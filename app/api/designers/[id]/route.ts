@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { handle, ok, fail } from "@/lib/server/api";
 import { getSessionUser, requireRole } from "@/lib/server/auth";
 import { redactDesignerContactFields } from "@/lib/designer-contact-privacy";
-import { getDesigner, updateDesignerLevel } from "@/lib/server/repo";
+import { getDesigner, hasOrderBetweenClientAndDesigner, updateDesignerLevel } from "@/lib/server/repo";
 import { DESIGNER_LEVEL_META } from "@/lib/constants";
 import type { DesignerLevel } from "@/lib/types";
 
@@ -29,7 +29,16 @@ export async function GET(
       return fail(404, "设计师不存在");
     }
 
-    return ok(redactDesignerContactFields(designer, viewer));
+    const isOrderCounterpart =
+      session?.role === "client" &&
+      Boolean(session.identityId) &&
+      (await hasOrderBetweenClientAndDesigner(session.identityId, designer.id));
+
+    return ok(
+      isOrderCounterpart
+        ? designer
+        : redactDesignerContactFields(designer, viewer),
+    );
   });
 }
 

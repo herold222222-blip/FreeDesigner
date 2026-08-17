@@ -1,7 +1,5 @@
 import {
   DESIGNER_LEVEL_META,
-  LANDSCAPE_DAILY_RATE,
-  LANDSCAPE_MONTHLY_RATE,
   LANDSCAPE_PRELIMINARY_RATE,
   type LandscapeBasePricing,
   REGION_TIER_META,
@@ -15,6 +13,7 @@ import {
 } from "@/lib/fee-calculator";
 import {
   LANDSCAPE_TIME_TRACK_LABELS,
+  getDesignerV11TimeRates,
   type LandscapeTimeRateTrack,
 } from "@/lib/designer-rates";
 import type { PlatformPricingConfig } from "@/lib/platform-pricing";
@@ -139,19 +138,25 @@ function getRelevantTracks(designer: Designer) {
 export type PricingBaseMultiplierMode = "platform_initial" | "designer_composite";
 
 function timeRatesForTrack(
+  designer: Designer,
   track: LandscapeTimeRateTrack,
-  mult: number,
+  mode: PricingBaseMultiplierMode,
+  config: PlatformPricingConfig,
 ): { remote: { daily: number; monthly: number }; onsite: { daily: number; monthly: number } } {
-  return {
-    remote: {
-      daily: Math.round(LANDSCAPE_DAILY_RATE.remote[track] * mult),
-      monthly: Math.round(LANDSCAPE_MONTHLY_RATE.remote[track] * mult),
-    },
-    onsite: {
-      daily: Math.round(LANDSCAPE_DAILY_RATE.onsite[track] * mult),
-      monthly: Math.round(LANDSCAPE_MONTHLY_RATE.onsite[track] * mult),
-    },
-  };
+  if (mode === "platform_initial") {
+    return {
+      remote: {
+        daily: config.landscapeDailyRate.remote[track],
+        monthly: config.landscapeMonthlyRate.remote[track],
+      },
+      onsite: {
+        daily: config.landscapeDailyRate.onsite[track],
+        monthly: config.landscapeMonthlyRate.onsite[track],
+      },
+    };
+  }
+  const rates = getDesignerV11TimeRates(designer, { track, config });
+  return { remote: rates.remote, onsite: rates.onsite };
 }
 
 export function getDesignerPricingMultipliers(
@@ -231,7 +236,7 @@ export function getDesignerPricingBaseSnapshot(
           }
           if (!timeTracksAdded.has(trackKey)) {
             timeTracksAdded.add(trackKey);
-            const tr = timeRatesForTrack(trackKey, sharedMult);
+            const tr = timeRatesForTrack(designer, trackKey, mode, config);
             lines.push({
               id: `time-${trackKey}`,
               phase: "按时间",
@@ -242,10 +247,10 @@ export function getDesignerPricingBaseSnapshot(
                 trackKey === "structure"
                   ? mode === "platform_initial"
                     ? "结构专业仅按时间计费 · 平台初始基数"
-                    : "结构专业仅按时间计费 · 已叠加等级×地区×项目类型"
+                    : "结构专业仅按时间计费 · 远程地区系数 1.0，驻场叠加等级×地区"
                   : mode === "platform_initial"
                     ? "v1.1 文档基准 · 平台初始基数"
-                    : "v1.1 文档基准 × 等级 × 地区 × 项目类型",
+                    : "远程：文档基准 × 等级（地区 1.0）；驻场：文档基准 × 等级 × 地区",
               rateKind: "time_bundle",
               baseValue: tr.remote.daily,
               timeBundle: {
@@ -368,36 +373,53 @@ export function buildCompositeLineFormulas(
     initial.timeBundle &&
     composite.timeBundle
   ) {
-    const rows: { label: string; unit: string; from: number; to: number }[] = [
+    const rows: {
+      label: string;
+      unit: string;
+      from: number;
+      to: number;
+      mode: "remote" | "onsite";
+    }[] = [
       {
         label: "线上工日",
         unit: "/工日",
         from: initial.timeBundle.remoteDaily,
         to: composite.timeBundle.remoteDaily,
+        mode: "remote",
       },
       {
         label: "线上月费",
         unit: "/月",
         from: initial.timeBundle.remoteMonthly,
         to: composite.timeBundle.remoteMonthly,
+        mode: "remote",
       },
       {
         label: "驻场工日",
         unit: "/工日",
         from: initial.timeBundle.onsiteDaily,
         to: composite.timeBundle.onsiteDaily,
+        mode: "onsite",
       },
       {
         label: "驻场月费",
         unit: "/月",
         from: initial.timeBundle.onsiteMonthly,
         to: composite.timeBundle.onsiteMonthly,
+        mode: "onsite",
       },
     ];
-    return rows.map(
-      (row) =>
-        `${row.label}：${buildCompositeRateFormula(row.from, row.to, factors, "currency", row.unit)}`,
-    );
+    return rows.map((row) => {
+      const regionCoeff = row.mode === "remote" ? 1 : factors.regionCoeff;
+      const regionLabel =
+        row.mode === "remote" ? "远程地区 1.0" : factors.regionLabel;
+      const left = [
+        `${formatPlainAmount(row.from, "currency")}（初始）`,
+        `${formatCoeffPercent(factors.levelCoeff)}（${factors.levelLabel}）`,
+        `${formatCoeffPercent(regionCoeff)}（${regionLabel}）`,
+      ].join(" × ");
+      return `${row.label}：${left} = ${formatPlainAmount(row.to, "currency")}${row.unit}`;
+    });
   }
 
   return [

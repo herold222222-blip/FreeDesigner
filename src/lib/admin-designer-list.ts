@@ -5,6 +5,7 @@ import type { Designer, OrderStatus } from "@/lib/types";
 /** 未完结订单状态（用于「进行中订单数」） */
 export const ONGOING_ORDER_STATUSES: OrderStatus[] = [
   "matching",
+  "pending_designer_accept",
   "pending_schedule",
   "pending_contract",
   "in_progress",

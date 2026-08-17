@@ -5,6 +5,7 @@ import { ConsoleBasePathProvider } from "@/components/layout/console-base-path";
 import { ConsoleShell } from "@/components/layout/console-shell";
 import { withMessagesNavItem } from "@/lib/inbox-nav";
 import { useInboxUnreadCount } from "@/lib/use-inbox-unread";
+import { RequireConsoleRoles } from "@/components/layout/require-console-roles";
 import {
   AlertCircle,
   ArrowDownToLine,
@@ -17,6 +18,8 @@ import {
   PackageSearch,
   Users,
 } from "lucide-react";
+
+const STAFF_ROLES = ["admin", "super_admin"] as const;
 
 const BASE_NAV = [
   { href: "/admin", label: "工作台", icon: LayoutDashboard, exact: true },
@@ -44,9 +47,11 @@ export default function AdminLayout({
 
   return (
     <ConsoleBasePathProvider basePath="/admin">
-      <ConsoleShell title="管理员后台" subtitle="平台总后台" nav={nav}>
-        {children}
-      </ConsoleShell>
+      <RequireConsoleRoles roles={STAFF_ROLES}>
+        <ConsoleShell title="管理员后台" subtitle="平台总后台" nav={nav}>
+          {children}
+        </ConsoleShell>
+      </RequireConsoleRoles>
     </ConsoleBasePathProvider>
   );
 }

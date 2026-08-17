@@ -8,6 +8,7 @@ import {
   type BountyStatusFilter,
 } from "@/lib/bounty-manage";
 import { DESIGNER_ORDER_STATUS_LABEL } from "@/lib/designer-order-status-filter";
+import { resolveDisplayOrderStatus } from "@/lib/order-lifecycle";
 import type { Bounty, Order, OrderSource, OrderStatus, Specialty } from "@/lib/types";
 
 export type ProjectListCategory =
@@ -127,18 +128,19 @@ function orderToItem(
     perspective === "client"
       ? nameById(order.designerId)
       : nameById(order.clientId);
+  const displayStatus = resolveDisplayOrderStatus(order);
   return {
     id: order.id,
     kind: "order",
     title: order.title,
     code: order.code,
-    status: order.status,
+    status: displayStatus,
     statusLabel:
       perspective === "designer"
-        ? (DESIGNER_ORDER_STATUS_LABEL[order.status] ??
-          ORDER_STATUS_META[order.status as OrderStatus]?.label ??
+        ? (DESIGNER_ORDER_STATUS_LABEL[displayStatus] ??
+          ORDER_STATUS_META[displayStatus]?.label ??
           order.status)
-        : (ORDER_STATUS_META[order.status as OrderStatus]?.label ?? order.status),
+        : (ORDER_STATUS_META[displayStatus]?.label ?? order.status),
     totalAmount: order.totalAmount,
     createdAt: order.createdAt,
     href:
@@ -370,7 +372,11 @@ export function buildUnifiedProjectList(input: BuildUnifiedListInput): UnifiedPr
       if (s.clientId === identityId) items.push(scanToItem(s, "client", nameById));
     }
   } else {
-    for (const o of orders.filter((x) => x.designerId === identityId)) {
+    for (const o of orders.filter(
+      (x) =>
+        x.designerId === identityId ||
+        (x.trackAssignments ?? []).some((a) => a.designerId === identityId),
+    )) {
       items.push(orderToItem(o, "designer", nameById));
     }
     for (const b of bounties) {

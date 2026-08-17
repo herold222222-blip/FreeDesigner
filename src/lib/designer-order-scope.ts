@@ -1,10 +1,13 @@
 import { resolveTrackLabels } from "@/lib/constants";
 import { getMergedStageCollaborators } from "@/lib/stage-collaborator";
 import { resolveStagePaymentSplits } from "@/lib/stage-payment-splits";
+import { computeTimeLineBreakdown } from "@/lib/regular-entrust-quote";
 import type {
   DeliverableFile,
+  Designer,
   Order,
   OrderAuditAssignment,
+  OrderQuoteLine,
   OrderTrackAssignment,
   PaymentStage,
   StageDesignerPaymentSplit,
@@ -69,9 +72,42 @@ export function getDesignerGrossForStage(
   );
 }
 
-/** 扣平台手续费后设计师实收 */
-export function getDesignerNetAmount(gross: number, feeRate: number) {
-  return Math.round(gross * (1 - (feeRate ?? 0.08)));
+/**
+ * 某付款阶段设计师应收 = 其负责专业基础服务费 × 阶段占比。
+ * 不含平台管理费、税费，也不另扣订单手续费。
+ * 各阶段四舍五入后由最后一阶段吃余数，保证合计等于基础服务费。
+ */
+export function getDesignerReceivableForStage(
+  order: Order,
+  stage: PaymentStage,
+  designerId: string,
+  options?: {
+    designer?: Designer | null;
+    involvedStages?: PaymentStage[];
+  },
+) {
+  const total = sumDesignerOrderNetEarnings(
+    order,
+    designerId,
+    options?.designer,
+  );
+  if (total > 0) {
+    const stages =
+      options?.involvedStages?.length ? options.involvedStages : [stage];
+    const idx = stages.findIndex((s) => s.id === stage.id);
+    if (idx < 0) return Math.round(total * stage.ratio);
+    if (idx === stages.length - 1) {
+      const prior = stages
+        .slice(0, idx)
+        .reduce((sum, s) => sum + Math.round(total * s.ratio), 0);
+      return total - prior;
+    }
+    return Math.round(total * stage.ratio);
+  }
+  return getDesignerSplitsForStage(order, stage, designerId).reduce(
+    (sum, s) => sum + s.amount,
+    0,
+  );
 }
 
 export function designerInvolvedInStage(
@@ -84,6 +120,7 @@ export function designerInvolvedInStage(
   }
 
   const trackIds = getDesignerTrackIds(order, designerId);
+  if (trackIds.size > 0) return true;
   const onStage = (order.trackAssignments ?? []).some(
     (a) => a.designerId === designerId && a.stageId === stage.id,
   );
@@ -196,12 +233,47 @@ export function getPeerTrackAssignments(
   );
 }
 
-export function sumDesignerOrderNetEarnings(order: Order, designerId: string) {
-  return order.stages.reduce((sum, stage) => {
-    if (!designerInvolvedInStage(order, stage, designerId)) return sum;
-    const gross = getDesignerGrossForStage(order, stage, designerId);
-    return sum + getDesignerNetAmount(gross, order.feeRate);
-  }, 0);
+function getDesignerQuoteLines(order: Order, designerId: string): OrderQuoteLine[] {
+  const lines = order.quote?.lines ?? [];
+  if (!lines.length) return [];
+  const mine = getDesignerTrackAssignments(order, designerId);
+  if (mine.length > 0) {
+    const l3s = new Set(mine.map((a) => a.l3));
+    return lines.filter((l) => l.l3 && l3s.has(l.l3));
+  }
+  if (order.designerId === designerId) return lines;
+  return [];
+}
+
+function lineBasicServiceFee(
+  order: Order,
+  line: OrderQuoteLine,
+  designer?: Designer | null,
+): number {
+  return (
+    computeTimeLineBreakdown(order, line, designer)?.basicFee ?? line.basicFee
+  );
+}
+
+/**
+ * 设计师「预计实收」= 其负责专业的基础服务费之和。
+ * 基础服务费 = 单价基数 × 工时 × 等级系数 × 地区系数 × 服务范围系数 × 难度系数 × 客户等级系数。
+ * 远程服务地区系数统一 1.0，客户等级按委托人实际等级。
+ * 不含平台管理费、商务费、审图/项目管理费与税费。
+ */
+export function sumDesignerOrderNetEarnings(
+  order: Order,
+  designerId: string,
+  designer?: Designer | null,
+) {
+  const lines = getDesignerQuoteLines(order, designerId);
+  if (lines.length > 0) {
+    return lines.reduce(
+      (sum, line) => sum + lineBasicServiceFee(order, line, designer),
+      0,
+    );
+  }
+  return 0;
 }
 
 export function canDesignerRequestWithdraw(

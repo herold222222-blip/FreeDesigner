@@ -35,6 +35,7 @@ export async function PATCH(
       workCalendarEvents?: Designer["workCalendarEvents"];
       calendarBatchSettings?: Designer["calendarBatchSettings"];
       portfolio?: PortfolioItem[];
+      acceptingOrders?: boolean;
     };
 
     let next: Designer = base;
@@ -63,6 +64,9 @@ export async function PATCH(
           portfolio,
         }),
       };
+    }
+    if (typeof body.acceptingOrders === "boolean") {
+      next = { ...next, acceptingOrders: body.acceptingOrders };
     }
 
     await saveDesigner(next);

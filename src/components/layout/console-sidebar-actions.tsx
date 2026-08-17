@@ -298,11 +298,7 @@ export function ConsoleSidebarActions({ consoleKind }: ConsoleSidebarActionsProp
 
   return (
     <>
-      <div className="space-y-1 px-3 py-3">
-        <p className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wider text-ink-40">
-          账号与帮助
-        </p>
-
+      <div className="space-y-1 px-3 pb-3 pt-0">
         {profile.usesLogo ? (
           <SidebarActionButton
             icon={ImagePlus}

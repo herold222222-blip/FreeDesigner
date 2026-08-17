@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UnifiedProjectRow } from "@/components/domain/unified-project-row";
@@ -14,18 +14,21 @@ import {
   type ClientOrderFocus,
 } from "@/lib/client-order-focus";
 import {
+  CLIENT_DEFAULT_TAB_PRIORITY,
   CLIENT_PLATFORM_STATUS_TABS,
   clientStatusCounts,
   filterItemsByClientStatus,
   type ClientOrderStatusFilter,
 } from "@/lib/client-order-status-filter";
 import {
+  DESIGNER_DEFAULT_TAB_PRIORITY,
   DESIGNER_PROJECT_STATUS_TABS,
   DESIGNER_STATUS_TAB_HIGHLIGHT,
   designerStatusCounts,
   filterItemsByDesignerStatus,
   type DesignerOrderStatusFilter,
 } from "@/lib/designer-order-status-filter";
+import { pickDefaultSupervisionTab } from "@/lib/order-supervision";
 import { cn } from "@/lib/utils";
 import {
   CLIENT_PLATFORM_CATEGORY_TABS,
@@ -55,7 +58,7 @@ function designerTabHighlightClass(
   count: number,
 ): string {
   if (count <= 0 || !DESIGNER_STATUS_TAB_HIGHLIGHT.includes(value)) return "";
-  if (value === "pending_revision") {
+  if (value === "in_revision") {
     return "border-violet-400 bg-violet-50 text-violet-900 ring-1 ring-violet-300 data-[state=active]:border-violet-600 data-[state=active]:bg-violet-600 data-[state=active]:text-white";
   }
   return "border-amber-400 bg-amber-50 text-amber-900 ring-1 ring-amber-300 data-[state=active]:border-amber-600 data-[state=active]:bg-amber-600 data-[state=active]:text-white";
@@ -91,6 +94,7 @@ export function UnifiedProjectList({
 }) {
   const [category, setCategory] = useState<ProjectListCategory>("all");
   const [status, setStatus] = useState<ListStatusFilter>("all");
+  const defaultTabPicked = useRef(false);
   const useClientPlatformStatus =
     perspective === "client" && platformOrdersOnly && !initialFocus;
   const useDesignerProjectStatus =
@@ -167,9 +171,43 @@ export function UnifiedProjectList({
     [allItems],
   );
   const designerStatusCountMap = useMemo(
-    () => designerStatusCounts(allItems),
-    [allItems],
+    () => designerStatusCounts(allItems, identityId),
+    [allItems, identityId],
   );
+
+  useEffect(() => {
+    if (listLoading || defaultTabPicked.current || initialFocus) return;
+    if (useClientPlatformStatus) {
+      defaultTabPicked.current = true;
+      setStatus(
+        pickDefaultSupervisionTab(
+          clientStatusCountMap,
+          CLIENT_DEFAULT_TAB_PRIORITY,
+          "all",
+        ),
+      );
+      return;
+    }
+    if (useDesignerProjectStatus) {
+      if (!identityId) return;
+      defaultTabPicked.current = true;
+      setStatus(
+        pickDefaultSupervisionTab(
+          designerStatusCountMap,
+          DESIGNER_DEFAULT_TAB_PRIORITY,
+          "all",
+        ),
+      );
+    }
+  }, [
+    identityId,
+    listLoading,
+    initialFocus,
+    useClientPlatformStatus,
+    useDesignerProjectStatus,
+    clientStatusCountMap,
+    designerStatusCountMap,
+  ]);
 
   const filtered = useMemo(() => {
     let list = allItems;
@@ -184,7 +222,11 @@ export function UnifiedProjectList({
       } else if (useClientPlatformStatus) {
         list = filterItemsByClientStatus(list, status as ClientOrderStatusFilter);
       } else if (useDesignerProjectStatus) {
-        list = filterItemsByDesignerStatus(list, status as DesignerOrderStatusFilter);
+        list = filterItemsByDesignerStatus(
+          list,
+          status as DesignerOrderStatusFilter,
+          identityId,
+        );
       } else if (perspective === "client") {
         list = filterItemsByClientStatus(list, status as ClientOrderStatusFilter);
       } else {
@@ -207,6 +249,7 @@ export function UnifiedProjectList({
     initialFocus,
     useClientPlatformStatus,
     useDesignerProjectStatus,
+    identityId,
   ]);
 
   const statusTabs = useClientPlatformStatus
@@ -315,13 +358,39 @@ export function UnifiedProjectList({
       </Tabs>
       ) : null}
 
+      {!initialFocus && listFilterMode ? (
+        <Tabs
+          value={specialty}
+          onValueChange={(v) => setSpecialty(v as PlatformSpecialtyFilter)}
+        >
+          <TabsList className="flex h-auto flex-wrap gap-1 bg-transparent p-0">
+            {PLATFORM_SPECIALTY_FILTER_TABS.map((t) => (
+              <TabsTrigger
+                key={t.value}
+                value={t.value}
+                className="gap-1.5 rounded-full border border-ink-20 bg-white px-3 py-1.5 text-xs data-[state=active]:border-ink data-[state=active]:bg-ink data-[state=active]:text-white"
+              >
+                {t.label}
+                <span className="rounded-full bg-ink-20/50 px-1.5 py-0 text-[10px] font-medium tabular-nums text-ink-60 data-[state=active]:bg-white/20 data-[state=active]:text-white">
+                  {specialtyCountMap[t.value]}
+                </span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      ) : null}
+
       {status === "pending_payment" && filtered.length > 0 ? (
         <Card className="border-amber-300 bg-gradient-to-br from-amber-50 to-orange-50/90 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <div className="text-sm font-semibold text-amber-950">待支付提醒</div>
+              <div className="text-sm font-semibold text-amber-950">
+                {perspective === "designer" ? "待委托人支付" : "待支付提醒"}
+              </div>
               <p className="mt-1 text-xs text-amber-800">
-                以下 {filtered.length} 笔订单有待付款项，请尽快完成支付以保障项目进度。
+                {perspective === "designer"
+                  ? `以下 ${filtered.length} 笔订单等待委托人付款。`
+                  : `以下 ${filtered.length} 笔订单有待付款项，请尽快完成支付以保障项目进度。`}
               </p>
             </div>
             <span className="rounded-full bg-amber-500 px-2.5 py-0.5 text-[11px] font-semibold text-white">
@@ -347,26 +416,20 @@ export function UnifiedProjectList({
         </Card>
       ) : null}
 
-      {!initialFocus && listFilterMode ? (
-        <Tabs
-          value={specialty}
-          onValueChange={(v) => setSpecialty(v as PlatformSpecialtyFilter)}
-        >
-          <TabsList className="flex h-auto flex-wrap gap-1 bg-transparent p-0">
-            {PLATFORM_SPECIALTY_FILTER_TABS.map((t) => (
-              <TabsTrigger
-                key={t.value}
-                value={t.value}
-                className="gap-1.5 rounded-full border border-ink-20 bg-white px-3 py-1.5 text-xs data-[state=active]:border-ink data-[state=active]:bg-ink data-[state=active]:text-white"
-              >
-                {t.label}
-                <span className="rounded-full bg-ink-20/50 px-1.5 py-0 text-[10px] font-medium tabular-nums text-ink-60 data-[state=active]:bg-white/20 data-[state=active]:text-white">
-                  {specialtyCountMap[t.value]}
-                </span>
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+      {status === "pending_client_review" && filtered.length > 0 ? (
+        <Card className="border-amber-300 bg-gradient-to-br from-amber-50 to-yellow-50/90 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-semibold text-amber-950">待评价</div>
+              <p className="mt-1 text-xs text-amber-800">
+                以下 {filtered.length} 笔已完成项目可评价设计师，评价窗口为最后一笔费用支付后 30 天。
+              </p>
+            </div>
+            <span className="rounded-full bg-amber-500 px-2.5 py-0.5 text-[11px] font-semibold text-white">
+              {filtered.length} 笔待评价
+            </span>
+          </div>
+        </Card>
       ) : null}
 
       <div className="space-y-4">
@@ -382,6 +445,7 @@ export function UnifiedProjectList({
               perspective={perspective}
               paymentHighlight={status === "pending_payment"}
               reviewHighlight={status === "pending_review"}
+              clientReviewHighlight={status === "pending_client_review"}
             />
           ))
         )}

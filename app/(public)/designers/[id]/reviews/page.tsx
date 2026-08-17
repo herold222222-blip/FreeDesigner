@@ -11,6 +11,7 @@ import { SpecialtyBadge } from "@/components/domain/status-badges";
 import { GuestAccessGate } from "@/components/domain/guest-access-gate";
 import { ArrowLeft, Star } from "lucide-react";
 import type { DesignerLevel } from "@/lib/types";
+import { aggregateDesignerReviewStats, formatDesignerRating } from "@/lib/designer-rating";
 import { useDesigner, useDesignerReviews } from "@/lib/use-data";
 
 export default function DesignerReviewsPage({
@@ -27,9 +28,10 @@ export default function DesignerReviewsPage({
 
 function DesignerReviewsInner({ designerId }: { designerId: string }) {
   const { data: designer, loading } = useDesigner(designerId);
-  const { data: reviews } = useDesignerReviews(designerId);
+  const { data: reviews, loading: reviewsLoading } =
+    useDesignerReviews(designerId);
 
-  if (loading) {
+  if (loading || reviewsLoading) {
     return (
       <div className="container-page py-20 text-center text-ink-60">
         正在加载历史评价...
@@ -45,6 +47,15 @@ function DesignerReviewsInner({ designerId }: { designerId: string }) {
   }
 
   const level: DesignerLevel = designer.level ?? "mid_v1";
+  const reviewStats = aggregateDesignerReviewStats(reviews);
+  const reviewCount = reviewStats.reviewCount || designer.reviewCount || 0;
+  const rating =
+    reviewStats.reviewCount > 0 ? reviewStats.rating : designer.rating;
+  const breakdown = reviewStats.ratingBreakdown ?? designer.ratingBreakdown;
+  const impressions =
+    reviewStats.impressions.length > 0
+      ? reviewStats.impressions
+      : designer.impressions ?? [];
 
   return (
     <div className="container-page py-10">
@@ -75,17 +86,17 @@ function DesignerReviewsInner({ designerId }: { designerId: string }) {
             <div className="flex items-center justify-end gap-1">
               <Star className="h-6 w-6 fill-amber-400 text-amber-400" />
               <span className="text-3xl font-semibold tabular-nums text-ink">
-                {designer.rating}
+                {reviewCount > 0 ? formatDesignerRating(rating) : "0.0"}
               </span>
               <span className="text-sm text-ink-60">/ 5</span>
             </div>
             <p className="mt-1 text-xs text-ink-60">
-              共 {designer.reviewCount} 条好评 · 本页展示 {reviews.length} 条
+              共 {reviewCount} 条评价 · 本页展示 {reviews.length} 条
             </p>
           </div>
         </div>
 
-        {designer.ratingBreakdown ? (
+        {breakdown ? (
           <div className="mt-6 grid gap-3 border-t border-ink-20 pt-6 sm:grid-cols-3">
             {(
               [
@@ -100,16 +111,16 @@ function DesignerReviewsInner({ designerId }: { designerId: string }) {
               >
                 <span className="text-ink-60">{d.label}</span>
                 <span className="font-semibold tabular-nums text-ink">
-                  {designer.ratingBreakdown![d.key].toFixed(1)}
+                  {breakdown[d.key].toFixed(1)}
                 </span>
               </div>
             ))}
           </div>
         ) : null}
 
-        {designer.impressions?.length ? (
+        {impressions.length ? (
           <div className="mt-4 flex flex-wrap gap-2">
-            {designer.impressions.map((imp) => (
+            {impressions.map((imp) => (
               <Badge key={imp.id} variant="muted" className="gap-1.5">
                 {imp.label}
                 <span className="text-[10px] font-semibold text-brand">+{imp.count}</span>

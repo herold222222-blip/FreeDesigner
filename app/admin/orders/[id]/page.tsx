@@ -3,12 +3,17 @@
 import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useOrder, useDesigners } from "@/lib/use-data";
+import { useOrder, useDesigners, useAdminClients } from "@/lib/use-data";
 import { invalidateApiPath } from "@/lib/use-data";
 import { updateMatchingOrderRequest } from "@/lib/api-client";
 import { AdminAssignDesignerPanel } from "@/components/domain/admin-assign-designer-panel";
 import { OrderQuotePanel } from "@/components/domain/order-quote-panel";
-import { OrderEntrustDescription } from "@/components/domain/order-entrust-description";
+import {
+  OrderEntrustDescription,
+  quoteLinesFromOrder,
+} from "@/components/domain/order-entrust-description";
+import { OrderAttachmentsList } from "@/components/domain/order-attachments";
+import { AdminCsQuoteReviewPanel } from "@/components/domain/admin-cs-quote-review-panel";
 import {
   MatchingOrderEditDialog,
   type MatchingOrderEditPayload,
@@ -18,23 +23,33 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
+  AwaitingClientPaymentBadge,
   OrderStatusBadge,
   SpecialtyBadge,
 } from "@/components/domain/status-badges";
+import { PaymentDeadlineBadge } from "@/components/domain/payment-deadline-note";
+import { isAwaitingClientPaymentOrder } from "@/lib/order-supervision";
+import { getPayableStageDeadline } from "@/lib/order-payment-overdue";
 import { ProjectIdCopy } from "@/components/domain/project-id-copy";
 import { StageTimeline } from "@/components/domain/stage-timeline";
 import { OrderWorkCalendarContentsPanel } from "@/components/domain/order-work-calendar-contents-panel";
-import { AdminStageCollaboratorSection } from "@/components/domain/stage-collaborator-panel";
 import { OrderTrackAssignmentsPanel } from "@/components/domain/order-track-assignments";
 import {
   OrderValueAddedBadges,
   OrderValueAddedServicesPanel,
 } from "@/components/domain/order-value-added-services";
-import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
+import { formatDate, formatDateTime } from "@/lib/utils";
 import { useConsoleBasePath } from "@/components/layout/console-base-path";
 import { AdminConsoleReturnBar } from "@/components/layout/admin-console-return-bar";
 import { parseAdminUsersReturnTo, withReturnTo } from "@/lib/admin-return-to";
 import { useSessionStore } from "@/store/session-store";
+import { isContractFullySigned, isOrderCancelled, isOrderDeletable } from "@/lib/order-lifecycle";
+import { isTimeBilledOrder } from "@/lib/time-billing";
+import {
+  OrderCancelledBanner,
+  OrderInteractionLock,
+} from "@/components/domain/order-cancelled-lock";
+import { OrderDeleteButton } from "@/components/domain/order-delete-button";
 import { ArrowLeft, Calendar, Clock, MapPin, Pencil, ShieldAlert } from "lucide-react";
 
 function AdminOrderDetailInner({
@@ -51,6 +66,7 @@ function AdminOrderDetailInner({
 
   const { data: order, loading, refresh } = useOrder(params.id);
   const { data: designers } = useDesigners();
+  const { data: clients } = useAdminClients();
   const [editOpen, setEditOpen] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
 
@@ -64,7 +80,14 @@ function AdminOrderDetailInner({
     setEditSaving(true);
     try {
       await updateMatchingOrderRequest(order.id, payload);
-      push({ title: "委托信息已更新", variant: "success" });
+      push({
+        title: "委托信息已更新",
+        description:
+          order.status === "pending_quote" || order.levelQuotes?.length
+            ? "如已重新生成报价卡，请再次确认后开放委托人选卡。"
+            : undefined,
+        variant: "success",
+      });
       setEditOpen(false);
       invalidateApiPath("/api/orders");
       refresh();
@@ -102,6 +125,10 @@ function AdminOrderDetailInner({
       ? withReturnTo(`${base}/orders${ordersListQuery}`, usersReturnTo)
       : `${base}/orders${ordersListQuery}`;
 
+  const cancelled = isOrderCancelled(order);
+  const paymentDeadline = getPayableStageDeadline(order);
+  const ordererClient = clients.find((c) => c.id === order.clientId);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
@@ -117,6 +144,23 @@ function AdminOrderDetailInner({
         </Link>
       </div>
 
+      <OrderCancelledBanner order={order} />
+
+      {isOrderDeletable(order) ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200/80 bg-rose-50/50 px-4 py-3">
+          <p className="text-xs text-rose-900/80">
+            {order.status === "cancelled" ? "已取消" : "已完成"}
+            的订单可永久删除，删除后无法恢复。
+          </p>
+          <OrderDeleteButton
+            order={order}
+            perspective="admin"
+            redirectTo={`${base}/orders`}
+          />
+        </div>
+      ) : null}
+
+      <OrderInteractionLock order={order} className="space-y-6">
       <Card className="p-7">
 
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -127,7 +171,13 @@ function AdminOrderDetailInner({
 
               <SpecialtyBadge specialty={order.specialty} />
 
-              <OrderStatusBadge status={order.status} />
+              <OrderStatusBadge order={order} />
+              {isAwaitingClientPaymentOrder(order) ? (
+                <AwaitingClientPaymentBadge perspective="admin" />
+              ) : null}
+              {paymentDeadline ? (
+                <PaymentDeadlineBadge deadline={paymentDeadline} />
+              ) : null}
 
               <OrderValueAddedBadges order={order} />
 
@@ -146,13 +196,8 @@ function AdminOrderDetailInner({
           </div>
 
           <div className="flex flex-col items-end gap-2 text-right">
-            <div>
-              <div className="text-xs text-ink-60">订单总额</div>
-              <div className="text-2xl font-semibold tracking-tight text-ink">
-                {formatCurrency(order.totalAmount)}
-              </div>
-            </div>
-            {order.status === "matching" ? (
+            {!cancelled &&
+            (order.status === "matching" || order.status === "pending_quote") ? (
               <Button
                 type="button"
                 variant="outline"
@@ -166,7 +211,18 @@ function AdminOrderDetailInner({
           </div>
         </div>
 
-        <OrderEntrustDescription description={order.description} />
+        <OrderEntrustDescription
+          description={order.description}
+          quoteLines={quoteLinesFromOrder(order)}
+          orderer={{
+            name: ordererClient?.name ?? "—",
+            avatar: ordererClient?.avatar,
+            phone: ordererClient?.phone,
+            level: ordererClient?.level,
+          }}
+        />
+
+        <OrderAttachmentsList attachments={order.attachments} />
 
         <Separator className="my-6" />
 
@@ -248,9 +304,21 @@ function AdminOrderDetailInner({
 
 
 
-      {order.quote ? <OrderQuotePanel order={order} /> : null}
+      {order.quote || order.levelQuotes?.length ? (
+        <OrderQuotePanel order={order} />
+      ) : null}
 
-      {order.status === "matching" ? (
+      {!cancelled ? (
+        <AdminCsQuoteReviewPanel
+          order={order}
+          designers={designers}
+          onUpdated={refresh}
+        />
+      ) : null}
+
+      {!cancelled &&
+      (order.status === "matching" ||
+        order.status === "pending_designer_accept") ? (
         <AdminAssignDesignerPanel
           order={order}
           designers={designers}
@@ -320,16 +388,6 @@ function AdminOrderDetailInner({
 
 
 
-      <AdminStageCollaboratorSection
-
-        order={order}
-
-        getDesigner={getDesignerById}
-
-      />
-
-
-
       <OrderWorkCalendarContentsPanel order={order} perspective="admin" />
 
 
@@ -345,9 +403,17 @@ function AdminOrderDetailInner({
           </h2>
 
           <p className="mt-1 text-sm text-ink-60">
-
-            含已确认配合费扣减后的设计师分配；待付款阶段可转发支付链接给委托人扫码支付。
-
+            {isContractFullySigned(order)
+              ? isTimeBilledOrder(order)
+                ? order.billingMode === "monthly"
+                  ? "按月雇佣：首月签约预付，此后按月支付服务费。待付款阶段可转发支付链接给委托人扫码支付。"
+                  : "按工时计费：签约预付 30%，原合同服务期结束后付清尾款 70%。待付款阶段可转发支付链接给委托人扫码支付。"
+                : "含已确认配合费扣减后的设计师分配；待付款阶段可转发支付链接给委托人扫码支付。"
+              : isTimeBilledOrder(order)
+                ? order.billingMode === "monthly"
+                  ? "电子合同签订前仅预览付款阶段比例，不展示金额。双方签约后可转发支付链接。"
+                  : "按工时计费：签约预付 30%，服务结束后付清尾款 70%。电子合同签订前仅预览比例，不展示金额；签约后方可转发支付链接。"
+                : "电子合同签订前仅预览付款阶段比例，不展示金额。双方签约后可转发支付链接。"}
           </p>
 
         </div>
@@ -366,7 +432,10 @@ function AdminOrderDetailInner({
 
       </Card>
 
-      {order.status === "matching" ? (
+      </OrderInteractionLock>
+
+      {!cancelled &&
+      (order.status === "matching" || order.status === "pending_quote") ? (
         <MatchingOrderEditDialog
           open={editOpen}
           onOpenChange={setEditOpen}

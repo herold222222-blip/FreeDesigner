@@ -150,10 +150,10 @@ export function ConsoleShell({
               );
             })}
           </nav>
+          {sidebarBottom}
         </div>
 
         <div className="shrink-0 border-t border-ink-20">
-          {sidebarBottom}
           <div className="space-y-2 px-3 py-3">
             <button
               type="button"

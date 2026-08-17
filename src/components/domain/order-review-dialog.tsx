@@ -52,15 +52,18 @@ export function OrderReviewDialog({
   open,
   onOpenChange,
   designerName,
+  deadlineHint,
   onSubmit,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   designerName: string;
+  deadlineHint?: string | null;
   onSubmit: (payload: {
     overall: number;
     breakdown: RatingBreakdown;
     content: string;
+    anonymous: boolean;
   }) => Promise<void>;
 }) {
   const [breakdown, setBreakdown] = useState<RatingBreakdown>({
@@ -69,6 +72,7 @@ export function OrderReviewDialog({
     responsiveness: 5,
   });
   const [content, setContent] = useState("");
+  const [anonymous, setAnonymous] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const overall =
@@ -82,11 +86,13 @@ export function OrderReviewDialog({
 
   const handleSubmit = async () => {
     if (busy) return;
+    if (!content.trim()) return;
     setBusy(true);
     try {
-      await onSubmit({ overall, breakdown, content });
+      await onSubmit({ overall, breakdown, content: content.trim(), anonymous });
       onOpenChange(false);
       setContent("");
+      setAnonymous(false);
     } finally {
       setBusy(false);
     }
@@ -98,8 +104,8 @@ export function OrderReviewDialog({
         <DialogHeader>
           <DialogTitle>评价设计师</DialogTitle>
           <DialogDescription>
-            对 {designerName} 在本项目中的表现进行三维度评价（结案后 3
-            个月内有效）。
+            对 {designerName} 在本项目中的表现进行评分和评论
+            {deadlineHint ? `。${deadlineHint}` : "（最后一笔费用支付后 30 天内有效）。"}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
@@ -123,13 +129,32 @@ export function OrderReviewDialog({
             }
           />
           <Textarea
-            placeholder="补充评价内容（选填）"
+            placeholder="请填写评价内容"
             value={content}
             onChange={(e) => setContent(e.target.value)}
             rows={4}
           />
+          <label className="flex items-start gap-2 text-sm text-ink">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-ink-20 accent-brand"
+              checked={anonymous}
+              onChange={(e) => setAnonymous(e.target.checked)}
+            />
+            <span>
+              匿名评价
+              <span className="mt-0.5 block text-[11px] leading-relaxed text-ink-40">
+                勾选后，历史评价仅显示项目名首字和末两字、委托人姓氏，其余用 * 代替。
+              </span>
+            </span>
+          </label>
         </div>
-        <Button variant="brand" className="w-full" disabled={busy} onClick={handleSubmit}>
+        <Button
+          variant="brand"
+          className="w-full"
+          disabled={busy || !content.trim()}
+          onClick={handleSubmit}
+        >
           {busy ? "提交中..." : "提交评价"}
         </Button>
       </DialogContent>

@@ -5,12 +5,25 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { OrderProjectWorkCalendar } from "@/components/domain/order-project-work-calendar";
 import { ServiceExtensionDialog } from "@/components/domain/service-extension-dialog";
-import { useDesigner } from "@/lib/use-data";
+import { StageParticipantDeliverables } from "@/components/domain/stage-participant-deliverables";
+import { useDesigner, useDesigners, useServiceProviders } from "@/lib/use-data";
 import { useDesignerCalendarStore } from "@/store/designer-calendar-store";
 import { useSessionStore } from "@/store/session-store";
-import type { Order } from "@/lib/types";
+import type { Order, PaymentStage } from "@/lib/types";
+import { isContractFullySigned, isOrderCancelled } from "@/lib/order-lifecycle";
+import { getActivePaymentStageId, getStagePaymentDeadline } from "@/lib/order-payment-overdue";
+import { PaymentDeadlineNote } from "@/components/domain/payment-deadline-note";
+import { resolveStagePaymentSplits } from "@/lib/stage-payment-splits";
 import {
   DAILY_BILLING_RULE,
   MONTHLY_BILLING_RULE_FULL,
@@ -29,6 +42,7 @@ import {
   type TimeBillingPaymentItem,
 } from "@/lib/time-billing";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import {
   CalendarPlus,
   CalendarRange,
@@ -49,48 +63,29 @@ const PAYMENT_STATUS_META: Record<
   due: { label: "待付尾款", variant: "amber" },
 };
 
-export function OrderScheduleBillingPanel({
+export function OrderServiceControlCard({
   order,
-  onPayStage,
-  paying,
+  perspective = "client",
+  className,
 }: {
   order: Order;
-  onPayStage?: (item: TimeBillingPaymentItem) => void;
-  paying?: boolean;
+  perspective?: "client" | "designer";
+  className?: string;
 }) {
   const push = useSessionStore((s) => s.pushNotification);
-  const designerId = order.designerId;
-  const { data: designer } = useDesigner(designerId);
-  const hydrateFromDesigner = useDesignerCalendarStore((s) => s.hydrateFromDesigner);
-  const getEvents = useDesignerCalendarStore((s) => s.getEvents);
-
   const [extensions, setExtensions] = useState<ServiceExtensionRecord[]>([]);
   const [extendOpen, setExtendOpen] = useState(false);
-
-  useEffect(() => {
-    if (designer) hydrateFromDesigner(designer);
-  }, [designer, hydrateFromDesigner]);
-
-  const scheduleEvents = useMemo(
-    () => getOrderScheduleEvents(getEvents(designerId), order),
-    [getEvents, designerId, order],
-  );
-
   const isMonthly = order.billingMode === "monthly";
-  const paymentItems = useMemo(
-    () =>
-      isMonthly
-        ? buildMonthlyPaymentItems(order)
-        : buildDailyPaymentItems(order),
-    [order, isMonthly],
-  );
-
   const monthlyFee = getMonthlyUnitFee(order);
-  const ruleText = isMonthly ? MONTHLY_BILLING_RULE_FULL : DAILY_BILLING_RULE;
-  const extensionOpen = canRequestServiceExtension(order, extensions);
+  const cancelled = isOrderCancelled(order);
+  const contractSigned = isContractFullySigned(order);
+  const isDesignerView = perspective === "designer";
+  const actionsEnabled = contractSigned && !cancelled && !isDesignerView;
+  const deadlineOpen = canRequestServiceExtension(order, extensions);
+  const extensionOpen = actionsEnabled && deadlineOpen;
   const extensionDeadline = formatServiceExtensionDeadline(order, extensions);
   const serviceEnd = getEffectiveServiceEnd(order, extensions);
-  const canTerminate = canTerminateService(order);
+  const canTerminate = actionsEnabled && canTerminateService(order);
 
   const handleExtensionSubmit = (record: ServiceExtensionRecord) => {
     setExtensions((prev) => [...prev, record]);
@@ -119,99 +114,39 @@ export function OrderScheduleBillingPanel({
   };
 
   return (
-    <Card className="p-7">
-      <div className="mb-5">
-        <h2 className="text-lg font-semibold tracking-tight text-ink">
-          工作日历 & 付款
-        </h2>
-        <p className="mt-1 text-sm text-ink-60">{ruleText}</p>
-      </div>
-
-      <OrderProjectWorkCalendar events={scheduleEvents} />
-
-      <Separator className="my-6" />
-
-      <div className="space-y-4">
-        <div className="flex items-center gap-2 text-sm font-semibold text-ink">
-          <Clock className="h-4 w-4 text-ink-60" />
-          付款安排
-        </div>
-
-        <div className="space-y-2">
-          {paymentItems.map((item) => {
-            const meta =
-              PAYMENT_STATUS_META[item.status] ?? PAYMENT_STATUS_META.pending;
-            const canPay =
-              onPayStage &&
-              item.stageId &&
-              (item.status === "pending" || item.status === "due");
-
-            return (
-              <div
-                key={item.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ink-20 bg-white p-4"
-              >
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-medium text-ink">
-                      {item.label}
-                    </span>
-                    <Badge variant={meta.variant}>{meta.label}</Badge>
-                  </div>
-                  {item.hint ? (
-                    <p className="text-xs text-ink-60">{item.hint}</p>
-                  ) : null}
-                  {item.dueAt && item.status !== "settled" ? (
-                    <p className="text-xs text-ink-40">
-                      截止 {formatDateTime(item.dueAt)}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-base font-semibold text-ink">
-                    {formatCurrency(item.amount)}
-                  </span>
-                  {canPay ? (
-                    <Button
-                      variant="brand"
-                      size="sm"
-                      disabled={paying}
-                      onClick={() => onPayStage(item)}
-                    >
-                      支付
-                    </Button>
-                  ) : item.status === "settled" ? (
-                    <Check className="h-4 w-4 text-emerald-600" />
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
-
-          {extensions.map((ext) => (
-            <div
-              key={ext.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-brand/40 bg-brand/5 p-4"
-            >
-              <div className="min-w-0 flex-1 space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium text-ink">
-                    延长服务 ·{" "}
-                    {ext.units}
-                    {ext.unitType === "month" ? " 个月" : " 个半天"}
-                  </span>
-                  <Badge variant="muted">待设计师确认</Badge>
-                </div>
-                <p className="text-xs text-ink-60">
-                  延长至 {formatDate(ext.extendedEndAt)} · 预估{" "}
-                  {formatCurrency(ext.amount)}
-                </p>
-              </div>
+    <>
+      {extensions.map((ext) => (
+        <div
+          key={ext.id}
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-brand/40 bg-brand/5 p-4"
+        >
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium text-ink">
+                延长服务 ·{" "}
+                {ext.units}
+                {ext.unitType === "month" ? " 个月" : " 个半天"}
+              </span>
+              <Badge variant="muted">待设计师确认</Badge>
             </div>
-          ))}
+            <p className="text-xs text-ink-60">
+              延长至 {formatDate(ext.extendedEndAt)} · 预估{" "}
+              {formatCurrency(ext.amount)}
+            </p>
+          </div>
         </div>
-
-        <div className="rounded-xl border border-ink-20 bg-ink-20/10 p-4 space-y-3">
+      ))}
+      <div
+        className={cn(
+          "rounded-xl border border-ink-20 bg-ink-20/10 p-4 space-y-3",
+          className,
+        )}
+      >
+        {isDesignerView ? (
+          <p className="text-xs text-ink-50">
+            延长与终止由委托人发起，确认后将同步到本页日历与付款安排。
+          </p>
+        ) : (
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
@@ -230,21 +165,279 @@ export function OrderScheduleBillingPanel({
               <StopCircle className="h-3.5 w-3.5" /> 终止服务并结算
             </Button>
           </div>
-          <p className="text-xs leading-relaxed text-ink-60">
-            {getExtensionRule(order)}
-            {extensionDeadline && extensionOpen ? (
-              <span className="mt-1 block text-amber-700">
-                本次可申请至 {extensionDeadline}
-                {serviceEnd ? `（当前服务结束 ${formatDate(serviceEnd)}）` : ""}
-              </span>
-            ) : !extensionOpen && extensionDeadline ? (
-              <span className="mt-1 block text-rose-600">
-                已过本次延长申请截止（{extensionDeadline}）
-              </span>
-            ) : null}
+        )}
+        {!isDesignerView && !contractSigned && !cancelled ? (
+          <p className="text-xs text-ink-40">
+            双方完成电子签约后，方可支付、延长或终止服务。
           </p>
-          <p className="text-xs text-ink-50">{getTerminationRule(order)}</p>
+        ) : null}
+        <p className="text-xs leading-relaxed text-ink-60">
+          {getExtensionRule(order)}
+          {extensionDeadline && deadlineOpen ? (
+            <span className="mt-1 block text-amber-700">
+              在 {extensionDeadline}前可以申请延长服务时间
+              {serviceEnd ? `（本次服务截止 ${formatDate(serviceEnd)}）` : ""}
+            </span>
+          ) : extensionDeadline ? (
+            <span className="mt-1 block text-rose-600">
+              已过本次延长申请截止（{extensionDeadline}）
+            </span>
+          ) : null}
+        </p>
+        <p className="text-xs text-ink-50">{getTerminationRule(order)}</p>
+      </div>
+      {isDesignerView ? null : (
+        <ServiceExtensionDialog
+          open={extendOpen}
+          onOpenChange={setExtendOpen}
+          order={order}
+          extensions={extensions}
+          onSubmit={handleExtensionSubmit}
+        />
+      )}
+    </>
+  );
+}
+
+export function OrderScheduleBillingPanel({
+  order,
+  onPayStage,
+  paying,
+  embedded,
+  perspective = "client",
+  hideServiceControls,
+  onReviseStage,
+  onConfirmStage,
+  revising,
+}: {
+  order: Order;
+  onPayStage?: (item: TimeBillingPaymentItem) => void;
+  paying?: boolean;
+  embedded?: boolean;
+  perspective?: "client" | "designer";
+  hideServiceControls?: boolean;
+  onReviseStage?: (payload: {
+    stageId: string;
+    fileId?: string;
+    fileName?: string;
+    description: string;
+    attachments: { name: string; url?: string; size?: number }[];
+  }) => void;
+  revising?: boolean;
+  onConfirmStage?: (stageId: string) => void;
+}) {
+  const designerId = order.designerId;
+  const { data: designer } = useDesigner(designerId);
+  const { data: designers } = useDesigners();
+  const { data: serviceProviders } = useServiceProviders();
+  const hydrateFromDesigner = useDesignerCalendarStore((s) => s.hydrateFromDesigner);
+  const getEvents = useDesignerCalendarStore((s) => s.getEvents);
+  const getDesigner = useMemo(
+    () => (id: string) => designers.find((d) => d.id === id),
+    [designers],
+  );
+  const getServiceProvider = useMemo(
+    () => (id: string) => serviceProviders.find((p) => p.id === id),
+    [serviceProviders],
+  );
+
+  const [pendingPayItem, setPendingPayItem] = useState<TimeBillingPaymentItem | null>(null);
+
+  useEffect(() => {
+    if (designer) hydrateFromDesigner(designer);
+  }, [designer, hydrateFromDesigner]);
+
+  const scheduleEvents = useMemo(
+    () => getOrderScheduleEvents(getEvents(designerId), order),
+    [getEvents, designerId, order],
+  );
+
+  const isMonthly = order.billingMode === "monthly";
+  const paymentItems = useMemo(
+    () =>
+      isMonthly
+        ? buildMonthlyPaymentItems(order)
+        : buildDailyPaymentItems(order),
+    [order, isMonthly],
+  );
+
+  const monthlyFee = getMonthlyUnitFee(order);
+  const ruleText = isMonthly ? MONTHLY_BILLING_RULE_FULL : DAILY_BILLING_RULE;
+  const cancelled = isOrderCancelled(order);
+  const contractSigned = isContractFullySigned(order);
+  const isDesignerView = perspective === "designer";
+  const actionsEnabled = contractSigned && !cancelled && !isDesignerView;
+  const activeStageId = getActivePaymentStageId(order);
+  const isDaily = order.billingMode === "daily";
+
+  const resolveItemStage = (item: TimeBillingPaymentItem): PaymentStage | undefined => {
+    if (item.stageId) return order.stages.find((s) => s.id === item.stageId);
+    if (item.id === "final") return order.stages[1];
+    return undefined;
+  };
+
+  const handlePayClick = (item: TimeBillingPaymentItem) => {
+    if (!onPayStage) return;
+    const stage = resolveItemStage(item);
+    const needsDeliverable = isDaily && item.id === "final";
+    const hasFiles = (stage?.deliverables?.length ?? 0) > 0;
+    if (needsDeliverable && !hasFiles) {
+      setPendingPayItem(item);
+      return;
+    }
+    onPayStage(item);
+  };
+
+  const body = (
+    <>
+      {embedded ? (
+        <p className="mb-5 text-sm text-ink-60">{ruleText}</p>
+      ) : (
+        <div className="mb-5">
+          <h2 className="text-lg font-semibold tracking-tight text-ink">
+            工作日历 & 付款
+          </h2>
+          <p className="mt-1 text-sm text-ink-60">{ruleText}</p>
         </div>
+      )}
+
+      <OrderProjectWorkCalendar events={scheduleEvents} />
+
+      {isDesignerView ? null : (
+      <>
+      <Separator className="my-6" />
+
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+          <Clock className="h-4 w-4 text-ink-60" />
+          付款安排
+        </div>
+
+        <div className="space-y-3">
+          {paymentItems.map((item) => {
+            const meta =
+              PAYMENT_STATUS_META[item.status] ?? PAYMENT_STATUS_META.pending;
+            const stage = resolveItemStage(item);
+            const isActive = Boolean(
+              item.stageId && activeStageId && item.stageId === activeStageId,
+            );
+            const showPay =
+              !isDesignerView &&
+              onPayStage &&
+              item.stageId &&
+              isActive &&
+              (item.status === "pending" || item.status === "due");
+            const isBalance = isDaily && item.id === "final";
+            const paymentDeadline = stage
+              ? getStagePaymentDeadline(order, stage)
+              : null;
+            const splits =
+              stage && !isDesignerView
+                ? resolveStagePaymentSplits(order, stage)
+                : [];
+            const showParticipants = Boolean(stage && !isDesignerView);
+
+            return (
+              <div
+                key={item.id}
+                className={cn(
+                  "rounded-xl border bg-white p-4 transition-shadow",
+                  isActive
+                    ? "border-brand ring-2 ring-brand/20 shadow-md"
+                    : "border-ink-20",
+                )}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium text-ink">
+                        {item.label}
+                      </span>
+                      {isActive ? (
+                        <Badge variant="brand">当前阶段</Badge>
+                      ) : null}
+                      <Badge variant={meta.variant}>{meta.label}</Badge>
+                    </div>
+                    {item.hint ? (
+                      <p className="text-xs text-ink-60">{item.hint}</p>
+                    ) : null}
+                    {paymentDeadline ? (
+                      <PaymentDeadlineNote deadline={paymentDeadline} />
+                    ) : null}
+                    {isBalance &&
+                    stage &&
+                    stage.status === "pending" &&
+                    !stage.deliverablesConfirmedAt ? (
+                      <p className="text-xs text-ink-50">
+                        本阶段请设计师上传成果或确认单（图片 / PDF）。委托人可确认后支付。
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-base font-semibold text-ink">
+                      {formatCurrency(item.amount)}
+                    </span>
+                    {showPay ? (
+                      <Button
+                        variant="brand"
+                        size="sm"
+                        disabled={paying || !actionsEnabled}
+                        onClick={() => handlePayClick(item)}
+                      >
+                        支付
+                      </Button>
+                    ) : item.status === "settled" ||
+                      item.status === "frozen" ||
+                      item.status === "paid" ? (
+                      <Check className="h-4 w-4 text-emerald-600" />
+                    ) : null}
+                  </div>
+                </div>
+
+                {showParticipants ? (
+                  <StageParticipantDeliverables
+                    order={order}
+                    stage={stage}
+                    getDesigner={getDesigner}
+                    getServiceProvider={getServiceProvider}
+                    forceShow
+                    compact
+                    splits={splits}
+                    showFiles={isBalance}
+                    unlocked={
+                      stage.status === "released" ||
+                      stage.status === "frozen" ||
+                      stage.status === "paid"
+                    }
+                    onConfirm={
+                      isBalance && actionsEnabled && onConfirmStage
+                        ? () => onConfirmStage(stage.id)
+                        : undefined
+                    }
+                    confirmDisabled={!actionsEnabled}
+                    onRevise={
+                      isBalance && actionsEnabled && onReviseStage
+                        ? ({ file, description, attachments }) =>
+                            onReviseStage({
+                              stageId: stage.id,
+                              fileId: file.id,
+                              fileName: file.name,
+                              description,
+                              attachments,
+                            })
+                        : undefined
+                    }
+                    reviseDisabled={!actionsEnabled || revising}
+                  />
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+
+        {hideServiceControls ? null : (
+          <OrderServiceControlCard order={order} perspective={perspective} />
+        )}
 
         {isMonthly ? (
           <p className="rounded-xl border border-ink-20 bg-ink-20/10 px-4 py-3 text-xs text-ink-60">
@@ -253,14 +446,41 @@ export function OrderScheduleBillingPanel({
           </p>
         ) : null}
       </div>
+      </>
+      )}
 
-      <ServiceExtensionDialog
-        open={extendOpen}
-        onOpenChange={setExtendOpen}
-        order={order}
-        extensions={extensions}
-        onSubmit={handleExtensionSubmit}
-      />
-    </Card>
+      <Dialog
+        open={!!pendingPayItem}
+        onOpenChange={(open) => {
+          if (!open) setPendingPayItem(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>确认支付本阶段费用</DialogTitle>
+            <DialogDescription>
+              当前设计师未上传任何成果或者确认单，是否确认并去支付该阶段费用？
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingPayItem(null)}>
+              取消
+            </Button>
+            <Button
+              variant="brand"
+              onClick={() => {
+                if (pendingPayItem) onPayStage?.(pendingPayItem);
+                setPendingPayItem(null);
+              }}
+            >
+              确认并支付
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
+
+  if (embedded) return body;
+  return <Card className="p-7">{body}</Card>;
 }

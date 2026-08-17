@@ -1,58 +1,106 @@
 import {
-  isPendingPaymentOrder,
-} from "@/lib/client-order-focus";
-import type { Order, OrderStatus } from "@/lib/types";
+  CLIENT_DEFAULT_TAB_PRIORITY,
+  adminClientAllSortRank,
+  compareByCreatedAtDesc,
+  isActiveSupervisionOrderWithClientReview,
+  isAwaitingClientPaymentOrder,
+  isAwaitingClientSignOrder,
+  isAwaitingDesignerSignOrder,
+  isAwaitingMatchOrder,
+  isAwaitingReviewOrder,
+  isInProgressSupervisionOrder,
+  isInRevisionSupervisionOrder,
+  isMatchingInProgressOrder,
+  scanMatchesSupervision,
+  type OrderSupervisionStatus,
+} from "@/lib/order-supervision";
+import { isAwaitingClientReviewOrder } from "@/lib/client-review";
 import type { UnifiedProjectItem } from "@/lib/unified-project-list";
-import { filterByStatus } from "@/lib/unified-project-list";
 
-/** 委托人平台订单 · 状态筛选（含虚拟筛选项） */
-export type ClientOrderStatusFilter =
-  | OrderStatus
-  | "all"
-  | "pending_payment"
-  | "pending_rating";
+export type ClientOrderStatusFilter = OrderSupervisionStatus;
 
 export const CLIENT_PLATFORM_STATUS_TABS: {
   value: ClientOrderStatusFilter;
   label: string;
 }[] = [
-  { value: "all", label: "全部状态" },
-  { value: "pending_quote", label: "待确认报价" },
-  { value: "matching", label: "待匹配设计师" },
-  { value: "pending_contract", label: "待签约" },
-  { value: "pending_payment", label: "待支付" },
+  { value: "all", label: "全部" },
   { value: "in_progress", label: "进行中" },
+  { value: "pending_payment", label: "待支付" },
+  { value: "awaiting_match", label: "待匹配" },
+  { value: "matching", label: "匹配中" },
+  { value: "pending_client_sign", label: "待签约" },
   { value: "pending_review", label: "待成果确认" },
-  { value: "pending_rating", label: "待评价" },
-  { value: "in_revision", label: "返修修改中" },
+  { value: "pending_client_review", label: "待评价" },
+  { value: "pending_designer_sign", label: "待设计师签约" },
+  { value: "in_revision", label: "返修中" },
   { value: "completed", label: "已完成" },
-  { value: "terminated", label: "已终止" },
   { value: "cancelled", label: "已取消" },
 ];
 
-/** 已完成但委托人尚未评价设计师 */
-export function isPendingRatingOrder(order: Order): boolean {
-  if (order.status !== "completed") return false;
-  return order.clientReviewed !== true;
+export { CLIENT_DEFAULT_TAB_PRIORITY };
+
+function orderMatchesClientStatus(
+  order: NonNullable<UnifiedProjectItem["order"]>,
+  status: ClientOrderStatusFilter,
+): boolean {
+  switch (status) {
+    case "all":
+      return isActiveSupervisionOrderWithClientReview(order);
+    case "in_progress":
+      return (
+        isInProgressSupervisionOrder(order) &&
+        !isAwaitingClientReviewOrder(order)
+      );
+    case "pending_payment":
+      return isAwaitingClientPaymentOrder(order);
+    case "awaiting_match":
+      return isAwaitingMatchOrder(order);
+    case "matching":
+      return isMatchingInProgressOrder(order);
+    case "pending_client_sign":
+      return isAwaitingClientSignOrder(order);
+    case "pending_designer_sign":
+      return isAwaitingDesignerSignOrder(order);
+    case "pending_review":
+      return isAwaitingReviewOrder(order);
+    case "pending_client_review":
+      return isAwaitingClientReviewOrder(order);
+    case "in_revision":
+      return isInRevisionSupervisionOrder(order);
+    case "completed":
+      return order.status === "completed" && !isAwaitingClientReviewOrder(order);
+    case "cancelled":
+      return order.status === "cancelled";
+    default:
+      return false;
+  }
 }
 
 export function filterItemsByClientStatus(
   items: UnifiedProjectItem[],
   status: ClientOrderStatusFilter,
 ): UnifiedProjectItem[] {
-  if (status === "all") return items;
-  if (status === "pending_payment") {
-    return items.filter((item) => {
-      if (item.order) return isPendingPaymentOrder(item.order);
-      return item.status === "pending_prepay";
+  const filtered = items.filter((item) => {
+    if (item.order) return orderMatchesClientStatus(item.order, status);
+    if (item.scan) {
+      return scanMatchesSupervision(item.scan, status, "client");
+    }
+    if (status === "all") {
+      return item.status !== "completed" && item.status !== "cancelled";
+    }
+    return false;
+  });
+
+  if (status === "all") {
+    return filtered.sort((a, b) => {
+      if (a.order && b.order) {
+        const rank = adminClientAllSortRank(a.order) - adminClientAllSortRank(b.order);
+        if (rank !== 0) return rank;
+      }
+      return compareByCreatedAtDesc(a, b);
     });
   }
-  if (status === "pending_rating") {
-    return items.filter(
-      (item) => item.order && isPendingRatingOrder(item.order),
-    );
-  }
-  return filterByStatus(items, status);
+  return filtered;
 }
 
 export function clientStatusCounts(
@@ -61,13 +109,8 @@ export function clientStatusCounts(
   const counts = Object.fromEntries(
     CLIENT_PLATFORM_STATUS_TABS.map((t) => [t.value, 0]),
   ) as Record<ClientOrderStatusFilter, number>;
-  counts.all = items.length;
-  for (const item of items) {
-    for (const tab of CLIENT_PLATFORM_STATUS_TABS) {
-      if (tab.value === "all") continue;
-      const matched = filterItemsByClientStatus([item], tab.value);
-      if (matched.length > 0) counts[tab.value] += 1;
-    }
+  for (const tab of CLIENT_PLATFORM_STATUS_TABS) {
+    counts[tab.value] = filterItemsByClientStatus(items, tab.value).length;
   }
   return counts;
 }

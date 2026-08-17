@@ -202,6 +202,86 @@ export function getHardscapeScopeNote(
  * - 电气：固定 100%
  * - 结构：无独立难度档，固定 100%
  */
+export function isTimeLandscapeTrack(t: string): t is TimeLandscapeTrack {
+  return (
+    t === "hardscape" ||
+    t === "softscape" ||
+    t === "drainage" ||
+    t === "electrical" ||
+    t === "structure"
+  );
+}
+
+export type TimeDifficultyDisplay = {
+  label: string;
+  value: number;
+  percent: string;
+  remark?: string;
+};
+
+/** 按时间计费：把已选难度还原为展示用的档位名、系数与说明 */
+export function resolveTimeDifficultyDisplay(input: {
+  track?: TimeLandscapeTrack | string | null;
+  difficulty?: number;
+  difficultyLabel?: string;
+  difficultyKey?: string;
+}): TimeDifficultyDisplay | null {
+  const track =
+    input.track && isTimeLandscapeTrack(input.track) ? input.track : undefined;
+  if (track) {
+    const ui = landscapeTimeDifficultyUI(track);
+    if (ui.kind === "fixed") {
+      return {
+        label: "固定",
+        value: ui.value,
+        percent: `${Math.round(ui.value * 100)}%`,
+        remark: ui.note,
+      };
+    }
+    const byKey = input.difficultyKey
+      ? ui.options.find((o) => difficultyOptionKey(o) === input.difficultyKey)
+      : undefined;
+    const byLabel = input.difficultyLabel
+      ? ui.options.find((o) => o.label === input.difficultyLabel)
+      : undefined;
+    const byValue =
+      input.difficulty != null
+        ? ui.options.filter(
+            (o) => Math.abs(o.value - input.difficulty!) < 0.001,
+          )
+        : [];
+    const hit =
+      byKey ??
+      byLabel ??
+      (byValue.length === 1
+        ? byValue[0]
+        : byValue.find((o) => o.label === input.difficultyLabel) ??
+          byValue[0]);
+    if (hit) {
+      return {
+        label: hit.label,
+        value: hit.value,
+        percent: `${Math.round(hit.value * 100)}%`,
+        remark: hit.remark,
+      };
+    }
+  }
+  if (input.difficulty == null && !input.difficultyLabel) return null;
+  const value = input.difficulty ?? 1;
+  return {
+    label: input.difficultyLabel ?? "",
+    value,
+    percent: `${Math.round(value * 100)}%`,
+  };
+}
+
+export function formatTimeDifficultySuffix(
+  display: TimeDifficultyDisplay,
+): string {
+  const head = `难度${display.label} ${display.percent}`.replace(/\s+/g, " ").trim();
+  return display.remark ? `${head}（${display.remark}）` : head;
+}
+
 export function landscapeTimeDifficultyUI(
   t: TimeLandscapeTrack,
   cfg: LandscapeTrackDifficultyConfig = DEFAULT_DIFFICULTY,
@@ -226,4 +306,14 @@ export function landscapeTimeDifficultyUI(
         note: "结构专业按时间计费暂无独立难度档位，系数固定 100%。",
       };
   }
+}
+
+/** 园建「高 · 120%（协调绿化、水电）」仅驻场可选 */
+export function filterTimeDifficultyOptionsByServiceMode(
+  track: TimeLandscapeTrack,
+  options: LandscapeAreaDifficultyOption[],
+  serviceMode: "remote" | "onsite",
+): LandscapeAreaDifficultyOption[] {
+  if (serviceMode === "onsite" || track !== "hardscape") return options;
+  return options.filter((o) => o.id !== "high");
 }

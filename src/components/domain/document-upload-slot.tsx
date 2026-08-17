@@ -2,6 +2,7 @@
 
 import { Upload, X, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MAX_ATTACHMENT_LABEL } from "@/lib/attachment-limits";
 
 export function DocumentUploadSlot({
   label,
@@ -60,7 +61,9 @@ export function DocumentUploadSlot({
     >
       <Upload className="h-6 w-6" />
       <div className="text-sm font-medium">{emptyHint}</div>
-      <div className="text-xs text-ink-40">支持 JPG / PNG / PDF · 单文件不超过 10MB</div>
+      <div className="text-xs text-ink-40">
+        支持 JPG / PNG / PDF · 单文件不超过 {MAX_ATTACHMENT_LABEL}
+      </div>
     </button>
   );
 }

@@ -31,7 +31,12 @@ import { usePlatformPricingStore } from "@/store/platform-pricing-store";
 import { useDesignerRateSettingsStore } from "@/store/designer-rate-settings-store";
 import { useRoleStore } from "@/store/role-store";
 import { useSessionStore } from "@/store/session-store";
-import { useDesigner } from "@/lib/use-data";
+import { useDesigner, invalidateApiPath } from "@/lib/use-data";
+import { updateDesignerProfileRequest } from "@/lib/api-client";
+import {
+  designerCanAcceptOrders,
+  portfolioReadinessHint,
+} from "@/lib/designer-portfolio-readiness";
 import { ChevronRight, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -57,6 +62,7 @@ export function DesignerPricingBaseSidebarCard() {
   const [open, setOpen] = useState(false);
   const [acceptingOrders, setAcceptingOrders] = useState(true);
   const [acceptPlatformBilling, setAcceptPlatformBilling] = useState(true);
+  const [acceptingBusy, setAcceptingBusy] = useState(false);
 
   useEffect(() => {
     if (designer) setAcceptingOrders(designer.acceptingOrders !== false);
@@ -98,16 +104,46 @@ export function DesignerPricingBaseSidebarCard() {
   const activeSnapshot = acceptPlatformBilling
     ? designerComposite
     : customSnapshot;
+  const canAccept = designerCanAcceptOrders(designer);
 
-  const toggleAccepting = (next: boolean) => {
+  const toggleAccepting = async (next: boolean) => {
+    if (acceptingBusy) return;
+    if (next && !canAccept) {
+      push({
+        title: "暂不可开启接单",
+        description:
+          portfolioReadinessHint(designer) ||
+          "请先在作品管理中按项目类型上传至少 1 个案例。",
+        variant: "destructive",
+      });
+      return;
+    }
+    const prev = acceptingOrders;
     setAcceptingOrders(next);
-    push({
-      title: next ? "已开启接单" : "已关闭接单",
-      description: next
-        ? "主页将显示为可接单状态，委托人可发起定向委托。"
-        : "主页将显示暂停接单，定向委托入口暂不可用。",
-      variant: next ? "success" : "default",
-    });
+    setAcceptingBusy(true);
+    try {
+      await updateDesignerProfileRequest(designer.id, {
+        acceptingOrders: next,
+      });
+      invalidateApiPath(`/api/designers/${designer.id}`);
+      invalidateApiPath("/api/designers");
+      push({
+        title: next ? "已开启接单" : "已关闭接单",
+        description: next
+          ? "主页将显示为可接单状态，委托人可发起定向委托。"
+          : "主页将显示暂停接单，定向委托入口暂不可用。",
+        variant: next ? "success" : "default",
+      });
+    } catch (e) {
+      setAcceptingOrders(prev);
+      push({
+        title: "接单状态更新失败",
+        description: e instanceof Error ? e.message : "请稍后再试",
+        variant: "destructive",
+      });
+    } finally {
+      setAcceptingBusy(false);
+    }
   };
 
   const togglePlatformBilling = (next: boolean) => {
@@ -333,6 +369,7 @@ export function DesignerPricingBaseSidebarCard() {
         <Switch
           id="accepting-orders"
           checked={acceptingOrders}
+          disabled={acceptingBusy}
           onCheckedChange={toggleAccepting}
           className={cn(
             acceptingOrders &&

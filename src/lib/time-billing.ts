@@ -99,23 +99,45 @@ export interface TimeBillingPaymentItem {
   stageId?: string;
 }
 
+function paymentItemStatusFromStage(
+  stage: PaymentStage | undefined,
+): TimeBillingPaymentItem["status"] {
+  if (!stage) return "pending";
+  if (stage.status === "released") return "settled";
+  return stage.status;
+}
+
 export function buildDailyPaymentItems(order: Order): TimeBillingPaymentItem[] {
   const prepay = order.stages[0];
-  const settled = prepay?.status === "released";
   const tailStages = order.stages.slice(1);
   const remaining = tailStages.reduce((sum, s) => sum + s.amount, 0);
   const settlementDue = getDailySettlementDueAt(order);
   const tailPending = tailStages.find((s) => s.status === "pending");
-  const tailAllSettled =
+  const tailFocus =
+    tailPending ??
+    tailStages.find((s) => s.status === "frozen" || s.status === "paid") ??
+    tailStages.at(-1);
+  const tailAllReleased =
     tailStages.length > 0 &&
     tailStages.every((s) => s.status === "released");
+  const tailUnpaid = Boolean(tailPending);
+
+  let tailStatus: TimeBillingPaymentItem["status"];
+  if (tailAllReleased || order.status === "completed") {
+    tailStatus = "settled";
+  } else if (tailPending) {
+    tailStatus =
+      settlementDue && new Date() > new Date(settlementDue) ? "due" : "pending";
+  } else {
+    tailStatus = paymentItemStatusFromStage(tailFocus);
+  }
 
   return [
     {
       id: "prepay",
       label: "预付款",
       amount: prepay?.amount ?? Math.round(order.totalAmount * 0.3),
-      status: settled ? "settled" : (prepay?.status ?? "pending"),
+      status: paymentItemStatusFromStage(prepay),
       stageId: prepay?.id,
       hint: "签约后预付，用于锁定档期并启动服务",
     },
@@ -123,15 +145,10 @@ export function buildDailyPaymentItems(order: Order): TimeBillingPaymentItem[] {
       id: "final",
       label: "合同尾款",
       amount: remaining || order.totalAmount - (prepay?.amount ?? 0),
-      status:
-        tailAllSettled || order.status === "completed" ? "settled"
-        : settlementDue && new Date() > new Date(settlementDue) && tailPending
-          ? "due"
-        : tailPending ? "pending"
-        : "pending",
+      status: tailStatus,
       dueAt: settlementDue ?? undefined,
-      stageId: tailPending?.id,
-      hint: settlementDue
+      stageId: tailFocus?.id,
+      hint: tailUnpaid && settlementDue
         ? `原合同服务期结束后 ${DAILY_SETTLEMENT_GRACE_DAYS} 日内付清（截止 ${formatDateTime(settlementDue)}）`
         : undefined,
     },

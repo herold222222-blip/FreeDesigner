@@ -2,7 +2,7 @@
 
 import type { DeliverableFile, Designer } from "@/lib/types";
 import { Button } from "@/components/ui/button";
-import { Download, Eye, FileBox, Lock } from "lucide-react";
+import { Download, Eye, FileBox, Lock, RotateCcw } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
 import { useSessionStore } from "@/store/session-store";
 
@@ -11,12 +11,14 @@ export function DeliverableFileList({
   getDesigner,
   compact,
   unlocked = true,
+  onRevise,
 }: {
   files: DeliverableFile[];
   getDesigner?: (id: string) => Designer | undefined;
   compact?: boolean;
   /** 是否已验收解锁下载 */
   unlocked?: boolean;
+  onRevise?: (file: DeliverableFile) => void;
 }) {
   const push = useSessionStore((s) => s.pushNotification);
 
@@ -61,29 +63,52 @@ export function DeliverableFileList({
                 variant="ghost"
                 size="sm"
                 className="h-8 px-2"
-                onClick={() =>
-                  push({ title: "已打开成果预览", description: file.name })
-                }
+                onClick={() => {
+                  if (file.url || file.thumbnail) {
+                    window.open(file.url || file.thumbnail, "_blank", "noopener,noreferrer");
+                    return;
+                  }
+                  push({ title: "已打开成果预览", description: file.name });
+                }}
               >
                 <Eye className="h-3.5 w-3.5" />
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 px-2"
-                onClick={() =>
-                  unlocked ?
-                    push({ title: "下载已开始", description: file.name })
-                  : push({
-                      title: "需先验收确认才能下载",
-                      variant: "destructive",
-                    })
-                }
-              >
-                {unlocked ?
-                  <Download className="h-3.5 w-3.5" />
-                : <Lock className="h-3.5 w-3.5" />}
-              </Button>
+              {unlocked && (file.url || file.thumbnail) ? (
+                <Button variant="ghost" size="sm" className="h-8 px-2" asChild>
+                  <a href={file.url || file.thumbnail} download={file.name}>
+                    <Download className="h-3.5 w-3.5" />
+                  </a>
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2"
+                  onClick={() =>
+                    unlocked ?
+                      push({ title: "下载已开始", description: file.name })
+                    : push({
+                        title: "需先验收确认才能下载",
+                        variant: "destructive",
+                      })
+                  }
+                >
+                  {unlocked ?
+                    <Download className="h-3.5 w-3.5" />
+                  : <Lock className="h-3.5 w-3.5" />}
+                </Button>
+              )}
+              {onRevise ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2"
+                  onClick={() => onRevise(file)}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  返修
+                </Button>
+              ) : null}
             </div>
           </div>
         );

@@ -2,13 +2,14 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import type { Designer, Order, PaymentStage } from "@/lib/types";
+import type { DeliverableFile, Designer, Order, PaymentStage } from "@/lib/types";
 import {
   getStageTrackDeliverableGroups,
   stageAcceptanceKey,
 } from "@/lib/stage-track-groups";
 import { resolveTrackLabels } from "@/lib/constants";
 import { useStageAcceptanceStore } from "@/store/stage-acceptance-store";
+import { useSessionStore } from "@/store/session-store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -19,10 +20,32 @@ import {
   Check,
   CheckCircle2,
   ChevronRight,
+  Download,
   Eye,
   FileBox,
   Lock,
 } from "lucide-react";
+
+function isStageClientAccepted(stage: PaymentStage) {
+  return Boolean(stage.deliverablesConfirmedAt) || stage.status === "released";
+}
+
+function downloadDeliverableFiles(files: DeliverableFile[]) {
+  const downloadable = files.filter((file) => file.url || file.thumbnail);
+  if (downloadable.length === 0) return false;
+  for (const file of downloadable) {
+    const href = file.url || file.thumbnail;
+    if (!href) continue;
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = file.name;
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  return true;
+}
 
 const EMPTY_ACCEPTED: string[] = [];
 
@@ -34,6 +57,7 @@ export function StageTrackAcceptancePanel({
   onRevise,
   onStageComplete,
   onTrackAccepted,
+  canConfirm = true,
 }: {
   order: Order;
   stage: PaymentStage;
@@ -42,23 +66,50 @@ export function StageTrackAcceptancePanel({
   onRevise: () => void;
   onStageComplete: () => void;
   onTrackAccepted: (trackLabel: string) => void;
+  /** 仅委托方可点「确认验收」；管理端只展示状态 */
+  canConfirm?: boolean;
 }) {
+  const push = useSessionStore((s) => s.pushNotification);
   const acceptanceKey = stageAcceptanceKey(order.id, stage.id);
-  const acceptedIds =
+  const storedAcceptedIds =
     useStageAcceptanceStore((s) => s.acceptedByStage[acceptanceKey]) ??
     EMPTY_ACCEPTED;
   const acceptTracks = useStageAcceptanceStore((s) => s.acceptTracks);
+  const clientAccepted = isStageClientAccepted(stage);
 
   const groups = useMemo(
     () => getStageTrackDeliverableGroups(order, stage),
     [order, stage],
   );
+  const acceptedIds = clientAccepted
+    ? groups.map((g) => g.groupId)
+    : storedAcceptedIds;
 
   const [selected, setSelected] = useState<string[]>([]);
 
   const pendingGroups = groups.filter((g) => !acceptedIds.includes(g.groupId));
   const allAccepted =
     groups.length > 0 && groups.every((g) => acceptedIds.includes(g.groupId));
+
+  const handleDownload = (files: DeliverableFile[], unlocked: boolean) => {
+    if (!unlocked) {
+      push({
+        title: "需先验收确认才能下载",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!downloadDeliverableFiles(files)) {
+      push({ title: "暂无可下载文件" });
+    }
+  };
+
+  const acceptedBadge = (
+    <Badge variant="emerald" className="h-9 px-3 text-xs">
+      <CheckCircle2 className="h-3.5 w-3.5" />
+      委托方已验收
+    </Badge>
+  );
   const selectablePending = pendingGroups.map((g) => g.groupId);
   const allSelected =
     selectablePending.length > 0 &&
@@ -118,7 +169,14 @@ export function StageTrackAcceptancePanel({
             <Button variant="outline" size="sm" onClick={onPreview}>
               <Eye className="h-3.5 w-3.5" /> 在线预览
             </Button>
-            {!accepted ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleDownload(group.deliverables, accepted)}
+            >
+              <Download className="h-3.5 w-3.5" /> 下载成果
+            </Button>
+            {accepted ? acceptedBadge : canConfirm ? (
               <Button
                 size="sm"
                 variant="brand"
@@ -130,20 +188,13 @@ export function StageTrackAcceptancePanel({
           </div>
         </div>
 
-        {accepted ? (
-          <div className="mb-3 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            本阶段成果已验收完成
-          </div>
-        ) : null}
-
         <DeliverableFileList
           files={group.deliverables}
           getDesigner={getDesigner}
           unlocked={accepted}
         />
 
-        {!accepted ? (
+        {!accepted && canConfirm ? (
           <div className="mt-3 flex justify-end">
             <Button variant="outline" size="sm" onClick={onRevise}>
               申请返修
@@ -170,7 +221,19 @@ export function StageTrackAcceptancePanel({
           <Button variant="outline" size="sm" onClick={onPreview}>
             <Eye className="h-3.5 w-3.5" /> 在线预览
           </Button>
-          {!allAccepted && pendingGroups.length > 0 ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              handleDownload(
+                groups.flatMap((g) => g.deliverables),
+                allAccepted,
+              )
+            }
+          >
+            <Download className="h-3.5 w-3.5" /> 下载成果
+          </Button>
+          {allAccepted ? acceptedBadge : canConfirm && pendingGroups.length > 0 ? (
             <>
               <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-ink-20 bg-white px-3 py-1.5 text-xs text-ink">
                 <input
@@ -287,22 +350,22 @@ export function StageTrackAcceptancePanel({
 
                 <div className="flex shrink-0 flex-col items-end gap-2">
                   {accepted ?
-                    <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
-                      已验收
-                    </Badge>
+                    <Badge variant="emerald">委托方已验收</Badge>
                   : <>
                       <Badge variant="outline" className="text-[10px]">
                         <Lock className="mr-1 h-3 w-3" />
                         待验收
                       </Badge>
-                      <Button
-                        size="sm"
-                        variant="brand"
-                        onClick={() => acceptGroupIds([group.groupId])}
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                        验收本专业
-                      </Button>
+                      {canConfirm ? (
+                        <Button
+                          size="sm"
+                          variant="brand"
+                          onClick={() => acceptGroupIds([group.groupId])}
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                          验收本专业
+                        </Button>
+                      ) : null}
                     </>
                   }
                 </div>
@@ -312,7 +375,7 @@ export function StageTrackAcceptancePanel({
         })}
       </div>
 
-      {!allAccepted ? (
+      {!allAccepted && canConfirm ? (
         <div className="mt-4 flex justify-end">
           <Button variant="outline" size="sm" onClick={onRevise}>
             申请返修

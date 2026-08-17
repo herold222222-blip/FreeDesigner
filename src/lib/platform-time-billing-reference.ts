@@ -59,17 +59,18 @@ export function getPlatformTimeBillingReference(
   const levelCoeff = config.designerLevelCoefficient[refs.designerLevel];
   const regionCoeff = config.regionTierCoefficient[refs.designerRegion];
   const clientCoeff = config.clientLevelCoefficient[refs.clientLevel];
-  const mult = levelCoeff * regionCoeff * clientCoeff;
+  const remoteMult = levelCoeff * clientCoeff;
+  const onsiteMult = levelCoeff * regionCoeff * clientCoeff;
   const drawingCoeff = config.onsiteWithDrawingCoefficient;
 
   const rows: TimeBillingReferenceRow[] = REFERENCE_TRACKS.map((track) => {
     const remoteBase = rateTable.remote[track];
     const onsiteBase = rateTable.onsite[track];
-    const onsite = Math.round(onsiteBase * mult);
+    const onsite = Math.round(onsiteBase * onsiteMult);
     return {
       track,
       trackLabel: LANDSCAPE_TIME_TRACK_LABELS[track],
-      remote: Math.round(remoteBase * mult),
+      remote: Math.round(remoteBase * remoteMult),
       onsite,
       onsiteWithDrawing: Math.round(onsite * drawingCoeff),
     };
@@ -82,7 +83,7 @@ export function getPlatformTimeBillingReference(
     unit,
     unitSuffix: unit === "day" ? "工日" : "月",
     rows,
-    exampleNote: `设计师所在地：${designerRegion} · 设计师等级：${designerLevel} · 客户等级：${clientLevel}`,
-    formulaNote: `文档基准 × ${DESIGNER_LEVEL_META[refs.designerLevel].label} × ${REGION_TIER_META[refs.designerRegion].label} × ${CLIENT_LEVEL_META[refs.clientLevel].label} · 难度系数默认 100%`,
+    exampleNote: `设计师等级：${designerLevel} · 客户等级：${clientLevel} · 远程地区系数 1.0 · 驻场按${designerRegion}`,
+    formulaNote: `文档基准 × ${DESIGNER_LEVEL_META[refs.designerLevel].label} × ${CLIENT_LEVEL_META[refs.clientLevel].label} · 远程地区系数统一 1.0 · 驻场另乘 ${REGION_TIER_META[refs.designerRegion].label} · 难度系数默认 100%`,
   };
 }

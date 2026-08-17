@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { fetchMe } from "@/lib/api-client";
 import type { Role } from "@/lib/types";
 import { canPublishEntrust } from "@/lib/publish-access";
@@ -12,23 +11,9 @@ import { useRoleStore } from "@/store/role-store";
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { LanguageSwitcher } from "@/components/layout/language-switcher";
 import { HeaderInboxBell } from "@/components/layout/header-inbox-bell";
+import { HeaderUserMenu } from "@/components/layout/header-user-menu";
 import { MemberLink } from "@/components/domain/member-link";
 import { cn } from "@/lib/utils";
-
-function workbenchHref(role: Role): string {
-  switch (role) {
-    case "client":
-      return "/client";
-    case "designer":
-      return "/designer";
-    case "super_admin":
-      return "/super-admin";
-    case "admin":
-      return "/admin";
-    default:
-      return "/";
-  }
-}
 
 function resolveProfileFallback(role: Role) {
   if (role === "client") return { name: "委托人", avatar: null };
@@ -142,26 +127,12 @@ export function PublicHeader() {
           {authReady && role !== "guest" ? (
             <div className="flex items-center gap-2">
               {displayProfile ? (
-                <div className="flex items-center gap-2" title={displayProfile.name}>
-                  <Avatar className="h-8 w-8 border border-ink-20">
-                    {displayProfile.avatar ? (
-                      <AvatarImage
-                        src={displayProfile.avatar}
-                        alt={displayProfile.name}
-                      />
-                    ) : null}
-                    <AvatarFallback className="bg-ink-20/50 text-xs font-medium text-ink">
-                      {displayProfile.name.slice(0, 1)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className="max-w-[8rem] truncate text-sm font-medium text-ink">
-                    {displayProfile.name}
-                  </span>
-                </div>
+                <HeaderUserMenu
+                  role={role}
+                  name={displayProfile.name}
+                  avatar={displayProfile.avatar}
+                />
               ) : null}
-              <Button asChild variant="outline" size="sm">
-                <Link href={workbenchHref(role)}>我的工作台</Link>
-              </Button>
               <HeaderInboxBell />
             </div>
           ) : authReady ? (

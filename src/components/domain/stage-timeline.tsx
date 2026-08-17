@@ -2,26 +2,29 @@
 
 import * as React from "react";
 import Link from "next/link";
-import type { Designer, Order, PaymentStage } from "@/lib/types";
+import type { DeliverableFile, Designer, Order, PaymentStage } from "@/lib/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StagePaymentSplitsPanel } from "@/components/domain/stage-payment-splits";
 import { StageCollaboratorPanel } from "@/components/domain/stage-collaborator-panel";
 import { StageTrackAcceptancePanel } from "@/components/domain/stage-track-acceptance";
+import { StageParticipantDeliverables } from "@/components/domain/stage-participant-deliverables";
+import { getActivePaymentStageId, getStagePaymentDeadline } from "@/lib/order-payment-overdue";
+import { PaymentDeadlineNote } from "@/components/domain/payment-deadline-note";
 import { resolveStagePaymentSplits } from "@/lib/stage-payment-splits";
 import {
   canDesignerRequestWithdraw,
   designerInvolvedInStage,
   DESIGNER_STAGE_PAYMENT_META,
-  getDesignerGrossForStage,
-  getDesignerNetAmount,
+  getDesignerReceivableForStage,
   getDesignerOwnDeliverables,
   getDesignerStagePaymentStatus,
 } from "@/lib/designer-order-scope";
 import { findServiceProvider } from "@/lib/service-provider-catalog";
 import { useServiceProviders } from "@/lib/use-data";
 import { ForwardPaymentLinkDialog } from "@/components/domain/forward-payment-link-dialog";
+import { StageDeliverableUploadDialog } from "@/components/domain/stage-deliverable-upload-dialog";
 import {
   ArrowDownToLine,
   Check,
@@ -32,10 +35,19 @@ import {
   Upload,
 } from "lucide-react";
 import { MONTHLY_BILLING_RULE, formatMonthlyDueHint } from "@/lib/monthly-billing";
+import { DAILY_BILLING_RULE } from "@/lib/time-billing";
+import {
+  isPrepaymentStage,
+  resolveOrderPaymentStages,
+} from "@/lib/order-payment-stages";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { useSessionStore } from "@/store/session-store";
 import { cn } from "@/lib/utils";
-import { isContractFullySigned } from "@/lib/order-lifecycle";
+import {
+  isContractFullySigned,
+  isOrderCancelled,
+  orderHasLockedQuoteAmounts,
+} from "@/lib/order-lifecycle";
 
 const STAGE_STATUS_META: Record<
   PaymentStage["status"],
@@ -67,7 +79,7 @@ export function StageTimeline({
   onPay?: (stage: PaymentStage) => void;
   onStageComplete?: (stage: PaymentStage) => void;
   onRevise?: (stage: PaymentStage) => void;
-  onUploadDeliverables?: (stage: PaymentStage) => void;
+  onUploadDeliverables?: (stage: PaymentStage, files: DeliverableFile[]) => void;
 }) {
   const push = useSessionStore((s) => s.pushNotification);
   const { data: serviceProviders } = useServiceProviders();
@@ -75,15 +87,17 @@ export function StageTimeline({
     findServiceProvider(serviceProviders, id);
   const [forwardPayStage, setForwardPayStage] =
     React.useState<PaymentStage | null>(null);
+  const [uploadStage, setUploadStage] = React.useState<PaymentStage | null>(null);
   const isClientView = perspective === "client" || perspective === "admin";
   const isDesignerView = perspective === "designer" && !!currentDesignerId;
 
+  const paymentStages = resolveOrderPaymentStages(order);
   const visibleStages =
     isDesignerView ?
-      order.stages.filter((s) =>
+      paymentStages.filter((s) =>
         designerInvolvedInStage(order, s, currentDesignerId!),
       )
-    : order.stages;
+    : paymentStages;
 
   const handlePay = (stage: PaymentStage) => {
     if (onPay) {
@@ -137,12 +151,34 @@ export function StageTimeline({
   }
 
   const isMonthlyOrder = order.billingMode === "monthly";
+  const isDailyOrder = order.billingMode === "daily";
+  const contractSigned = isContractFullySigned(order);
+  const amountsReady = contractSigned || orderHasLockedQuoteAmounts(order);
+  /** 报价未锁定前只展示比例；匹配确认后展示金额，支付仍须签约 */
+  const previewOnly = !amountsReady;
+  const activeStageId = getActivePaymentStageId(order, visibleStages);
+  const revising = order.status === "in_revision";
 
   return (
     <div className="space-y-5">
       {isMonthlyOrder && isClientView ? (
         <p className="rounded-xl border border-violet-200/80 bg-violet-50/50 px-4 py-3 text-xs leading-relaxed text-violet-900">
           {MONTHLY_BILLING_RULE}
+        </p>
+      ) : null}
+      {isDailyOrder && isClientView ? (
+        <p className="rounded-xl border border-violet-200/80 bg-violet-50/50 px-4 py-3 text-xs leading-relaxed text-violet-900">
+          {DAILY_BILLING_RULE}
+        </p>
+      ) : null}
+      {previewOnly && isClientView ? (
+        <p className="text-xs text-ink-40">
+          电子合同尚未签订，此处仅预览付款比例，不展示金额。双方签约后方可转发支付链接。
+        </p>
+      ) : null}
+      {amountsReady && !contractSigned && isClientView ? (
+        <p className="text-xs text-ink-40">
+          报价已锁定，阶段金额按确认方案计算。双方完成电子签约后方可支付或转发支付链接。
         </p>
       ) : null}
       {visibleStages.map((stage, i) => {
@@ -153,13 +189,12 @@ export function StageTimeline({
           designerPayStatus ?
             DESIGNER_STAGE_PAYMENT_META[designerPayStatus]
           : null;
-        const designerGross =
+        const designerReceivable =
           isDesignerView ?
-            getDesignerGrossForStage(order, stage, currentDesignerId!)
-          : 0;
-        const designerNet =
-          isDesignerView ?
-            getDesignerNetAmount(designerGross, order.feeRate)
+            getDesignerReceivableForStage(order, stage, currentDesignerId!, {
+              designer: getDesigner?.(currentDesignerId!),
+              involvedStages: visibleStages,
+            })
           : 0;
         const isPaid = stage.status !== "pending";
         const stageSplits =
@@ -170,28 +205,69 @@ export function StageTimeline({
           isDesignerView ?
             getDesignerOwnDeliverables(order, stage, currentDesignerId!)
           : (stage.deliverables ?? []);
+        const isActive = stage.id === activeStageId;
+        const prior = i > 0 ? visibleStages[i - 1] : null;
+        const priorHeld =
+          !prior ||
+          prior.status === "released" ||
+          prior.status === "frozen" ||
+          prior.status === "paid";
+        const stageRevisions = (order.revisions ?? []).filter(
+          (r) => r.stageId === stage.id,
+        );
         const showPayCTA =
           perspective === "client" &&
+          !isOrderCancelled(order) &&
           stage.status === "pending" &&
-          isContractFullySigned(order);
+          isContractFullySigned(order) &&
+          isActive;
         const showForwardPayCTA =
-          perspective === "admin" && stage.status === "pending";
+          perspective === "admin" &&
+          !isOrderCancelled(order) &&
+          stage.status === "pending" &&
+          contractSigned &&
+          isActive;
+        const showForwardPayLocked =
+          perspective === "admin" &&
+          !isOrderCancelled(order) &&
+          stage.status === "pending" &&
+          !contractSigned &&
+          isActive;
+        const needsDeliverables = !isPrepaymentStage(order, stage);
+        const paymentDeadline =
+          stage.status === "pending"
+            ? getStagePaymentDeadline(order, stage)
+            : null;
         const showClientAcceptance =
+          needsDeliverables &&
           isClientView &&
+          !isOrderCancelled(order) &&
           stage.status === "frozen" &&
           (stage.deliverables?.length ?? 0) > 0 &&
           !!getDesigner;
         const showUploadCTA =
+          needsDeliverables &&
           isDesignerView &&
-          i > 0 &&
-          stage.status === "pending" &&
-          ["in_progress", "in_revision"].includes(order.status);
+          !isOrderCancelled(order) &&
+          ["in_progress", "in_revision"].includes(order.status) &&
+          ((isActive && (stage.status !== "pending" || revising)) ||
+            (stage.status === "pending" && i > 0 && priorHeld) ||
+            stage.status === "frozen" ||
+            stage.status === "paid");
         const showWithdrawCTA =
           isDesignerView &&
+          !isOrderCancelled(order) &&
           canDesignerRequestWithdraw(order, stage, currentDesignerId!);
 
         return (
-          <Card key={stage.id} className="overflow-hidden">
+          <Card
+            key={stage.id}
+            className={cn(
+              "overflow-hidden transition-shadow",
+              isActive &&
+                "border-brand ring-2 ring-brand/20 shadow-md",
+            )}
+          >
             <div className="flex flex-wrap items-start justify-between gap-4 p-5">
               <div className="flex flex-1 items-start gap-4">
                 <div
@@ -209,7 +285,23 @@ export function StageTimeline({
                     <h4 className="text-base font-semibold text-ink">
                       {stage.name}
                     </h4>
-                    {isDesignerView && designerPayMeta ? (
+                    {isActive ? (
+                      <Badge variant="brand">当前阶段</Badge>
+                    ) : null}
+                    {isDesignerView && designerPayMeta && !previewOnly ? (
+                      <span
+                        className={cn(
+                          "rounded-full px-2.5 py-0.5 text-xs font-medium",
+                          designerPayMeta.tone,
+                        )}
+                      >
+                        {designerPayMeta.label}
+                      </span>
+                    ) : previewOnly && !isPaid ? (
+                      <span className="rounded-full bg-ink-20/40 px-2.5 py-0.5 text-xs font-medium text-ink">
+                        预览
+                      </span>
+                    ) : isDesignerView && designerPayMeta ? (
                       <span
                         className={cn(
                           "rounded-full px-2.5 py-0.5 text-xs font-medium",
@@ -228,7 +320,7 @@ export function StageTimeline({
                         {meta.label}
                       </span>
                     )}
-                    {!isDesignerView && !isMonthlyOrder ? (
+                    {!isMonthlyOrder && !previewOnly ? (
                       <Badge variant="outline">
                         占比 {Math.round(stage.ratio * 100)}%
                       </Badge>
@@ -237,15 +329,34 @@ export function StageTimeline({
                       <Badge variant="outline">月费</Badge>
                     ) : null}
                   </div>
-                  <div className="text-2xl font-semibold tracking-tight text-ink">
-                    {isDesignerView ?
-                      formatCurrency(designerNet)
-                    : formatCurrency(stage.amount)}
-                  </div>
-                  {isDesignerView && designerGross > 0 ? (
+                  {previewOnly ? (
+                    <div className="text-2xl font-semibold tracking-tight text-ink">
+                      {Math.round(stage.ratio * 100)}%
+                    </div>
+                  ) : (
+                    <div className="text-2xl font-semibold tracking-tight text-ink">
+                      {isDesignerView ?
+                        formatCurrency(designerReceivable)
+                      : formatCurrency(stage.amount)}
+                    </div>
+                  )}
+                  {!needsDeliverables && isClientView && !previewOnly ? (
                     <div className="text-xs text-ink-60">
-                      应收 {formatCurrency(designerGross)} · 扣平台费{" "}
-                      {Math.round((order.feeRate ?? 0.08) * 100)}% 后实收
+                      签约后支付即可开工，预付款无需上传或确认成果。
+                    </div>
+                  ) : null}
+                  {isDesignerView && !previewOnly && designerReceivable > 0 ? (
+                    <div className="text-xs text-ink-60">
+                      {needsDeliverables &&
+                      isActive &&
+                      (stage.status === "pending" ||
+                        designerPayStatus === "client_pending")
+                        ? "本阶段请设计师上传成果或确认单(图片/PDF)。委托人可确认后支付。"
+                        : !needsDeliverables &&
+                            isActive &&
+                            stage.status === "pending"
+                          ? "本阶段为预付款，无需上传或确认成果。等待委托人支付后即可开工。"
+                          : "本专业基础服务费本阶段份额，不含平台管理费与税费"}
                     </div>
                   ) : null}
                   {stage.paidAt ? (
@@ -258,10 +369,18 @@ export function StageTimeline({
                       结算时间 {formatDateTime(stage.releasedAt)}
                     </div>
                   ) : null}
-                  {isMonthlyOrder && stage.dueAt && stage.status === "pending" ? (
+                  {needsDeliverables && stage.deliverablesConfirmedAt ? (
+                    <div className="text-xs text-ink-40">
+                      成果确认时间 {formatDateTime(stage.deliverablesConfirmedAt)}
+                    </div>
+                  ) : null}
+                  {isMonthlyOrder && stage.dueAt && stage.status === "pending" && !paymentDeadline ? (
                     <div className="text-xs text-amber-700">
                       {formatMonthlyDueHint(stage)}
                     </div>
+                  ) : null}
+                  {paymentDeadline ? (
+                    <PaymentDeadlineNote deadline={paymentDeadline} />
                   ) : null}
                 </div>
               </div>
@@ -279,21 +398,22 @@ export function StageTimeline({
                     <Share2 className="h-4 w-4" /> 转发支付链接
                   </Button>
                 ) : null}
+                {showForwardPayLocked ? (
+                  <Button
+                    variant="brand"
+                    disabled
+                    title="签订电子合同后方可转发支付链接"
+                  >
+                    <Share2 className="h-4 w-4" /> 转发支付链接
+                  </Button>
+                ) : null}
                 {showUploadCTA ? (
                   <Button
-                    onClick={() => {
-                      if (onUploadDeliverables) {
-                        onUploadDeliverables(stage);
-                        return;
-                      }
-                      push({
-                        title: "成果文件已上传",
-                        description: "委托人将收到验收提醒。",
-                        variant: "success",
-                      });
-                    }}
+                    variant={isActive ? "brand" : "outline"}
+                    onClick={() => setUploadStage(stage)}
                   >
-                    <Upload className="h-4 w-4" /> 上传本阶段成果
+                    <Upload className="h-4 w-4" />
+                    {revising ? "上传返修成果" : "上传本阶段成果"}
                   </Button>
                 ) : null}
                 {showWithdrawCTA ? (
@@ -306,6 +426,60 @@ export function StageTimeline({
               </div>
             </div>
 
+            {stageRevisions.length > 0 ? (
+              <div className="border-t border-violet-200 bg-violet-50/60 px-5 py-4">
+                <div className="text-xs font-medium uppercase tracking-wider text-violet-800">
+                  {revising ? "返修中" : "返修记录"}
+                </div>
+                <div className="mt-2 space-y-2">
+                  {stageRevisions.map((rev) => (
+                    <div
+                      key={rev.id}
+                      className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-xs text-ink"
+                    >
+                      <div className="text-ink-40">
+                        {formatDateTime(rev.createdAt)} ·{" "}
+                        {rev.status === "pending" ? "待响应" : "已响应"}
+                      </div>
+                      <div className="mt-1">{rev.description}</div>
+                      {rev.attachments.length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {rev.attachments.map((a, idx) => (
+                            <Badge key={`${rev.id}-${idx}`} variant="muted">
+                              {a.name}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+                {isClientView && revising && isActive && needsDeliverables ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        push({
+                          title: "已打开返修成果预览",
+                          description: stage.name,
+                        })
+                      }
+                    >
+                      查看返修成果
+                    </Button>
+                    <Button
+                      variant="brand"
+                      size="sm"
+                      onClick={() => handleConfirm(stage)}
+                    >
+                      确认返修成果
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             {showClientAcceptance ? (
               <StageTrackAcceptancePanel
                 order={order}
@@ -317,6 +491,7 @@ export function StageTimeline({
                 onRevise={() => handleRevise(stage)}
                 onStageComplete={() => handleConfirm(stage)}
                 onTrackAccepted={handleTrackAccepted}
+                canConfirm={perspective === "client"}
               />
             ) : null}
 
@@ -368,61 +543,26 @@ export function StageTimeline({
               </div>
             ) : null}
 
-            {isClientView &&
-            stage.status !== "frozen" &&
-            (stage.deliverables?.length ?? 0) > 0 &&
-            getDesigner ? (
-              <div className="border-t border-ink-20 bg-ink-20/20 p-5">
-                <div className="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-ink-60">
-                  <FileBox className="h-3.5 w-3.5" /> 阶段成果文件
-                </div>
-                <div className="grid gap-2 md:grid-cols-2">
-                  {stage.deliverables!.map((file) => (
-                    <div
-                      key={file.id}
-                      className="flex items-center gap-3 rounded-xl border border-ink-20 bg-white p-3"
-                    >
-                      {file.thumbnail ? (
-                        <img
-                          src={file.thumbnail}
-                          alt={file.name}
-                          className="h-12 w-12 rounded-lg object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-ink-20">
-                          <FileBox className="h-5 w-5 text-ink-60" />
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium text-ink">
-                          {file.name}
-                        </div>
-                        <div className="text-xs text-ink-60">
-                          {file.size} · {formatDateTime(file.uploadedAt)}
-                          {file.designerId ?
-                            ` · ${getDesigner(file.designerId)?.name ?? "设计师"}`
-                          : ""}
-                        </div>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          push({
-                            title: "下载已开始",
-                            description: file.name,
-                          })
-                        }
-                      >
-                        <Download className="h-4 w-4" /> 下载
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </div>
+            {isClientView && getDesigner ? (
+              <StageParticipantDeliverables
+                order={order}
+                stage={stage}
+                getDesigner={getDesigner}
+                getServiceProvider={getServiceProvider}
+                showFiles={needsDeliverables}
+                roles={
+                  showClientAcceptance
+                    ? ["auditor", "project_manager"]
+                    : undefined
+                }
+                unlocked={stage.status === "released" || showClientAcceptance}
+              />
             ) : null}
 
-            {isClientView && getDesigner && stageSplits.length > 0 ? (
+            {isClientView &&
+            !previewOnly &&
+            getDesigner &&
+            stageSplits.length > 0 ? (
               <StagePaymentSplitsPanel
                 stage={stage}
                 splits={stageSplits}
@@ -456,6 +596,28 @@ export function StageTimeline({
           stage={forwardPayStage}
         />
       ) : null}
+
+      <StageDeliverableUploadDialog
+        open={!!uploadStage}
+        onOpenChange={(open) => {
+          if (!open) setUploadStage(null);
+        }}
+        stage={uploadStage}
+        revising={revising}
+        onConfirm={(files) => {
+          if (!uploadStage) return;
+          if (onUploadDeliverables) {
+            onUploadDeliverables(uploadStage, files);
+          } else {
+            push({
+              title: revising ? "返修成果已上传" : "成果文件已上传",
+              description: "委托人将收到验收提醒。",
+              variant: "success",
+            });
+          }
+          setUploadStage(null);
+        }}
+      />
     </div>
   );
 }

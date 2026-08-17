@@ -22,11 +22,8 @@ export function resolveStagePaymentSplits(
   if (stage.designerPaymentSplits?.length) {
     base = stage.designerPaymentSplits.map((s) => ({ ...s }));
   } else {
-    const assignments =
-      order.trackAssignments?.filter((a) => a.stageId === stage.id) ?? [];
-    if (assignments.length === 0) {
-      base = [];
-    } else {
+    const assignments = order.trackAssignments ?? [];
+    if (assignments.length > 0) {
       const perTrack = stage.ratio / assignments.length;
       base = assignments.map((a) => ({
         designerId: a.designerId,
@@ -36,6 +33,18 @@ export function resolveStagePaymentSplits(
         trackAssignmentId: a.id,
         role: "unchanged" as const,
       }));
+    } else if (order.designerId) {
+      base = [
+        {
+          designerId: order.designerId,
+          orderRatio: stage.ratio,
+          amount: stage.amount,
+          label: "本阶段服务",
+          role: "unchanged" as const,
+        },
+      ];
+    } else {
+      base = [];
     }
   }
 

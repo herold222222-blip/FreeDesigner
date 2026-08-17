@@ -14,12 +14,18 @@ export async function POST(
     const session = await requireSession();
     const body = (await req.json().catch(() => ({}))) as {
       description?: string;
+      attachments?: { name: string; url?: string; size?: number }[];
+      fileId?: string;
+      fileName?: string;
     };
     const order = await requestStageRevision(
       params.id,
       params.stageId,
       session.identityId,
       body.description ?? "",
+      body.attachments,
+      body.fileId,
+      body.fileName,
     );
     return ok(order);
   });

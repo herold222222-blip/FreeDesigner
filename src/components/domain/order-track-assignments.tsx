@@ -11,6 +11,7 @@ import type {
 } from "@/lib/types";
 import { useDesigners } from "@/lib/use-data";
 import { resolveTrackLabels } from "@/lib/constants";
+import { computeTimeLineBreakdown } from "@/lib/regular-entrust-quote";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DesignerName } from "@/components/domain/designer-name";
@@ -18,6 +19,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { DeliverableFileList } from "@/components/domain/deliverable-file-list";
 import { PaymentSplitsList } from "@/components/domain/stage-payment-splits";
+import { isOrderCancelled } from "@/lib/order-lifecycle";
+import { isTrackAssignmentServiceFinished } from "@/lib/order-track-status";
 import {
   Dialog,
   DialogContent,
@@ -47,8 +50,13 @@ const ASSIGNMENT_STATUS: Record<
   { label: string; tone: string }
 > = {
   serving: { label: "服务中", tone: "bg-brand/10 text-brand" },
-  completed: { label: "已交付", tone: "bg-emerald-100 text-emerald-800" },
+  completed: { label: "服务完毕", tone: "bg-emerald-100 text-emerald-800" },
   pending_match: { label: "待匹配", tone: "bg-amber-100 text-amber-800" },
+};
+
+const SERVICE_FINISHED_META = {
+  label: "服务完毕",
+  tone: "bg-emerald-100 text-emerald-800",
 };
 
 function getAssignmentDeliverables(order: Order, assignment: OrderTrackAssignment) {
@@ -58,6 +66,35 @@ function getAssignmentDeliverables(order: Order, assignment: OrderTrackAssignmen
   return stage.deliverables.filter((d) =>
     assignment.deliverableIds!.includes(d.id),
   );
+}
+
+function findAssignmentQuoteLine(order: Order, assignment: OrderTrackAssignment) {
+  const pool = order.clientMatch?.trackPools?.find(
+    (p) =>
+      p.l3 === assignment.l3 &&
+      (!assignment.l2 || p.l2 === assignment.l2),
+  );
+  const level =
+    pool?.offerLevel ??
+    pool?.candidates.find((c) => c.designerId === assignment.designerId)?.level;
+
+  const quotes: NonNullable<Order["quote"]>[] = [];
+  if (level && order.levelQuotes?.length) {
+    const hit = order.levelQuotes.find(
+      (q) => q.assumptions.designerLevel === level,
+    );
+    if (hit) quotes.push(hit);
+  }
+  if (order.quote) quotes.push(order.quote);
+  for (const q of order.levelQuotes ?? []) {
+    if (!quotes.includes(q)) quotes.push(q);
+  }
+
+  for (const quote of quotes) {
+    const line = quote.lines?.find((l) => l.l3 && l.l3 === assignment.l3);
+    if (line) return line;
+  }
+  return undefined;
 }
 
 function getHistoricalDeliverables(
@@ -90,6 +127,7 @@ export function OrderTrackAssignmentsPanel({
   mode?: "client" | "admin";
 }) {
   const { data: allDesigners } = useDesigners();
+  const waitingAccept = order.status === "pending_designer_accept";
   const assignments = order.trackAssignments ?? [];
   const replacements = order.designerReplacements ?? [];
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -100,19 +138,38 @@ export function OrderTrackAssignmentsPanel({
     replacements.filter((r) => r.trackAssignmentId === trackId).length;
 
   return (
-    <Card className="p-7">
-      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+    <Card
+      className={
+        waitingAccept
+          ? "space-y-5 border-blue-200 bg-blue-50/40 p-7"
+          : "space-y-5 p-7"
+      }
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight text-ink">
-            专业分工 · 服务设计师
-          </h2>
-          <p className="mt-1 text-sm text-ink-60">
-            {mode === "admin"
-              ? "按一级 / 二级 / 三级专业查看服务设计师、更换记录与阶段成果。点击头像可更换设计师或查看历史成果。"
-              : "按一级 / 二级 / 三级专业查看当前对接设计师及其阶段成果。点击头像可进行访问主页、申请更换或投诉。"}
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-semibold tracking-tight text-ink">
+              专业分工 · 服务设计师
+            </h2>
+            {waitingAccept ? (
+              <Badge variant="blue">待设计师确认</Badge>
+            ) : null}
+          </div>
+          <p
+            className={
+              waitingAccept
+                ? "mt-1 text-sm text-blue-900/80"
+                : "mt-1 text-sm text-ink-60"
+            }
+          >
+            {waitingAccept
+              ? "已向设计师发送邀请。各方同意后进入签约；若拒绝，系统将按专业自动匹配其他开启接单的设计师。"
+              : mode === "admin"
+                ? "按一级 / 二级 / 三级专业查看服务设计师、更换记录与阶段成果。点击头像可更换设计师或查看历史成果。"
+                : "按一级 / 二级 / 三级专业查看当前对接设计师及其阶段成果。点击头像可进行访问主页、申请更换或投诉。"}
           </p>
         </div>
-        {replacements.length > 0 ? (
+        {replacements.length > 0 && !isOrderCancelled(order) ? (
           <Button
             variant="outline"
             size="sm"
@@ -136,32 +193,53 @@ export function OrderTrackAssignmentsPanel({
             assignment.l3,
           );
           const designer = getDesigner(assignment.designerId);
-          const stage = order.stages.find((s) => s.id === assignment.stageId);
           const deliverables = getAssignmentDeliverables(order, assignment);
           const historicalDeliverables = getHistoricalDeliverables(
             order,
             assignment.id,
           );
-          const statusMeta = ASSIGNMENT_STATUS[assignment.status];
+          const statusMeta =
+            waitingAccept && assignment.status === "pending_match"
+              ? { label: "待确认", tone: "bg-blue-100 text-blue-800" }
+              : waitingAccept && assignment.status === "serving"
+                ? { label: "已接单", tone: "bg-emerald-100 text-emerald-800" }
+                : isTrackAssignmentServiceFinished(order, assignment)
+                  ? SERVICE_FINISHED_META
+                  : ASSIGNMENT_STATUS[assignment.status];
+          const serviceFinished = isTrackAssignmentServiceFinished(
+            order,
+            assignment,
+          );
+          const quoteLine = findAssignmentQuoteLine(order, assignment);
+          const trackFee = (() => {
+            if (!quoteLine) return null;
+            const breakdown = computeTimeLineBreakdown(
+              order,
+              quoteLine,
+              designer,
+            );
+            if (!breakdown) return quoteLine.subtotal;
+            const tax = order.quote?.taxCoefficient || 1;
+            return Math.round(
+              (breakdown.basicFee + breakdown.platformFee) * tax,
+            );
+          })();
           const replacedTimes = replacementCountByTrack(assignment.id);
 
           return (
             <div
               key={assignment.id}
-              className="rounded-2xl border border-ink-20 bg-ink-20/10 p-4"
+              className={cn(
+                "rounded-2xl border p-4",
+                waitingAccept
+                  ? "border-blue-200/80 bg-white"
+                  : "border-ink-20 bg-ink-20/10",
+              )}
             >
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0 flex-1 space-y-3">
-                  <div className="flex flex-wrap items-center gap-1 text-xs text-ink-60">
-                    <span className="font-medium text-ink">{labels.l1Label}</span>
-                    <ChevronRight className="h-3 w-3 shrink-0" />
-                    <span>{labels.l2Label}</span>
-                    <ChevronRight className="h-3 w-3 shrink-0" />
-                    <span>{labels.l3Label}</span>
-                  </div>
-
                   {designer ? (
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-center gap-3">
                       <DesignerAvatarMenu
                         designer={designer}
                         mode={mode}
@@ -171,35 +249,49 @@ export function OrderTrackAssignmentsPanel({
                         onOpenHistory={() => setHistoryOpen(true)}
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
                           <DesignerName
                             designer={designer}
-                            className="text-sm font-semibold"
+                            className="text-base font-semibold"
                           />
+                          {designer.code ? (
+                            <span className="text-sm text-ink-40">
+                              {designer.code}
+                            </span>
+                          ) : null}
                           <span
                             className={cn(
-                              "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                              "rounded-full px-2 py-0.5 text-xs font-medium",
                               statusMeta.tone,
                             )}
                           >
                             {statusMeta.label}
                           </span>
+                          <span className="ml-auto flex min-w-0 flex-col items-end gap-0.5 text-sm text-ink-60">
+                            <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-1.5">
+                              <span>{labels.l3Label}</span>
+                              {trackFee != null ? (
+                                <>
+                                  <span className="text-ink-30">·</span>
+                                  <span className="font-bold tabular-nums text-brand">
+                                    设计费 {formatCurrency(trackFee)}
+                                  </span>
+                                </>
+                              ) : null}
+                            </span>
+                            {trackFee != null ? (
+                              <span className="text-xs text-ink-40">
+                                费用含平台管理费及对应税费。
+                              </span>
+                            ) : null}
+                          </span>
                         </div>
-                        <p className="mt-0.5 line-clamp-1 text-xs text-ink-60">
-                          {designer.tagline}
-                        </p>
                       </div>
                     </div>
                   ) : (
                     <div className="text-sm text-ink-60">设计师信息不可用</div>
                   )}
 
-                  {stage ? (
-                    <div className="text-xs text-ink-60">
-                      当前阶段：
-                      <span className="font-medium text-ink">{stage.name}</span>
-                    </div>
-                  ) : null}
                   {replacedTimes > 0 ? (
                     <button
                       type="button"
@@ -224,7 +316,9 @@ export function OrderTrackAssignmentsPanel({
                     getDesigner={getDesigner}
                   />
                 </div>
-              ) : assignment.status === "serving" ? (
+              ) : assignment.status === "serving" &&
+                !waitingAccept &&
+                !serviceFinished ? (
                 <div className="mt-4 border-t border-dashed border-ink-20 pt-3 text-xs text-ink-40">
                   该专业当前阶段暂无上传成果，设计师推进后将在此展示。
                 </div>
@@ -468,6 +562,7 @@ function DesignerAvatarMenu({
   const wrapRef = useRef<HTMLDivElement>(null);
   const push = useSessionStore((s) => s.pushNotification);
   const isAdmin = mode === "admin";
+  const locked = order ? isOrderCancelled(order) : false;
 
   useEffect(() => {
     if (!open) return undefined;
@@ -526,19 +621,26 @@ function DesignerAvatarMenu({
   return (
     <>
       <div ref={wrapRef} className="relative shrink-0">
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          className="rounded-full ring-offset-2 transition-shadow hover:ring-2 hover:ring-brand/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-          title={`${designer.name} · 点击查看操作`}
-        >
-          <Avatar className="h-12 w-12 cursor-pointer">
+        {locked ? (
+          <Avatar className="h-12 w-12">
             <AvatarImage src={designer.avatar} alt={designer.name} />
             <AvatarFallback>{designer.name.slice(0, 1)}</AvatarFallback>
           </Avatar>
-        </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            className="rounded-full ring-offset-2 transition-shadow hover:ring-2 hover:ring-brand/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            title={`${designer.name} · 点击查看操作`}
+          >
+            <Avatar className="h-12 w-12 cursor-pointer">
+              <AvatarImage src={designer.avatar} alt={designer.name} />
+              <AvatarFallback>{designer.name.slice(0, 1)}</AvatarFallback>
+            </Avatar>
+          </button>
+        )}
 
-        {open ? (
+        {open && !locked ? (
           <div className="absolute left-0 top-full z-30 mt-2 w-52 overflow-hidden rounded-xl border border-ink-20 bg-white py-1 shadow-xl">
             <Link
               href={`/designers/${designer.id}`}

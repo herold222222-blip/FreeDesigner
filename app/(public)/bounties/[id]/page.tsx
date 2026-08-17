@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getBounty, listDesigners } from "@/lib/server/repo";
+import { getBounty, getClient, listDesigners, listOrders } from "@/lib/server/repo";
 import { getSessionUser } from "@/lib/server/auth";
 import {
   bountyApplicantCount,
@@ -8,6 +8,7 @@ import {
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BountyApplicantList } from "@/components/domain/bounty-applicant-list";
 import { SpecialtyBadge } from "@/components/domain/status-badges";
 import {
@@ -44,6 +45,26 @@ export default async function BountyDetailPage({
       </GuestAccessGate>
     );
   }
+
+  const [publisher, publisherOrders] = await Promise.all([
+    getClient(bounty.publisherId),
+    listOrders({ clientId: bounty.publisherId }),
+  ]);
+  const publisherName =
+    publisher?.companyName?.trim() || publisher?.name?.trim() || "委托人";
+  const publisherInitial = publisherName.slice(0, 1);
+  const publisherMeta = [
+    publisher?.type === "enterprise"
+      ? publisher.verified
+        ? "企业认证"
+        : "企业委托人"
+      : "个人委托人",
+    publisherOrders.length > 0
+      ? `已合作 ${publisherOrders.length} 个项目`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const trackLabels = getTrackLabelParts(bounty.primaryTrack);
   const applicantCount = bountyApplicantCount(bounty);
@@ -243,12 +264,19 @@ export default async function BountyDetailPage({
               悬赏发布方
             </div>
             <div className="mt-3 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-ink text-xs font-semibold text-white">
-                禹
-              </div>
+              <Avatar className="h-10 w-10">
+                {publisher?.avatar ? (
+                  <AvatarImage src={publisher.avatar} alt={publisherName} />
+                ) : null}
+                <AvatarFallback className="bg-ink text-xs font-semibold text-white">
+                  {publisherInitial}
+                </AvatarFallback>
+              </Avatar>
               <div>
-                <div className="text-sm font-medium text-ink">禹生文旅产业</div>
-                <div className="text-xs text-ink-60">企业认证 · 已合作 14 个项目</div>
+                <div className="text-sm font-medium text-ink">{publisherName}</div>
+                <div className="text-xs text-ink-60">
+                  {publisher ? publisherMeta : "发布方信息暂不可用"}
+                </div>
               </div>
             </div>
           </Card>

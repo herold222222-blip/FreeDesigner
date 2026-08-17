@@ -124,11 +124,33 @@ export async function sendWelcomeInboxMessage(
 export async function userIdForClient(
   clientId: string,
 ): Promise<string | null> {
-  const row = await prisma.client.findUnique({
+  if (!clientId) return null;
+  const byId = await prisma.client.findUnique({
     where: { id: clientId },
     select: { userId: true },
   });
-  return row?.userId ?? null;
+  if (byId?.userId) return byId.userId;
+
+  const byUserId = await prisma.client.findUnique({
+    where: { userId: clientId },
+    select: { userId: true },
+  });
+  if (byUserId?.userId) return byUserId.userId;
+
+  if (clientId.startsWith("client_")) {
+    const maybeUserId = clientId.slice("client_".length);
+    const user = await prisma.user.findUnique({
+      where: { id: maybeUserId },
+      select: { id: true },
+    });
+    if (user) return user.id;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: clientId },
+    select: { id: true },
+  });
+  return user?.id ?? null;
 }
 
 export async function userIdForDesigner(
@@ -145,11 +167,14 @@ async function notifySafe(
   userId: string | null | undefined,
   input: Omit<Parameters<typeof createInboxMessage>[0], "userId">,
 ) {
-  if (!userId) return;
+  if (!userId) {
+    console.warn("[inbox] 跳过站内信：收件人 userId 为空", input.title);
+    return;
+  }
   try {
     await createInboxMessage({ userId, ...input });
-  } catch {
-    /* 站内信失败不阻断主流程 */
+  } catch (err) {
+    console.error("[inbox] 发送站内信失败", input.title, err);
   }
 }
 
@@ -174,6 +199,16 @@ export async function notifyStagePaid(order: Order, stageName: string, amount: n
   ]);
 }
 
+/** 最后一笔费用支付完成 → 通知委托人评价（30 天内） */
+export async function notifyClientReviewOpened(order: Order) {
+  const clientUserId = await userIdForClient(order.clientId);
+  await notifySafe(clientUserId, {
+    title: "可以对项目评价了",
+    body: `订单「${order.title}」最后一笔费用已支付。请在 30 天内对设计师评分并填写评论，逾期评论将关闭。`,
+    linkHref: `/client/orders/${order.id}`,
+  });
+}
+
 /** 设计师上传成果 → 通知委托人 */
 export async function notifyDeliverablesSubmitted(
   order: Order,
@@ -185,6 +220,28 @@ export async function notifyDeliverablesSubmitted(
     body: `设计师已上传订单「${order.title}」的「${stageName}」成果，请预览确认；付款后可解锁下载 CAD 等完整文件。`,
     linkHref: `/client/orders/${order.id}`,
   });
+}
+
+/** 委托人确认成果 → 通知设计师等待付款 */
+export async function notifyDeliverablesConfirmed(
+  order: Order,
+  stageName: string,
+) {
+  const designerIds = new Set<string>();
+  if (order.designerId) designerIds.add(order.designerId);
+  for (const assignment of order.trackAssignments ?? []) {
+    if (assignment.designerId) designerIds.add(assignment.designerId);
+  }
+  await Promise.all(
+    [...designerIds].map(async (designerId) => {
+      const designerUserId = await userIdForDesigner(designerId);
+      await notifySafe(designerUserId, {
+        title: "委托人已确认成果，等待付款",
+        body: `委托人已确认订单「${order.title}」的「${stageName}」成果，请等待委托人付款。`,
+        linkHref: `/designer/orders/${order.id}`,
+      });
+    }),
+  );
 }
 
 /** 委托人提交返修 → 通知设计师 */
@@ -234,7 +291,7 @@ export async function notifySettlementRequested(order: Order) {
   const clientUserId = await userIdForClient(order.clientId);
   await notifySafe(clientUserId, {
     title: "请确认最终服务完成",
-    body: `设计师已就订单「${order.title}」申请项目结算，请确认最终服务完成后项目将结案并可评价。`,
+    body: `设计师已就订单「${order.title}」申请项目结算，请确认最终服务完成后项目将结案。`,
     linkHref: `/client/orders/${order.id}`,
   });
 }
@@ -274,6 +331,112 @@ export async function notifyOrderCancelledByAdmin(order: Order, reason?: string)
   });
 }
 
+/** 管理员委派设计师 → 通知设计师确认 */
+export async function notifyDesignerAssignmentOffer(
+  order: Order,
+  designerId: string,
+  opts?: { designerName?: string; trackLabels?: string },
+) {
+  const designerUserId = await userIdForDesigner(designerId);
+  const money = formatCurrency(order.totalAmount);
+  const trackNote = opts?.trackLabels
+    ? `负责专业：${opts.trackLabels}。`
+    : "";
+  await notifySafe(designerUserId, {
+    title: "收到订单委派",
+    body: `平台向您委派订单「${order.title}」（${order.code}），确认费用 ${money}。${trackNote}请尽快同意或拒绝接单。`,
+    linkHref: `/designer/orders/${order.id}`,
+  });
+}
+
+/** 设计师拒绝后系统自动改派 → 通知委托人 */
+export async function notifyClientDesignerRematch(
+  order: Order,
+  rejectedName: string,
+  nextName?: string,
+) {
+  const clientUserId = await userIdForClient(order.clientId);
+  await notifySafe(clientUserId, {
+    title: nextName ? "设计师已改派" : "设计师已拒绝",
+    body: nextName
+      ? `设计师「${rejectedName}」拒绝了订单「${order.title}」。系统已自动改派「${nextName}」，请等待对方确认。`
+      : `设计师「${rejectedName}」拒绝了订单「${order.title}」。暂无更多同等级可接单设计师，请重新选择备选或换档匹配。`,
+    linkHref: `/client/orders/${order.id}`,
+  });
+}
+
+/** 设计师拒绝委派 → 通知管理员重新匹配 */
+export async function notifyAdminsAssignmentRejected(
+  order: Order,
+  designerName: string,
+  reason?: string,
+) {
+  const admins = await prisma.user.findMany({
+    where: { role: { in: ["admin", "super_admin"] }, status: "active" },
+    select: { id: true, role: true },
+  });
+  const reasonNote = reason?.trim() ? `原因：${reason.trim()}` : "未填写原因。";
+  await Promise.all(
+    admins.map((admin) =>
+      notifySafe(admin.id, {
+        title: "设计师已拒绝委派",
+        body: `设计师「${designerName}」已拒绝订单「${order.title}」（${order.code}）。${reasonNote}请重新委派其他设计师。`,
+        linkHref:
+          admin.role === "super_admin"
+            ? `/super-admin/orders/${order.id}`
+            : `/admin/orders/${order.id}`,
+      }),
+    ),
+  );
+}
+
+/** 常规委托生成等级报价卡后 → 通知管理员二次确认需求 */
+export async function notifyAdminsPendingCsQuote(order: Order) {
+  const admins = await prisma.user.findMany({
+    where: { role: { in: ["admin", "super_admin"] }, status: "active" },
+    select: { id: true, role: true },
+  });
+  await Promise.all(
+    admins.map((admin) =>
+      notifySafe(admin.id, {
+        title: "待确认委托需求",
+        body: `委托人已提交「${order.title}」（${order.code}）。请核对项目信息与附件后二次确认，确认后方可开放委托人选卡匹配。`,
+        linkHref:
+          admin.role === "super_admin"
+            ? `/super-admin/orders/${order.id}`
+            : `/admin/orders/${order.id}`,
+      }),
+    ),
+  );
+}
+
+/** 管理员 / 超级管理员修改委托信息后 → 通知委托人查看最新详情 */
+export async function notifyClientEntrustUpdatedByAdmin(
+  order: Order,
+  changes: string[],
+) {
+  const clientUserId = await userIdForClient(order.clientId);
+  const detail =
+    changes.length > 0
+      ? `修改内容如下：\n${changes.join("\n")}`
+      : "请打开订单查看最新委托信息。";
+  await notifySafe(clientUserId, {
+    title: "委托信息已更新",
+    body: `客服已更新您的订单「${order.title}」（${order.code}）。\n\n${detail}\n\n请点击查看最新订单详情。报价卡如有调整，需客服再次确认后方可匹配设计师。`,
+    linkHref: `/client/orders/${order.id}`,
+  });
+}
+
+/** 客服确认报价卡后 → 通知委托人可以选卡匹配 */
+export async function notifyClientCsQuoteConfirmed(order: Order) {
+  const clientUserId = await userIdForClient(order.clientId);
+  await notifySafe(clientUserId, {
+    title: "报价已更新",
+    body: `客服已根据您的委托需求更新「${order.title}」（${order.code}）报价。请打开项目查看等级报价卡，并匹配设计师。`,
+    linkHref: `/client/orders/${order.id}`,
+  });
+}
+
 /** 委托人确认报价后 → 通知全部管理员 / 超级管理员去分配设计师 */
 export async function notifyAdminsMatchingOrder(order: Order) {
   const admins = await prisma.user.findMany({
@@ -293,4 +456,74 @@ export async function notifyAdminsMatchingOrder(order: Order) {
       }),
     ),
   );
+}
+
+/** 设计师确认接单 → 通知委托人去签约 */
+export async function notifyClientDesignerAccepted(
+  order: Order,
+  designerName: string,
+) {
+  const clientUserId = await userIdForClient(order.clientId);
+  await notifySafe(clientUserId, {
+    title: "设计师已确认接单",
+    body: `设计师「${designerName}」已确认承接「${order.title}」（${order.code}）。请尽快签署电子合同。`,
+    linkHref: `/client/orders/${order.id}`,
+  });
+}
+
+/** 一方签署合同 → 通知对方 */
+export async function notifyCounterpartyContractSigned(
+  order: Order,
+  signer: "client" | "designer",
+) {
+  if (signer === "client") {
+    const designerUserId = await userIdForDesigner(order.designerId);
+    await notifySafe(designerUserId, {
+      title: "委托人已签署合同",
+      body: `订单「${order.title}」（${order.code}）委托人已签署电子合同，请尽快完成设计师签署。`,
+      linkHref: `/designer/orders/${order.id}`,
+    });
+    return;
+  }
+  const clientUserId = await userIdForClient(order.clientId);
+  await notifySafe(clientUserId, {
+    title: "设计师已签署合同",
+    body: `订单「${order.title}」（${order.code}）设计师已签署电子合同，请尽快完成委托人签署。`,
+    linkHref: `/client/orders/${order.id}`,
+  });
+}
+
+/** 双方签约完成 → 通知委托人支付预付款，并告知设计师 */
+export async function notifyContractFullySigned(order: Order) {
+  const [clientUserId, designerUserId] = await Promise.all([
+    userIdForClient(order.clientId),
+    userIdForDesigner(order.designerId),
+  ]);
+  await Promise.all([
+    notifySafe(clientUserId, {
+      title: "双方已签约，请支付预付款",
+      body: `订单「${order.title}」（${order.code}）电子合同已完成签署。请支付预付款，支付后项目即可开工。`,
+      linkHref: `/client/orders/${order.id}`,
+    }),
+    notifySafe(designerUserId, {
+      title: "双方已签约",
+      body: `订单「${order.title}」（${order.code}）电子合同已完成签署，等待委托人支付预付款后即可开工。`,
+      linkHref: `/designer/orders/${order.id}`,
+    }),
+  ]);
+}
+
+/** 委托人提交项目评价 → 通知设计师；结案时一并告知 */
+export async function notifyDesignerReviewSubmitted(
+  order: Order,
+  completed: boolean,
+) {
+  const designerUserId = await userIdForDesigner(order.designerId);
+  await notifySafe(designerUserId, {
+    title: completed ? "项目已结案" : "收到项目评价",
+    body: completed
+      ? `委托人已评价订单「${order.title}」（${order.code}），项目已结案。可在历史评价中查看评分。`
+      : `委托人已评价订单「${order.title}」（${order.code}）。可在历史评价中查看评分。`,
+    linkHref: `/designer/orders/${order.id}`,
+  });
 }
