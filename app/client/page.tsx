@@ -17,6 +17,7 @@ import {
   bountyStatusBadgeVariant,
   bountyStatusLabel,
 } from "@/lib/bounty-manage";
+import { resolveDisplayOrderStatus } from "@/lib/order-lifecycle";
 import { cn, formatBountyReward } from "@/lib/utils";
 import { useMemo } from "react";
 import {
@@ -63,7 +64,20 @@ export default function ClientDashboardPage() {
         : [],
     [orders, clientId],
   );
-  const myOrders = platformOrders.slice(0, 3);
+  const myOrders = useMemo(
+    () =>
+      platformOrders
+        .filter((o) => {
+          const status = resolveDisplayOrderStatus(o);
+          return (
+            status !== "completed" &&
+            status !== "cancelled" &&
+            status !== "terminated"
+          );
+        })
+        .slice(0, 3),
+    [platformOrders],
+  );
   const summary = useMemo(
     () => buildClientDashboardSummary(platformOrders),
     [platformOrders],

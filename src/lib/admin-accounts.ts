@@ -18,7 +18,7 @@ export const PRESET_ACCOUNTS: PresetAccountDef[] = [
     loginName: "FD001",
     password: "FD19076652",
     role: "super_admin",
-    name: "超级管理员",
+    name: "乐平",
   },
   {
     loginName: "FD002",

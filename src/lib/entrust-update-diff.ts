@@ -70,7 +70,9 @@ export function describeEntrustUpdates(before: Order, after: Order): string[] {
     serviceModeLabel(after.serviceMode),
   );
   pushChange(
-    "预期交付",
+    after.serviceMode === "onsite" || before.serviceMode === "onsite"
+      ? "开始服务时间"
+      : "预期交付",
     dateLabel(before.expectedDeliveryAt),
     dateLabel(after.expectedDeliveryAt),
   );

@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { SUB_SPECIALTIES, getProjectTypes } from "@/lib/constants";
 import { getDesignerV11TimeRates } from "@/lib/designer-rates";
+import { expectedDateFieldLabel } from "@/lib/order-lifecycle";
 import { formatCurrency } from "@/lib/utils";
 import type { DesignerLevel, HalfDaySlot, ServiceMode } from "@/lib/types";
 
@@ -90,6 +91,7 @@ function NewOrderInner() {
   const [projectType, setProjectType] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [expectedDeliveryAt, setExpectedDeliveryAt] = useState("");
   const [withAudit, setWithAudit] = useState(false);
   const [withPM, setWithPM] = useState(false);
 
@@ -170,13 +172,14 @@ function NewOrderInner() {
         scheduleTo: dateRange?.to,
         withAuditService: withAudit,
         withProjectManagement: withPM,
+        expectedDeliveryAt,
       });
       push({
         title: "下单成功",
         description: `订单号 ${order.code}，已发送给 ${designer.name} 确认档期。`,
         variant: "success",
       });
-      router.push("/client/orders");
+      router.push("/client/directed-orders");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "请稍后再试";
       if (msg.includes("401") || msg.includes("登录") || role === "guest") {
@@ -227,7 +230,11 @@ function NewOrderInner() {
     hasScheduleSelection &&
     (serviceMode !== "onsite" || address.trim().length > 2);
   const canNextStep1 =
-    title.trim().length > 1 && projectType && subSpecialty && description.length > 4;
+    title.trim().length > 1 &&
+    projectType &&
+    subSpecialty &&
+    description.length > 4 &&
+    !!expectedDeliveryAt;
 
   return (
     <div className="container-page py-10">
@@ -312,7 +319,7 @@ function NewOrderInner() {
                   description={
                     selectedMonths.length > 0
                       ? `已选 ${months} 个月 · 小计 ${formatCurrency(unitMonthly * months)}`
-                      : "首月预付，每月 25 号前支付下月服务费。"
+                      : "首月预付须在开始服务日前 3 天支付，此后每月 25 号前支付下月服务费；遇周末或节假日提前至前一个工作日。"
                   }
                 />
               </div>
@@ -416,6 +423,19 @@ function NewOrderInner() {
                       </SelectContent>
                     </Select>
                   </div>
+                </div>
+
+                <div>
+                  <Label>
+                    {expectedDateFieldLabel(serviceMode)}
+                    <span className="ml-1 text-rose-500">*</span>
+                  </Label>
+                  <Input
+                    type="date"
+                    value={expectedDeliveryAt}
+                    onChange={(e) => setExpectedDeliveryAt(e.target.value)}
+                    className="mt-2"
+                  />
                 </div>
 
                 <div>

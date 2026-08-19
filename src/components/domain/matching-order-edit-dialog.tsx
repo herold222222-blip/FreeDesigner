@@ -23,6 +23,7 @@ import {
 import { getProjectTypes, TAX_OPTIONS } from "@/lib/constants";
 import type { BountyAttachment, Order, ServiceMode } from "@/lib/types";
 import { parseRegularEntrustDescription } from "@/lib/entrust-description";
+import { expectedDateFieldLabel } from "@/lib/order-lifecycle";
 import { buildRegularEntrustDescription } from "@/lib/entrust-submit";
 import { landscapeTimeTrackFromL3 } from "@/lib/designer-rates";
 import { resolveTimeDifficultyDisplay } from "@/lib/landscape-area-difficulty";
@@ -150,6 +151,7 @@ export function MatchingOrderEditDialog({
     !!title.trim() &&
     !!brief.trim() &&
     !!projectType.trim() &&
+    !!expectedDeliveryAt &&
     (isTimeQuoteFlow
       ? lines.some((l) => l.quantity > 0)
       : Math.round(Number(totalAmount)) > 0);
@@ -358,7 +360,9 @@ export function MatchingOrderEditDialog({
               </Select>
             </div>
             <div>
-              <Label htmlFor="match-order-delivery">期望交付日期</Label>
+              <Label htmlFor="match-order-delivery">
+                {expectedDateFieldLabel(serviceMode)}
+              </Label>
               <Input
                 id="match-order-delivery"
                 type="date"

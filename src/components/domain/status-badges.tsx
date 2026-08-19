@@ -13,6 +13,7 @@ import type {
 } from "@/lib/types";
 import { resolveDisplayOrderStatus } from "@/lib/order-lifecycle";
 import { isAwaitingClientPaymentOrder } from "@/lib/order-supervision";
+import { scanQuoteStatusLabel } from "@/lib/scan-order";
 import { cn } from "@/lib/utils";
 
 export function OnlineDot({ status }: { status: OnlineStatus }) {
@@ -95,12 +96,18 @@ export function OrderStatusBadge({
   label?: string;
   order?: Pick<
     Order,
-    "status" | "clientSignedContract" | "designerSignedContract" | "stages"
+    | "status"
+    | "clientSignedContract"
+    | "designerSignedContract"
+    | "stages"
+    | "orderSource"
+    | "scanQuoteProposedAt"
   >;
 }) {
   const resolved = order
     ? resolveDisplayOrderStatus(order)
     : (status as OrderStatus);
+  const scanLabel = order ? scanQuoteStatusLabel(order) : null;
   const paymentAlsoShown =
     !!order &&
     "stages" in order &&
@@ -116,7 +123,7 @@ export function OrderStatusBadge({
       variant={variant as any}
       className={deemphasizeInProgress ? "bg-amber-100 text-ink" : undefined}
     >
-      {label ?? ORDER_STATUS_META[resolved].label}
+      {label ?? scanLabel ?? ORDER_STATUS_META[resolved].label}
     </Badge>
   );
 }

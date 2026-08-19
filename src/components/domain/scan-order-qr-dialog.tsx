@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { QRCodeSVG } from "qrcode.react";
 import {
   Dialog,
@@ -19,25 +20,28 @@ export function ScanOrderQrDialog({
   designerId,
   designerName,
   triggerClassName,
+  triggerVariant = "outline",
 }: {
   designerId: string;
   designerName: string;
   triggerClassName?: string;
+  triggerVariant?: "outline" | "brand";
 }) {
   const [open, setOpen] = useState(false);
   const push = useSessionStore((s) => s.pushNotification);
 
+  const scanPath = buildScanOrderPath(designerId);
   const scanUrl = useMemo(() => {
-    if (typeof window === "undefined") return buildScanOrderPath(designerId);
+    if (typeof window === "undefined") return scanPath;
     return getScanOrderUrl(designerId);
-  }, [designerId]);
+  }, [designerId, scanPath]);
 
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(scanUrl);
       push({
         title: "链接已复制",
-        description: "可发送给委托人，对方扫码或打开链接即可下单。",
+        description: "可发送给委托人，对方打开链接即可填写项目需求。",
         variant: "success",
       });
     } catch {
@@ -48,7 +52,7 @@ export function ScanOrderQrDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="lg" className={triggerClassName ?? "mt-2 w-full"}>
+        <Button variant={triggerVariant} size="lg" className={triggerClassName ?? "mt-2 w-full"}>
           <QrCode className="h-4 w-4" /> 扫我下单
         </Button>
       </DialogTrigger>
@@ -56,8 +60,7 @@ export function ScanOrderQrDialog({
         <DialogHeader>
           <DialogTitle>扫我下单 · {designerName}</DialogTitle>
           <DialogDescription>
-            将二维码保存或转发给委托人。对方使用微信扫一扫或平台内扫码，即可填写项目需求、
-            设置付款阶段；你确认条件后生成电子合同，双方签约并预付后进入服务流程。
+            将二维码保存或转发给委托人。对方打开链接后按面积填写项目需求；你确认费用与付款阶段后发给委托人，对方确认即可进入签约。
           </DialogDescription>
         </DialogHeader>
 
@@ -77,16 +80,18 @@ export function ScanOrderQrDialog({
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Button variant="brand" className="flex-1" onClick={copyLink}>
-            <Copy className="h-4 w-4" /> 复制链接
+          <Button variant="brand" className="flex-1" asChild>
+            <Link href={scanPath} onClick={() => setOpen(false)}>
+              <Share2 className="h-4 w-4" /> 进入下单
+            </Link>
           </Button>
           <Button variant="outline" className="flex-1" onClick={copyLink}>
-            <Share2 className="h-4 w-4" /> 转发分享
+            <Copy className="h-4 w-4" /> 复制链接
           </Button>
         </div>
 
         <p className="text-center text-[11px] text-ink-40">
-          支持按工时或总价报价 · 可自定义付款阶段 · 合同模板自动生成
+          按面积填写需求 · 设计师报价与付款阶段 · 委托人确认后签约开工
         </p>
       </DialogContent>
     </Dialog>

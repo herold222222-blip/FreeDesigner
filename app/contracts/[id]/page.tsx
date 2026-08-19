@@ -20,7 +20,8 @@ import {
   type ContractViewPayload,
 } from "@/lib/api-client";
 import { useRoleStore } from "@/store/role-store";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, formatOptionalDate } from "@/lib/utils";
+import { orderExpectedDateLabel } from "@/lib/order-lifecycle";
 
 export default function ContractPage({ params }: { params: { id: string } }) {
   const role = useRoleStore((s) => s.role);
@@ -124,7 +125,7 @@ export default function ContractPage({ params }: { params: { id: string } }) {
                 <p className="font-medium text-ink">{order.title}</p>
                 <p className="mt-2 text-ink-80">{order.description}</p>
                 <Row label="项目类型">{order.projectType}</Row>
-                <Row label="预期交付">{formatDate(order.expectedDeliveryAt)}</Row>
+                <Row label={orderExpectedDateLabel(order)}>{formatOptionalDate(order.expectedDeliveryAt)}</Row>
               </Section>
 
               <Section title="三、服务费用与付款节点">

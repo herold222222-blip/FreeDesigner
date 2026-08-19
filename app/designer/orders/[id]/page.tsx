@@ -29,6 +29,7 @@ import {
 } from "@/components/domain/order-schedule-billing-panel";
 import { OrderDetailSwitchCard } from "@/components/domain/order-detail-switch-card";
 import { isTimeBilledOrder } from "@/lib/time-billing";
+import { isDirectedOrderSource } from "@/lib/unified-project-list";
 import { DesignerOrderScopePanel } from "@/components/domain/designer-order-scope-panel";
 import { sumDesignerOrderNetEarnings } from "@/lib/designer-order-scope";
 import {
@@ -45,7 +46,7 @@ import {
   Upload,
   XCircle,
 } from "lucide-react";
-import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
+import { formatCurrency, formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 import { useSessionStore } from "@/store/session-store";
 import { useRoleStore } from "@/store/role-store";
 import {
@@ -59,8 +60,17 @@ import {
 import {
   isOrderCancelled,
   needsDesignerSign,
+  orderExpectedDateLabel,
   resolveDisplayOrderStatus,
 } from "@/lib/order-lifecycle";
+import {
+  isScanAwaitingClientQuoteConfirm,
+  isScanAwaitingDesignerQuote,
+  isScanSourceOrder,
+  shouldHideDesignerScanPaymentTimeline,
+} from "@/lib/scan-order";
+import { DesignerScanQuoteWorkspace } from "@/components/domain/designer-scan-quote-workspace";
+import { ScanQuotePanel } from "@/components/domain/scan-quote-panel";
 import {
   OrderCancelledBanner,
   OrderInteractionLock,
@@ -180,13 +190,20 @@ export default function DesignerOrderDetailPage({
       Boolean(order.pendingSettlement) ||
       awaitingPayment);
 
+  const projectsListHref = isDirectedOrderSource(order)
+    ? "/designer/directed-orders"
+    : "/designer/orders";
+  const projectsListLabel = isDirectedOrderSource(order)
+    ? "返回定向订单"
+    : "返回平台项目";
+
   return (
     <div className="space-y-6">
       <Link
-        href="/designer/orders"
+        href={projectsListHref}
         className="inline-flex items-center gap-1 text-sm text-ink-60 hover:text-ink"
       >
-        <ArrowLeft className="h-3.5 w-3.5" /> 返回我的项目
+        <ArrowLeft className="h-3.5 w-3.5" /> {projectsListLabel}
       </Link>
 
       <OrderCancelledBanner order={order} />
@@ -194,8 +211,28 @@ export default function DesignerOrderDetailPage({
       <OrderInteractionLock order={order}>
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         <div className="space-y-6">
+          {isScanAwaitingDesignerQuote(order) ? (
+            <DesignerScanQuoteWorkspace
+              order={order}
+              myNetEarnings={myNetEarnings}
+              onUpdated={refresh}
+              busy={busy}
+              setBusy={setBusy}
+            />
+          ) : (
+          <>
+          {isScanAwaitingClientQuoteConfirm(order) ? (
+            <Card className="border-brand/20 bg-brand/5 p-4 text-sm text-ink">
+              <p className="font-medium text-ink">
+                已提交费用及付款阶段，等待委托人最终确认
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-ink-60">
+                委托人确认后将进入合同签署与预付流程，届时可在此查看各阶段进度与成果。
+              </p>
+            </Card>
+          ) : null}
           <OrderDetailSwitchCard
-            showSchedule
+            showSchedule={!isScanAwaitingClientQuoteConfirm(order)}
             scheduleLabel={
               isTimeBilledOrder(order) ? "工作日历 & 付款" : "付款进度 & 阶段成果"
             }
@@ -250,7 +287,7 @@ export default function DesignerOrderDetailPage({
                     icon={Clock}
                   />
                   <Field label="项目类型" value={order.projectType} />
-                  <Field label="预期交付" value={formatDate(order.expectedDeliveryAt)} icon={Calendar} />
+                  <Field label={orderExpectedDateLabel(order)} value={formatOptionalDate(order.expectedDeliveryAt)} icon={Calendar} />
                 </div>
               </>
             }
@@ -278,12 +315,20 @@ export default function DesignerOrderDetailPage({
                     </p>
                   </div>
                 ) : null}
+                {shouldHideDesignerScanPaymentTimeline(order) ? (
+                  <p className="text-sm leading-relaxed text-ink-60">
+                    {isScanAwaitingClientQuoteConfirm(order)
+                      ? "已提交费用及付款阶段，等待委托人最终确认。确认后将在此展示各阶段进度。"
+                      : "付款阶段与条件已在委托人下单时按平台标准说明。请填写费用方案后，委托人确认后将在此展示各阶段进度。"}
+                  </p>
+                ) : (
                 <StageTimeline
                   order={order}
                   perspective="designer"
                   getDesigner={getDesigner}
                   collaboratorMode="designer"
                   currentDesignerId={currentDesignerId}
+                  hideMonthlyCalendar={order.billingMode === "monthly"}
                   onUploadDeliverables={(stage, files) =>
                     runAction(
                       () =>
@@ -297,6 +342,7 @@ export default function DesignerOrderDetailPage({
                     )
                   }
                 />
+                )}
                 {isTimeBilledOrder(order) ? (
                   <OrderServiceControlCard
                     order={order}
@@ -307,6 +353,8 @@ export default function DesignerOrderDetailPage({
               </>
             }
           />
+          </>
+          )}
 
           {order.status === "in_revision" && order.revisions.length > 0 ? (
             <Card className="border-violet-200 bg-violet-50 p-5">
@@ -424,7 +472,7 @@ export default function DesignerOrderDetailPage({
             </div>
           </Card>
 
-          {showDesignerTodos ? (
+          {showDesignerTodos && !isScanAwaitingDesignerQuote(order) ? (
             <Card className="space-y-3 p-5">
               <div className="text-xs uppercase tracking-wider text-ink-40">
                 待办操作
@@ -448,8 +496,9 @@ export default function DesignerOrderDetailPage({
                     return (
                       <>
                         <p className="text-xs text-ink-60">
-                          平台已向您委派本订单并确认费用{" "}
-                          {formatCurrency(order.totalAmount)}。
+                          平台已向您委派本订单，您本专业预计实收{" "}
+                          {formatCurrency(myNetEarnings)}
+                          （不含平台管理费与税费）。
                           {myTracks.length > 0
                             ? `您负责：${myTracks
                                 .map((a) => {
@@ -499,7 +548,8 @@ export default function DesignerOrderDetailPage({
                   })()}
                 </>
               )}
-              {order.status === "pending_schedule" && (
+              {order.status === "pending_schedule" &&
+                !isScanSourceOrder(order) && (
                 <>
                   <p className="text-xs text-ink-60">
                     委托人已提交档期申请，确认后双方可签约并支付预付款。
@@ -515,6 +565,16 @@ export default function DesignerOrderDetailPage({
                   </Button>
                 </>
               )}
+              {order.status === "pending_schedule" &&
+                isScanAwaitingClientQuoteConfirm(order) ? (
+                <ScanQuotePanel
+                  order={order}
+                  perspective="designer"
+                  onUpdated={refresh}
+                  busy={busy}
+                  setBusy={setBusy}
+                />
+              ) : null}
               {needsDesignerSign(order) && (
                 <Button
                   variant="brand"
@@ -671,6 +731,12 @@ function designerStatusDescription(order: Order, awaitingPayment: boolean) {
     case "pending_designer_accept":
       return "平台已向您委派本订单，请确认是否接单。";
     case "pending_schedule":
+      if (isScanAwaitingDesignerQuote(order)) {
+        return "委托人已通过扫码提交项目需求，请填写费用与付款阶段后发给对方确认。";
+      }
+      if (isScanAwaitingClientQuoteConfirm(order)) {
+        return "费用方案已发送，等待委托人确认后将进入合同签署。";
+      }
       return "委托人已提交档期申请，请确认后进入合同签署。";
     case "pending_contract":
       return needsDesignerSign(order)

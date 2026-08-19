@@ -497,6 +497,8 @@ export interface PaymentStage {
   deliverables?: DeliverableFile[];
   /** 委托人确认本阶段成果的时间 */
   deliverablesConfirmedAt?: string;
+  /** 付款条件说明（扫码报价等场景） */
+  note?: string;
   /** 更换设计师后，管理员更新的本阶段各设计师支付比例拆分 */
   designerPaymentSplits?: StageDesignerPaymentSplit[];
 }
@@ -652,6 +654,8 @@ export interface Order {
   reviewExpired?: boolean;
   /** 关联悬赏 id（悬赏委托来源） */
   bountyId?: string;
+  /** 扫码下单：设计师已提交费用与付款阶段，待委托人确认 */
+  scanQuoteProposedAt?: string;
 }
 
 /** 第三方审图师 · 对应某一三级专业 */

@@ -34,7 +34,8 @@ import {
   Share2,
   Upload,
 } from "lucide-react";
-import { MONTHLY_BILLING_RULE, formatMonthlyDueHint } from "@/lib/monthly-billing";
+import { formatMonthlyDueHint } from "@/lib/monthly-billing";
+import { OrderMonthlyServiceCalendar } from "@/components/domain/order-monthly-service-calendar";
 import { DAILY_BILLING_RULE } from "@/lib/time-billing";
 import {
   isPrepaymentStage,
@@ -69,6 +70,7 @@ export function StageTimeline({
   onStageComplete,
   onRevise,
   onUploadDeliverables,
+  hideMonthlyCalendar,
 }: {
   order: Order;
   perspective: "client" | "designer" | "admin";
@@ -80,6 +82,8 @@ export function StageTimeline({
   onStageComplete?: (stage: PaymentStage) => void;
   onRevise?: (stage: PaymentStage) => void;
   onUploadDeliverables?: (stage: PaymentStage, files: DeliverableFile[]) => void;
+  /** 工作日历已在其它面板展示时隐藏，避免重复 */
+  hideMonthlyCalendar?: boolean;
 }) {
   const push = useSessionStore((s) => s.pushNotification);
   const { data: serviceProviders } = useServiceProviders();
@@ -161,10 +165,16 @@ export function StageTimeline({
 
   return (
     <div className="space-y-5">
-      {isMonthlyOrder && isClientView ? (
-        <p className="rounded-xl border border-violet-200/80 bg-violet-50/50 px-4 py-3 text-xs leading-relaxed text-violet-900">
-          {MONTHLY_BILLING_RULE}
-        </p>
+      {isMonthlyOrder && !hideMonthlyCalendar ? (
+        <div className="space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-ink">按月工时日历</h3>
+            <p className="mt-1 text-xs text-ink-60">
+              红色为工作日服务（不含周末与法定节假日）；灰色为休息日；琥珀色「付」为支付节点（首月预付为开始服务日前 3 天，此后每月 25 日 17:00 前；遇周末或节假日提前至前一个工作日）。
+            </p>
+          </div>
+          <OrderMonthlyServiceCalendar order={order} />
+        </div>
       ) : null}
       {isDailyOrder && isClientView ? (
         <p className="rounded-xl border border-violet-200/80 bg-violet-50/50 px-4 py-3 text-xs leading-relaxed text-violet-900">

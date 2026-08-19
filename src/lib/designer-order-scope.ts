@@ -1,4 +1,8 @@
 import { resolveTrackLabels } from "@/lib/constants";
+import {
+  landscapeTimeTrackFromL3,
+  type LandscapeTimeRateTrack,
+} from "@/lib/designer-rates";
 import { getMergedStageCollaborators } from "@/lib/stage-collaborator";
 import { resolveStagePaymentSplits } from "@/lib/stage-payment-splits";
 import { computeTimeLineBreakdown } from "@/lib/regular-entrust-quote";
@@ -72,10 +76,36 @@ export function getDesignerGrossForStage(
   );
 }
 
+function allocateByStageRatios(
+  total: number,
+  stage: PaymentStage,
+  stages: PaymentStage[],
+) {
+  const idx = stages.findIndex((s) => s.id === stage.id);
+  if (idx < 0) return Math.round(total * stage.ratio);
+  if (idx === stages.length - 1) {
+    const prior = stages
+      .slice(0, idx)
+      .reduce((sum, s) => sum + Math.round(total * s.ratio), 0);
+    return total - prior;
+  }
+  return Math.round(total * stage.ratio);
+}
+
+function isExplicitDesignerSplit(split: StageDesignerPaymentSplit) {
+  return (
+    split.fromReplacement === true ||
+    split.role === "collaborator" ||
+    split.role === "previous" ||
+    split.role === "current"
+  );
+}
+
 /**
  * 某付款阶段设计师应收 = 其负责专业基础服务费 × 阶段占比。
  * 不含平台管理费、税费，也不另扣订单手续费。
  * 各阶段四舍五入后由最后一阶段吃余数，保证合计等于基础服务费。
+ * 不回落到委托人应支付的 stage.amount。
  */
 export function getDesignerReceivableForStage(
   order: Order,
@@ -94,20 +124,17 @@ export function getDesignerReceivableForStage(
   if (total > 0) {
     const stages =
       options?.involvedStages?.length ? options.involvedStages : [stage];
-    const idx = stages.findIndex((s) => s.id === stage.id);
-    if (idx < 0) return Math.round(total * stage.ratio);
-    if (idx === stages.length - 1) {
-      const prior = stages
-        .slice(0, idx)
-        .reduce((sum, s) => sum + Math.round(total * s.ratio), 0);
-      return total - prior;
-    }
-    return Math.round(total * stage.ratio);
+    return allocateByStageRatios(total, stage, stages);
   }
-  return getDesignerSplitsForStage(order, stage, designerId).reduce(
-    (sum, s) => sum + s.amount,
-    0,
-  );
+
+  const splits = getDesignerSplitsForStage(order, stage, designerId);
+  if (
+    splits.some(isExplicitDesignerSplit) ||
+    (stage.designerPaymentSplits?.length && splits.length > 0)
+  ) {
+    return splits.reduce((sum, s) => sum + s.amount, 0);
+  }
+  return 0;
 }
 
 export function designerInvolvedInStage(
@@ -233,15 +260,58 @@ export function getPeerTrackAssignments(
   );
 }
 
+function uniqueAssignedDesignerIds(order: Order) {
+  return Array.from(
+    new Set((order.trackAssignments ?? []).map((a) => a.designerId)),
+  );
+}
+
+function designerOwnsOrderShare(order: Order, designerId: string) {
+  if (order.designerId === designerId) return true;
+  return getDesignerTrackAssignments(order, designerId).length > 0;
+}
+
+function trackOfAssignment(assignment: OrderTrackAssignment) {
+  return landscapeTimeTrackFromL3(assignment.l3);
+}
+
 function getDesignerQuoteLines(order: Order, designerId: string): OrderQuoteLine[] {
   const lines = order.quote?.lines ?? [];
   if (!lines.length) return [];
   const mine = getDesignerTrackAssignments(order, designerId);
-  if (mine.length > 0) {
-    const l3s = new Set(mine.map((a) => a.l3));
-    return lines.filter((l) => l.l3 && l3s.has(l.l3));
+  if (mine.length === 0) {
+    if (order.designerId === designerId) return lines;
+    return [];
   }
-  if (order.designerId === designerId) return lines;
+
+  const l3s = new Set(mine.map((a) => a.l3));
+  const byL3 = lines.filter((line) => line.l3 && l3s.has(line.l3));
+  if (byL3.length) return byL3;
+
+  const peerTracks = new Set(
+    (order.trackAssignments ?? [])
+      .filter((a) => a.designerId !== designerId)
+      .map(trackOfAssignment)
+      .filter((track): track is LandscapeTimeRateTrack => Boolean(track)),
+  );
+  const exclusiveTracks = new Set(
+    mine
+      .map(trackOfAssignment)
+      .filter((track): track is LandscapeTimeRateTrack => {
+        if (!track) return false;
+        return !peerTracks.has(track);
+      }),
+  );
+  if (exclusiveTracks.size > 0) {
+    const byTrack = lines.filter(
+      (line) =>
+        Boolean(line.track) &&
+        exclusiveTracks.has(line.track as LandscapeTimeRateTrack),
+    );
+    if (byTrack.length) return byTrack;
+  }
+
+  if (uniqueAssignedDesignerIds(order).length <= 1) return lines;
   return [];
 }
 
@@ -273,7 +343,18 @@ export function sumDesignerOrderNetEarnings(
       0,
     );
   }
-  return 0;
+  if (!designerOwnsOrderShare(order, designerId)) return 0;
+
+  const basic = order.quote?.basicFee ?? 0;
+  if (!(basic > 0)) return 0;
+
+  const assignments = order.trackAssignments ?? [];
+  const mine = getDesignerTrackAssignments(order, designerId);
+  const unique = uniqueAssignedDesignerIds(order);
+  if (unique.length > 1 && mine.length > 0 && assignments.length > 0) {
+    return Math.round(basic * (mine.length / assignments.length));
+  }
+  return basic;
 }
 
 export function canDesignerRequestWithdraw(

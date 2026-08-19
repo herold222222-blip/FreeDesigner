@@ -1,5 +1,6 @@
 import { slotsToDateRange } from "@/lib/designer-schedule";
-import { MONTHLY_PREPAY_DAY } from "@/lib/monthly-billing";
+import { MONTHLY_PREPAY_DAY, monthlyFirstPrepayDueDate, monthlyPaymentDueAtIso, monthlyPrepayDate, resolveMonthlyServicePeriod } from "@/lib/monthly-billing";
+import { adjustToPreviousCnWorkday } from "@/lib/cn-workdays";
 import type { Order, PaymentStage, WorkCalendarEvent } from "@/lib/types";
 import { getOrderWorkCalendarEvents } from "@/lib/work-calendar-content";
 import { formatDate, formatDateTime } from "@/lib/utils";
@@ -13,13 +14,13 @@ export const DAILY_BILLING_RULE =
   "签约预付后，原合同服务期结束之日起 3 日内付清尾款。延长服务须在结束日前一日 17:00 前申请（半天为计费单元），服务完成后补付延长费用。";
 
 export const MONTHLY_BILLING_RULE_FULL =
-  "首月签约预付，此后每月 25 日 17:00 前支付下一个月服务费。委托人可在当天 17:00 前终止并结算；不足整月按工作日计，日费 = 月费 ÷ 21。";
+  "首月预付款须在开始服务日前 3 天 17:00 前支付；此后每月 25 日 17:00 前支付下一个月服务费。遇周末或法定节假日均提前至前一个工作日。按月服务不含周末与法定节假日（调休上班日照常服务）。委托人可在当天 17:00 前终止并结算；不足整月按工作日计，日费 = 月费 ÷ 21。";
 
 export const DAILY_EXTENSION_RULE =
   "在订单结束日期的前一日 17:00 之前方可申请延长，填写延长半天数（半天为计费单元）；如需再次延长，须在延长服务结束日的前一日 17:00 之前再次申请。延长费用于服务完成后补付。";
 
 export const MONTHLY_EXTENSION_RULE =
-  "在服务到期的当月 25 日 17:00 之前方可申请延长，填写延长月数（月为计费单元）；如需再次延长，须在延长服务结束当月的 25 日 17:00 之前再次申请。延长费用按预付规则支付。";
+  "在服务到期当月 25 日 17:00 之前方可申请延长；若 25 日遇周末或法定节假日，提前至前一个工作日 17:00。填写延长月数（月为计费单元）；如需再次延长，须在延长服务结束当月的同一规则截止前再次申请。延长费用按预付规则支付。";
 
 export const DAILY_TERMINATION_RULE =
   "委托人可在服务日前一日 17:00 前终止服务并发起结算。";
@@ -72,12 +73,7 @@ export function getDailySettlementDueAt(order: Order): string | null {
 }
 
 export function monthlyPrepayDueAtFull(monthKey: string): string {
-  const [y, m] = monthKey.split("-").map(Number);
-  const prevMonth = m === 1 ? 12 : m - 1;
-  const prevYear = m === 1 ? y - 1 : y;
-  const day = String(MONTHLY_PREPAY_DAY).padStart(2, "0");
-  const month = String(prevMonth).padStart(2, "0");
-  return `${prevYear}-${month}-${day}T${String(BILLING_CUTOFF_HOUR).padStart(2, "0")}:00:00+08:00`;
+  return monthlyPaymentDueAtIso(monthlyPrepayDate(monthKey), BILLING_CUTOFF_HOUR);
 }
 
 export function getMonthlyUnitFee(order: Order): number {
@@ -156,16 +152,29 @@ export function buildDailyPaymentItems(order: Order): TimeBillingPaymentItem[] {
 }
 
 export function buildMonthlyPaymentItems(order: Order): TimeBillingPaymentItem[] {
+  const period = resolveMonthlyServicePeriod(order);
   return order.stages.map((stage, i) => {
     const isFirst = i === 0;
-    const dueAt =
-      !isFirst && order.selectedMonths?.[i]
+    const firstPrepayDue =
+      isFirst && period?.from
+        ? monthlyPaymentDueAtIso(
+            monthlyFirstPrepayDueDate(period.from),
+            BILLING_CUTOFF_HOUR,
+          )
+        : undefined;
+    const dueAt = isFirst
+      ? firstPrepayDue
+      : order.selectedMonths?.[i]
         ? monthlyPrepayDueAtFull(order.selectedMonths[i])
-        : stage.dueAt;
+        : stage.dueAt
+          ? monthlyPaymentDueAtIso(stage.dueAt, BILLING_CUTOFF_HOUR)
+          : undefined;
 
     let hint: string | undefined;
     if (isFirst) {
-      hint = "签约时预付首月服务费";
+      hint = firstPrepayDue
+        ? `请于 ${formatDateTime(firstPrepayDue)} 前支付（开始服务日前 3 天）`
+        : "开始服务日前 3 天支付首月预付款";
     } else if (dueAt) {
       hint = `请于 ${formatDateTime(dueAt)} 前支付（提前支付下月费用）`;
     }
@@ -258,13 +267,14 @@ export function getDailyExtensionDeadline(serviceEnd: string): Date {
   return cutoffOnDate(`${y}-${m}-${d}`);
 }
 
-/** 按月：服务结束所在月 25 日 17:00 */
+/** 按月：服务结束所在月 25 日 17:00；遇休息日提前至前一工作日 */
 export function getMonthlyExtensionDeadline(serviceEnd: string): Date {
   const end = parseDateShanghai(serviceEnd);
   const y = end.getFullYear();
   const m = String(end.getMonth() + 1).padStart(2, "0");
   const day = String(MONTHLY_PREPAY_DAY).padStart(2, "0");
-  return cutoffOnDate(`${y}-${m}-${day}`);
+  const adjusted = adjustToPreviousCnWorkday(`${y}-${m}-${day}`);
+  return cutoffOnDate(adjusted);
 }
 
 export function getServiceExtensionDeadline(

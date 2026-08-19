@@ -1,6 +1,7 @@
 import { isContractFullySigned, isOrderCancelled } from "@/lib/order-lifecycle";
 import { isPrepaymentStage } from "@/lib/order-payment-stages";
 import { isAwaitingClientPaymentOrder } from "@/lib/order-supervision";
+import { monthlyPaymentDueAtIso, monthlyFirstPrepayDueDate, resolveMonthlyServicePeriod } from "@/lib/monthly-billing";
 import { getDailySettlementDueAt } from "@/lib/time-billing";
 import type { Order, PaymentStage } from "@/lib/types";
 
@@ -161,7 +162,8 @@ export function getActivePaymentStageId(
   if (
     isOrderCancelled(order) ||
     order.status === "completed" ||
-    order.status === "terminated"
+    order.status === "terminated" ||
+    !isContractFullySigned(order)
   ) {
     return null;
   }
@@ -232,8 +234,9 @@ function resolveContractDue(
 
   if (isMonthly && index > 0 && stage.dueAt) {
     return {
-      dueAt: stage.dueAt,
-      ruleLabel: "合同约定：每月 25 日 17:00 前支付下一月服务费",
+      dueAt: monthlyPaymentDueAtIso(stage.dueAt, PAYMENT_CUTOFF_HOUR),
+      ruleLabel:
+        "合同约定：每月 25 日 17:00 前支付下一月服务费；遇周末或法定节假日提前至前一个工作日",
     };
   }
 
@@ -243,6 +246,19 @@ function resolveContractDue(
       !isContractFullySigned(order)
     ) {
       return null;
+    }
+    if (isMonthly) {
+      const period = resolveMonthlyServicePeriod(order);
+      if (period?.from) {
+        return {
+          dueAt: monthlyPaymentDueAtIso(
+            monthlyFirstPrepayDueDate(period.from),
+            PAYMENT_CUTOFF_HOUR,
+          ),
+          ruleLabel:
+            "合同约定：首月预付款须在开始服务日前 3 天 17:00 前支付；遇周末或法定节假日提前至前一个工作日",
+        };
+      }
     }
     const signedAt = order.contractSignedAt || order.createdAt;
     return {

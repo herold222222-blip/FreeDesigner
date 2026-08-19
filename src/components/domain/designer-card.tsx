@@ -119,7 +119,7 @@ export function DesignerCard({ designer }: { designer: Designer }) {
             ) : null}
             {designer.supportsHandDrawing ? (
               <Badge variant="outline" className="gap-1">
-                <PencilLine className="h-3 w-3" /> 支持手改图
+                <PencilLine className="h-3 w-3" /> 支持改图
               </Badge>
             ) : null}
           </div>

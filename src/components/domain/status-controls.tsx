@@ -151,11 +151,11 @@ export function StatusControls({ designer }: { designer: Designer }) {
           />
           <ToggleRow
             icon={PencilLine}
-            label="支持手改图"
+            label="支持改图"
             checked={hand}
             onChange={(v) => {
               setHand(v);
-              push({ title: v ? "已开启手改图服务" : "已关闭手改图服务" });
+              push({ title: v ? "已开启改图服务" : "已关闭改图服务" });
             }}
           />
         </div>

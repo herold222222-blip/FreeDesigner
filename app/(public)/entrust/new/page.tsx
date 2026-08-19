@@ -96,6 +96,7 @@ import {
 } from "@/lib/client-publish-guard";
 import { usePlatformPricingStore } from "@/store/platform-pricing-store";
 import { formatCurrency, cn } from "@/lib/utils";
+import { expectedDateFieldLabel } from "@/lib/order-lifecycle";
 import { PreferredDesignersField } from "@/components/domain/preferred-designers-field";
 import {
   BountySubjectFiltersEditor,
@@ -357,6 +358,7 @@ function RegularEntrustForm() {
 
   const [specialty, setSpecialty] = useState<Specialty>("landscape");
   const [projectType, setProjectType] = useState("");
+  const [expectedDeliveryAt, setExpectedDeliveryAt] = useState("");
 
   // 计费方式
   const [billingMode, setBillingMode] = useState<BillingMode | null>(null);
@@ -386,7 +388,16 @@ function RegularEntrustForm() {
   const [subjectFilters, setSubjectFilters] = useState(EMPTY_BOUNTY_SUBJECT_FILTERS);
   const [buildType, setBuildType] = useState<"new" | "renovation" | null>(null);
 
-  const l2Options = useMemo(() => getL2Options(specialty), [specialty]);
+  const hideLandscapePreliminary =
+    specialty === "landscape" &&
+    serviceMode === "onsite" &&
+    (billingMode === "daily" || billingMode === "monthly");
+  const l2Options = useMemo(() => {
+    const all = getL2Options(specialty);
+    return hideLandscapePreliminary
+      ? all.filter((o) => o.value !== "preliminary")
+      : all;
+  }, [specialty, hideLandscapePreliminary]);
   const timeL3Options = useMemo(
     () => getL3OptionsForL2s(specialty, selectedL2),
     [specialty, selectedL2],
@@ -534,7 +545,8 @@ function RegularEntrustForm() {
     !!contactName.trim() &&
     !!contactPhone.trim() &&
     !!projectSiteResolution &&
-    !!projectType.trim();
+    !!projectType.trim() &&
+    !!expectedDeliveryAt;
 
   const areaDifficultyComplete =
     billingMode !== "area" ||
@@ -590,6 +602,7 @@ function RegularEntrustForm() {
     if (!specialty) missing.push("设计专业");
     if (!billingComplete) {
       if (!billingMode) missing.push("计费方式");
+      if (billingMode && selectedL2.length === 0) missing.push("二级专业");
       if (billingMode === "area" && !buildType) missing.push("建造类型");
       if (!tax) missing.push("税率");
       if (
@@ -601,10 +614,10 @@ function RegularEntrustForm() {
       }
       if (
         billingMode &&
-        (selectedL2.length === 0 ||
-          (billingMode === "area"
-            ? !(typeof area === "number" && area > 0 && tracks.length > 0)
-            : timeL3.length === 0))
+        selectedL2.length > 0 &&
+        (billingMode === "area"
+          ? !(typeof area === "number" && area > 0 && tracks.length > 0)
+          : timeL3.length === 0)
       ) {
         missing.push(billingMode === "area" ? "三级专业" : "三级专业工时");
       }
@@ -617,14 +630,59 @@ function RegularEntrustForm() {
   const toggleTrack = (t: TrackKey) =>
     setTracks((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
 
+  const handleL2Change = (next: string[]) => {
+    const resolved =
+      specialty === "landscape"
+        ? reconcileLandscapeL2Selection(selectedL2, next)
+        : next;
+    setSelectedL2(resolved);
+    const pruned = pruneL3ForL2s(specialty, resolved, timeL3);
+    setTimeL3(pruned);
+    setDaysByL3((prev) => {
+      const keep: Record<string, number> = {};
+      for (const l3 of pruned) {
+        if (prev[l3] != null) keep[l3] = prev[l3];
+      }
+      return keep;
+    });
+    setMonthsByL3((prev) => {
+      const keep: Record<string, number> = {};
+      for (const l3 of pruned) {
+        if (prev[l3] != null) keep[l3] = prev[l3];
+      }
+      return keep;
+    });
+  };
+
+  const l2Field = (
+    <FieldFull label="二级专业（可多选）" required heading anchor="field-l2">
+      <BountyTrackMultiSelect
+        options={l2Options.map((o) => ({
+          value: o.value,
+          label: o.label,
+        }))}
+        value={selectedL2}
+        onChange={handleL2Change}
+      />
+      {specialty === "landscape" ? (
+        <p className="mt-1.5 text-xs text-ink-40">
+          {hideLandscapePreliminary
+            ? "可选：景观方案设计、景观施工图设计。驻场服务不含景观扩初设计。"
+            : "可选：景观方案设计、景观扩初设计、景观施工图设计。施工图已包含扩初，二者不可同时勾选。"}
+        </p>
+      ) : null}
+    </FieldFull>
+  );
+
   const firstIncompleteFieldId = (): string | null => {
     if (!title.trim()) return "field-title";
     if (!contactName.trim()) return "field-contact-name";
     if (!contactPhone.trim()) return "field-contact-phone";
     if (!projectSiteResolution) return "field-project-site";
     if (!projectType.trim()) return "field-project-type";
-    if (selectedL2.length === 0) return "field-l2";
+    if (!expectedDeliveryAt) return "field-expected-date";
     if (!billingMode) return "field-billing-mode";
+    if (selectedL2.length === 0) return "field-l2";
     if (billingMode === "area") {
       if (!(typeof area === "number" && area > 0)) return "field-area";
       if (tracks.length === 0 || !areaDifficultyComplete) return "field-tracks";
@@ -762,6 +820,7 @@ function RegularEntrustForm() {
         attachments,
         withDrawing: serviceMode === "onsite" ? withDrawing : false,
         taxCoefficient: tax.coefficient,
+        expectedDeliveryAt,
         timeQuoteLines:
           billingMode === "area"
             ? undefined
@@ -874,6 +933,21 @@ function RegularEntrustForm() {
                 ))}
               </select>
             </Field>
+            <Field
+              label={expectedDateFieldLabel(
+                billingMode !== "area" && serviceMode === "onsite"
+                  ? "onsite"
+                  : "online",
+              )}
+              required
+              anchor="field-expected-date"
+            >
+              <Input
+                type="date"
+                value={expectedDeliveryAt}
+                onChange={(e) => setExpectedDeliveryAt(e.target.value)}
+              />
+            </Field>
             <FieldFull label="">
               <PreferredDesignersField
                 value={preferredDesignerInput}
@@ -883,7 +957,7 @@ function RegularEntrustForm() {
           </div>
         </Card>
 
-        {/* 一级 / 二级专业 */}
+        {/* 一级专业 */}
         <Card className="p-6">
           <SectionTitle icon={Sparkles} title="一级专业（必填）" />
           <div className="relative z-[6] grid grid-cols-2 gap-2 sm:grid-cols-5">
@@ -923,48 +997,6 @@ function RegularEntrustForm() {
           </div>
           <div className="mt-3 rounded-xl bg-amber-50 p-3 text-[11px] text-amber-800">
             当前仅景观设计开放在线计费委托。建筑设计、室内设计、效果图 / 动画、造价咨询暂未启用，请改用悬赏委托或电话咨询。
-          </div>
-
-          <div id="field-l2" className="mt-5 scroll-mt-24 space-y-2">
-            <Label className={headingLabelClass}>
-              二级专业（可多选）
-              <span className="ml-1 text-rose-500">*</span>
-            </Label>
-            <BountyTrackMultiSelect
-              options={l2Options.map((o) => ({
-                value: o.value,
-                label: o.label,
-              }))}
-              value={selectedL2}
-              onChange={(next) => {
-                const resolved =
-                  specialty === "landscape"
-                    ? reconcileLandscapeL2Selection(selectedL2, next)
-                    : next;
-                setSelectedL2(resolved);
-                const pruned = pruneL3ForL2s(specialty, resolved, timeL3);
-                setTimeL3(pruned);
-                setDaysByL3((prev) => {
-                  const keep: Record<string, number> = {};
-                  for (const l3 of pruned) {
-                    if (prev[l3] != null) keep[l3] = prev[l3];
-                  }
-                  return keep;
-                });
-                setMonthsByL3((prev) => {
-                  const keep: Record<string, number> = {};
-                  for (const l3 of pruned) {
-                    if (prev[l3] != null) keep[l3] = prev[l3];
-                  }
-                  return keep;
-                });
-              }}
-            />
-            {specialty === "landscape" ? (
-              <p className="text-xs text-ink-40">
-                可选：景观方案设计、景观扩初设计、景观施工图设计。施工图已包含扩初，二者不可同时勾选。
-              </p>
-            ) : null}
           </div>
         </Card>
 
@@ -1041,6 +1073,7 @@ function RegularEntrustForm() {
                   }
                 />
               </Field>
+              {l2Field}
               <FieldFull label="三级专业与各专业难度系数（文档 3.1.1.2.6）" heading required anchor="field-tracks">
                 <div className="space-y-3">
                   {TRACK_OPTIONS.map((spec) => {
@@ -1214,7 +1247,18 @@ function RegularEntrustForm() {
                     <button
                       key={m.v}
                       type="button"
-                      onClick={() => setServiceMode(m.v)}
+                      onClick={() => {
+                        setServiceMode(m.v);
+                        if (
+                          m.v === "onsite" &&
+                          specialty === "landscape" &&
+                          selectedL2.includes("preliminary")
+                        ) {
+                          handleL2Change(
+                            selectedL2.filter((v) => v !== "preliminary"),
+                          );
+                        }
+                      }}
                       className={cn(
                         "rounded-full border px-3 py-1.5 text-xs transition-colors",
                         serviceMode === m.v
@@ -1237,6 +1281,8 @@ function RegularEntrustForm() {
                   </label>
                 ) : null}
               </Field>
+
+              {l2Field}
 
               <FieldFull label="三级专业（可多选）" required heading anchor="field-l3">
                 <BountyTrackMultiSelect
@@ -1285,7 +1331,7 @@ function RegularEntrustForm() {
                 />
                 <p className="mt-1.5 text-xs text-ink-40">
                   {selectedL2.length === 0
-                    ? "请先在上方选择二级专业。"
+                    ? "请先选择二级专业。"
                     : `每个勾选的三级专业需确认工时（可待系统评估，或自行填写预估${billingMode === "daily" ? "天数" : "月数"}）。`}
                 </p>
               </FieldFull>

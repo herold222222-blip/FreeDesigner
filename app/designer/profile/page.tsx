@@ -59,8 +59,8 @@ function DesignerProfileEditorInner() {
             triggerClassName="h-10 px-4"
           />
           <Button asChild variant="outline">
-            <Link href="/designer/scan-orders">
-              <QrCode className="h-4 w-4" /> 扫码订单
+            <Link href="/designer/directed-orders">
+              <QrCode className="h-4 w-4" /> 定向订单
             </Link>
           </Button>
           <Button asChild variant="outline" size="sm">

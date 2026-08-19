@@ -59,6 +59,8 @@ export function buildRegularEntrustDescription(input: {
   withPM?: boolean;
   buildType?: "new" | "renovation" | null;
   taxLabel?: string;
+  serviceModeLabel?: string;
+  closingLine?: string;
 }): string {
   const timeLines =
     input.timeL3Units?.length ?
@@ -99,11 +101,12 @@ export function buildRegularEntrustDescription(input: {
     input.billingMode === "area" && input.buildType
       ? `建造类型：${input.buildType === "renovation" ? "改扩建（110%）" : "新建（100%）"}`
       : null,
+    input.serviceModeLabel ? `服务方式：${input.serviceModeLabel}` : null,
     input.taxLabel ? `税率：${input.taxLabel}` : null,
     input.withAudit ? "增值服务：第三方审图" : null,
     input.withPM ? "增值服务：项目管理" : null,
     "",
-    "平台将匹配设计师并确认最终费用后进入签约。",
+    input.closingLine ?? "平台将匹配设计师并确认最终费用后进入签约。",
   ].filter(Boolean);
   return lines.join("\n");
 }
@@ -128,6 +131,7 @@ export function buildRegularEntrustOrderBody(input: {
     quantity: number;
     difficultyKey?: string;
   }>;
+  expectedDeliveryAt?: string;
 }): CreateOrderBody {
   const budget =
     typeof input.budget === "number" && input.budget > 0 ? input.budget : 0;
@@ -146,6 +150,7 @@ export function buildRegularEntrustOrderBody(input: {
     withAuditService: input.withAudit,
     withProjectManagement: input.withPM,
     attachments: input.attachments?.length ? input.attachments : undefined,
+    expectedDeliveryAt: input.expectedDeliveryAt?.trim() || undefined,
     timeQuote:
       isTimeBilling && input.timeQuoteLines?.length
         ? {

@@ -1,4 +1,9 @@
 import { slotKey } from "@/lib/designer-schedule";
+import {
+  isCnHolidayRestDay,
+  isCnMakeupWorkday,
+  isWeekendDate,
+} from "@/lib/cn-workdays";
 import type {
   CalendarSlot,
   DayPeriod,
@@ -30,9 +35,10 @@ export function resolvePeriodAvailability(
     return period === "am" ? day.amAvailable : day.pmAvailable;
   }
   if (settings.allDay) return true;
-  const weekend = isWeekend(date);
+  const weekend = isWeekendDate(date) && !isCnMakeupWorkday(date);
+  const holiday = isCnHolidayRestDay(date);
   const close =
-    (settings.closeWeekend && weekend) || (settings.closeHoliday && weekend);
+    (settings.closeWeekend && weekend) || (settings.closeHoliday && holiday);
   return !close;
 }
 
@@ -121,8 +127,7 @@ export function applyEventsToCalendar(
 }
 
 export function isWeekend(date: string) {
-  const day = new Date(`${date}T00:00:00`).getDay();
-  return day === 0 || day === 6;
+  return isWeekendDate(date);
 }
 
 /** 批量设置：周末 / 节假日关闭档期 */
@@ -139,8 +144,10 @@ export function applyCalendarBatchRules(
     }));
   }
   return calendar.map((day) => {
-    const weekend = isWeekend(day.date);
-    const close = (opts.closeWeekend && weekend) || (opts.closeHoliday && weekend);
+    const weekend = isWeekendDate(day.date) && !isCnMakeupWorkday(day.date);
+    const holiday = isCnHolidayRestDay(day.date);
+    const close =
+      (opts.closeWeekend && weekend) || (opts.closeHoliday && holiday);
     if (!close) return day;
     return {
       ...day,

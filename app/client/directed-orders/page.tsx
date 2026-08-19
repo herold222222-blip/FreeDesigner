@@ -10,12 +10,12 @@ import { UnifiedProjectList } from "@/components/domain/unified-project-list";
 import { useScheduleRequests } from "@/lib/use-data";
 import { useRoleStore } from "@/store/role-store";
 import type { ClientOrderFocus } from "@/lib/client-order-focus";
-import { Megaphone } from "lucide-react";
+import { Crosshair } from "lucide-react";
 
-export default function ClientOrdersPage() {
+export default function ClientDirectedOrdersPage() {
   return (
     <Suspense fallback={<div className="py-20 text-center text-ink-60">加载订单列表...</div>}>
-      <ClientOrdersInner />
+      <ClientDirectedOrdersInner />
     </Suspense>
   );
 }
@@ -34,7 +34,7 @@ function parseFocusParam(value: string | null): ClientOrderFocus | null {
     : null;
 }
 
-function ClientOrdersInner() {
+function ClientDirectedOrdersInner() {
   const params = useSearchParams();
   const focus = parseFocusParam(params.get("focus"));
   const identityId = useRoleStore((s) => s.identityId);
@@ -55,23 +55,23 @@ function ClientOrdersInner() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-ink">
-            {focus ? CLIENT_ORDER_FOCUS_META[focus].label : "平台订单"}
+            {focus ? CLIENT_ORDER_FOCUS_META[focus].label : "定向下单"}
           </h2>
           <p className="mt-1 text-sm text-ink-60">
             {focus
               ? CLIENT_ORDER_FOCUS_META[focus].description
-              : "常规委托、悬赏转化等项目，可按类型与状态筛选（指定设计师下单见「定向下单」）。"}
+              : "指定设计师发起的委托项目，含定向下单与扫码下单，可按类型与状态筛选。"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {focus ? (
             <Button asChild variant="outline" size="sm">
-              <Link href="/client/orders">查看全部平台订单</Link>
+              <Link href="/client/directed-orders">查看全部定向下单</Link>
             </Button>
           ) : null}
           <Button asChild variant="brand">
-            <Link href="/entrust/new">
-              <Megaphone className="h-4 w-4" /> 发布委托项目
+            <Link href="/designers">
+              <Crosshair className="h-4 w-4" /> 挑选设计师下单
             </Link>
           </Button>
         </div>
@@ -88,12 +88,10 @@ function ClientOrdersInner() {
       <UnifiedProjectList
         perspective="client"
         identityId={clientId}
-        platformOrdersOnly
+        directedOrdersOnly
         initialFocus={focus}
         emptyLabel={
-          focus
-            ? "该分类下暂无相关订单。"
-            : "该分类下暂无订单。"
+          focus ? "该分类下暂无相关定向下单。" : "暂无定向下单项目。"
         }
       />
     </div>

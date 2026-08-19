@@ -35,7 +35,7 @@ export interface CreateOrderInput {
   scheduleTo?: string;
   withAuditService?: boolean;
   withProjectManagement?: boolean;
-  /** 期望交付日期（缺省按下单日 +30 天） */
+  /** 期望交付日期；线下驻场为开始服务时间。不预填，须委托人主动填写。 */
   expectedDeliveryAt?: string;
   /** 扫码下单等自定义付款阶段（ratio 为 0–1 或百分数 30 表示 30%） */
   customStageRatios?: { name: string; ratio: number }[];
@@ -86,6 +86,13 @@ function buildCustomStages(
 }
 
 function resolveStages(input: CreateOrderInput, orderId: string): PaymentStage[] {
+  if (
+    input.orderSource === "scan" &&
+    input.totalAmount === 0 &&
+    !input.customStageRatios?.length
+  ) {
+    return [];
+  }
   if (input.customStageRatios?.length) {
     return buildCustomStages(orderId, input.totalAmount, input.customStageRatios);
   }
@@ -126,7 +133,7 @@ function initialSystemMessage(
     return "悬赏委托已发布，设计师可报名，确认人选后进入签约。";
   }
   if (source === "scan") {
-    return "扫码订单已创建，等待设计师确认付款阶段与档期。";
+    return "扫码订单已创建，等待设计师确认费用与付款阶段。";
   }
   if (hasDesigner) {
     return "订单已创建，等待设计师确认档期。";
@@ -142,11 +149,7 @@ function initialSystemMessage(
 export function buildOrder(input: CreateOrderInput): Order {
   const now = new Date();
   const id = randomId("order");
-  const expected =
-    input.expectedDeliveryAt ??
-    new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(0, 10);
+  const expected = input.expectedDeliveryAt?.trim() ?? "";
 
   const orderSource = input.orderSource ?? "directed";
   const designerId = input.designerId ?? "";

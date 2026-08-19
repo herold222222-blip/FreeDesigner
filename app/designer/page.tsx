@@ -24,7 +24,13 @@ export default function DesignerDashboardPage() {
   const { data: designer, loading } = useDesigner(identityId);
   const { data: orders } = useOrders();
 
-  const myOrders = orders.slice(0, 4);
+  const myOrders = useMemo(
+    () =>
+      orders
+        .filter((o) => o.status !== "completed" && o.status !== "cancelled")
+        .slice(0, 4),
+    [orders],
+  );
 
   // 累计收入：已释放（验收通过）的阶段金额之和
   const earned = useMemo(
@@ -97,8 +103,8 @@ export default function DesignerDashboardPage() {
         </div>
         <div className="flex gap-2">
           <Button asChild variant="outline">
-            <Link href="/designer/scan-orders">
-              扫码下单 <ArrowRight className="h-4 w-4" />
+            <Link href="/designer/directed-orders">
+              定向订单 <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
           <Button asChild variant="outline">
@@ -138,7 +144,7 @@ export default function DesignerDashboardPage() {
           <Card className="p-6">
             <div className="mb-5 flex items-center justify-between">
               <h3 className="text-base font-semibold tracking-tight text-ink">
-                我的项目
+                平台项目
               </h3>
               <Link
                 href="/designer/orders"

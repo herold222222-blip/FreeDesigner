@@ -33,6 +33,7 @@ import {
 } from "@/lib/client-quote-match";
 import {
   buildDefaultPaymentStages,
+  buildStagesFromRatios,
   isPrepaymentStage,
 } from "@/lib/order-payment-stages";
 import {
@@ -85,6 +86,9 @@ import {
   notifyDeliverablesSubmitted,
   notifyDesignerAssignmentOffer,
   notifyDesignerReviewSubmitted,
+  notifyDesignerScanOrderSubmitted,
+  notifyClientScanQuoteProposed,
+  notifyDesignerScanQuoteConfirmed,
   notifyFinalSettlementConfirmed,
   notifyOrderCancelledByAdmin,
   notifyRevisionRequested,
@@ -92,6 +96,8 @@ import {
   notifyStagePaid,
   notifyStageReleased,
   notifyClientReviewOpened,
+  designerIdForSameAccountAsClient,
+  isSameAccountClientAndDesigner,
 } from "@/lib/server/inbox";
 
 /** 管理员可取消的早期订单状态（尚未进入履约） */
@@ -147,6 +153,28 @@ function ensureContractReady(order: Order) {
 function assertOrderNotCancelled(order: Order) {
   if (order.status === "cancelled") {
     throw new AuthError(409, "订单已取消，不可操作");
+  }
+}
+
+const SAME_ACCOUNT_COUNTERPARTY_MESSAGE =
+  "同一账号的委托人和设计师不能互为订单双方";
+
+async function matchExcludeIds(order: Order, extra?: Iterable<string>) {
+  const excluded = new Set([
+    ...(order.clientMatch?.excludedDesignerIds ?? []),
+    ...(extra ?? []),
+  ]);
+  const selfDesignerId = await designerIdForSameAccountAsClient(order.clientId);
+  if (selfDesignerId) excluded.add(selfDesignerId);
+  return excluded;
+}
+
+async function assertNotSameAccountCounterparty(
+  clientId: string,
+  designerId: string,
+) {
+  if (await isSameAccountClientAndDesigner(clientId, designerId)) {
+    throw new AuthError(403, SAME_ACCOUNT_COUNTERPARTY_MESSAGE);
   }
 }
 
@@ -227,6 +255,7 @@ const ACTIVE_ORDER_STATUSES: OrderStatus[] = [
 /** 委托人下单：创建订单并视来源生成档期申请 */
 export async function placeOrder(input: CreateOrderInput): Promise<Order> {
   if (input.designerId) {
+    await assertNotSameAccountCounterparty(input.clientId, input.designerId);
     const designer = await getDesigner(input.designerId);
     if (!designer) throw new AuthError(404, "设计师不存在");
     if (!designerCanAcceptOrders(designer)) {
@@ -250,24 +279,28 @@ export async function placeOrder(input: CreateOrderInput): Promise<Order> {
   await createOrder(order);
 
   if (order.status === "pending_schedule" && order.designerId) {
-    const scheduleId = `sch_${order.id}`;
-    await createScheduleRequest({
-      id: scheduleId,
-      orderId: order.id,
-      designerId: order.designerId,
-      clientId: order.clientId,
-      serviceMode: order.serviceMode,
-      billingMode: order.billingMode === "monthly" ? "monthly" : "daily",
-      title: order.title,
-      slots: order.selectedSlots ?? [],
-      selectedMonths: input.selectedMonths,
-      address: order.onsiteSchedule?.address,
-      totalAmount: order.totalAmount,
-      status: "pending",
-      submittedAt: nowIso(),
-    });
-    order.scheduleRequestId = scheduleId;
-    await saveOrder(order);
+    if (order.orderSource === "scan") {
+      await notifyDesignerScanOrderSubmitted(order);
+    } else {
+      const scheduleId = `sch_${order.id}`;
+      await createScheduleRequest({
+        id: scheduleId,
+        orderId: order.id,
+        designerId: order.designerId,
+        clientId: order.clientId,
+        serviceMode: order.serviceMode,
+        billingMode: order.billingMode === "monthly" ? "monthly" : "daily",
+        title: order.title,
+        slots: order.selectedSlots ?? [],
+        selectedMonths: input.selectedMonths,
+        address: order.onsiteSchedule?.address,
+        totalAmount: order.totalAmount,
+        status: "pending",
+        submittedAt: nowIso(),
+      });
+      order.scheduleRequestId = scheduleId;
+      await saveOrder(order);
+    }
   }
 
   if (
@@ -386,7 +419,7 @@ export async function matchDesignersFromQuoteCards(
   }
 
   const designers = await listDesigners();
-  const excluded = new Set(order.clientMatch?.excludedDesignerIds ?? []);
+  const excluded = await matchExcludeIds(order);
   const trackPools = buildTrackMatchPools({
     designers,
     order,
@@ -528,6 +561,7 @@ export async function confirmClientMatchedDesigner(
     throw new AuthError(400, "请选择设计师");
   }
   const designerId = payload.designerId;
+  await assertNotSameAccountCounterparty(order.clientId, designerId);
   const pool = match.pools.find((p) =>
     p.candidates.some((c) => c.designerId === designerId),
   );
@@ -636,6 +670,7 @@ async function confirmTrackPoolSelections(
   const uniqueDesignerIds = Array.from(new Set(resolved.map((r) => r.designerId)));
   const designers = [];
   for (const id of uniqueDesignerIds) {
+    await assertNotSameAccountCounterparty(order.clientId, id);
     const designer = await getDesigner(id);
     if (!designer) throw new AuthError(404, `设计师不存在（${id}）`);
     if (!designerEligibleForClientMatch(designer, order)) {
@@ -862,10 +897,7 @@ async function rematchAfterDesignerReject(
   }
 
   const level = match?.offerLevel ?? match?.selectedLevel;
-  const excluded = new Set([
-    ...(match?.excludedDesignerIds ?? []),
-    rejectedDesignerId,
-  ]);
+  const excluded = await matchExcludeIds(order, [rejectedDesignerId]);
 
   order.designerId = "";
   order.trackAssignments = undefined;
@@ -986,10 +1018,7 @@ async function rematchTrackPoolsAfterReject(
   rejectedName: string,
   reason?: string,
 ): Promise<Order> {
-  const excluded = new Set([
-    ...(match.excludedDesignerIds ?? []),
-    rejectedDesignerId,
-  ]);
+  const excluded = await matchExcludeIds(order, [rejectedDesignerId]);
   const designers = await listDesigners();
   const keptAssignments = (order.trackAssignments ?? []).filter(
     (a) => a.designerId !== rejectedDesignerId,
@@ -1543,6 +1572,7 @@ export async function assignDesignerToOrder(
 
   const designers = [];
   for (const id of designerIds) {
+    await assertNotSameAccountCounterparty(order.clientId, id);
     const designer = await getDesigner(id);
     if (!designer) throw new AuthError(404, `设计师不存在（${id}）`);
     if (!designerCanAcceptOrders(designer)) {
@@ -1760,6 +1790,7 @@ export async function awardBountyToDesigner(
   }
   const applicant = bounty.applicants.find((a) => a.designerId === designerId);
   if (!applicant) throw new AuthError(404, "该设计师未报名此悬赏");
+  await assertNotSameAccountCounterparty(clientId, designerId);
 
   const designer = await getDesigner(designerId);
   if (!designer) throw new AuthError(404, "设计师不存在");
@@ -1818,6 +1849,12 @@ export async function confirmSchedule(
   if (order.status !== "pending_schedule") {
     throw new AuthError(409, "订单当前状态不可确认档期");
   }
+  if (order.orderSource === "scan") {
+    throw new AuthError(
+      409,
+      "扫码订单请先提交费用与付款阶段，由委托人确认后再进入签约",
+    );
+  }
 
   const designer = await getDesigner(designerId);
   if ((designer?.level ?? "intern") === "intern") {
@@ -1851,6 +1888,142 @@ export async function confirmSchedule(
     createdAt: at,
   });
   await saveOrder(order);
+  return order;
+}
+
+/** 扫码下单：设计师提交费用与付款阶段，发给委托人确认 */
+export async function proposeScanQuote(
+  orderId: string,
+  designerId: string,
+  input: {
+    totalAmount: number;
+    stages: { name: string; ratio: number; note?: string }[];
+  },
+): Promise<Order> {
+  const order = await getOrder(orderId);
+  if (!order) throw new AuthError(404, "订单不存在");
+  if (order.orderSource !== "scan") {
+    throw new AuthError(409, "仅扫码订单可提交费用方案");
+  }
+  if (order.designerId !== designerId) throw new AuthError(403, "无权操作该订单");
+  if (order.status !== "pending_schedule") {
+    throw new AuthError(409, "订单当前状态不可提交费用方案");
+  }
+  if (order.scanQuoteProposedAt) {
+    throw new AuthError(409, "费用方案已提交，等待委托人确认");
+  }
+
+  const total = Math.round(Number(input.totalAmount));
+  if (!Number.isFinite(total) || total <= 0) {
+    throw new AuthError(400, "请填写有效的项目费用");
+  }
+  const stages = (input.stages ?? []).filter((s) => s.name.trim() && s.ratio > 0);
+  if (stages.length < 1) {
+    throw new AuthError(400, "请至少设置一个付款阶段");
+  }
+  const ratioSum = stages.reduce(
+    (sum, s) => sum + (s.ratio > 1 ? s.ratio / 100 : s.ratio),
+    0,
+  );
+  if (Math.abs(ratioSum - 1) > 0.02) {
+    throw new AuthError(400, "付款阶段比例合计须为 100%");
+  }
+
+  const designer = await getDesigner(designerId);
+  if ((designer?.level ?? "intern") === "intern") {
+    const myOrders = await listOrders({ designerId });
+    const hasActive = myOrders.some(
+      (o) => o.id !== orderId && ACTIVE_ORDER_STATUSES.includes(o.status),
+    );
+    if (hasActive) {
+      throw new AuthError(
+        409,
+        "见习等级同时仅可接 1 单，请先完成当前进行中的订单，或等待管理员晋升后再接单。",
+      );
+    }
+  }
+
+  const at = nowIso();
+  order.totalAmount = total;
+  order.stages = buildStagesFromRatios(order.id, total, stages);
+  order.scanQuoteProposedAt = at;
+  order.messages.push({
+    id: randomId("msg"),
+    authorId: designerId,
+    authorRole: "designer",
+    content: `设计师已提交费用 ${formatCurrency(total)} 与付款阶段，请委托人确认。`,
+    createdAt: at,
+  });
+  await saveOrder(order);
+  await notifyClientScanQuoteProposed(order);
+  return order;
+}
+
+/** 扫码下单待报价：设计师可修正项目信息 */
+export async function updateScanOrderByDesigner(
+  orderId: string,
+  designerId: string,
+  patch: Pick<
+    MatchingOrderUpdateInput,
+    "title" | "description" | "expectedDeliveryAt" | "projectType"
+  >,
+): Promise<Order> {
+  const order = await getOrder(orderId);
+  if (!order) throw new AuthError(404, "订单不存在");
+  if (order.orderSource !== "scan") {
+    throw new AuthError(409, "仅扫码订单可修改");
+  }
+  if (order.designerId !== designerId) throw new AuthError(403, "无权操作该订单");
+  if (order.status !== "pending_schedule" || order.scanQuoteProposedAt) {
+    throw new AuthError(409, "当前状态不可修改项目信息");
+  }
+  if (patch.title !== undefined) {
+    const title = patch.title.trim();
+    if (!title) throw new AuthError(400, "项目标题不能为空");
+    order.title = title;
+  }
+  if (patch.description !== undefined) {
+    order.description = patch.description.trim();
+  }
+  if (patch.projectType !== undefined) {
+    order.projectType = patch.projectType.trim();
+  }
+  if (patch.expectedDeliveryAt !== undefined) {
+    order.expectedDeliveryAt = patch.expectedDeliveryAt;
+  }
+  await saveOrder(order);
+  return order;
+}
+
+/** 扫码下单：委托人确认费用与付款阶段 → 进入签约 */
+export async function confirmScanQuote(
+  orderId: string,
+  clientId: string,
+): Promise<Order> {
+  const order = await getOrder(orderId);
+  if (!order) throw new AuthError(404, "订单不存在");
+  if (order.orderSource !== "scan") {
+    throw new AuthError(409, "仅扫码订单可确认费用方案");
+  }
+  if (order.clientId !== clientId) throw new AuthError(403, "无权操作该订单");
+  if (order.status !== "pending_schedule" || !order.scanQuoteProposedAt) {
+    throw new AuthError(409, "设计师尚未提交费用方案，或订单已进入后续流程");
+  }
+  if (order.totalAmount <= 0) {
+    throw new AuthError(409, "费用尚未确定");
+  }
+
+  const at = nowIso();
+  order.status = "pending_contract";
+  order.messages.push({
+    id: randomId("msg"),
+    authorId: clientId,
+    authorRole: "client",
+    content: "委托人已确认费用与付款阶段，请双方签署电子合同。",
+    createdAt: at,
+  });
+  await saveOrder(order);
+  await notifyDesignerScanQuoteConfirmed(order);
   return order;
 }
 

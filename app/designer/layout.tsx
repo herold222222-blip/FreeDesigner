@@ -16,7 +16,7 @@ import {
   MessageSquare,
   PackageCheck,
   Percent,
-  QrCode,
+  Crosshair,
   Settings,
   UserCircle,
   Wallet,
@@ -24,11 +24,11 @@ import {
 
 const BASE_NAV = [
   { href: "/designer", label: "工作台", icon: LayoutDashboard, exact: true },
-  { href: "/designer/orders", label: "我的项目", icon: PackageCheck },
+  { href: "/designer/orders", label: "平台项目", icon: PackageCheck },
+  { href: "/designer/directed-orders", label: "定向订单", icon: Crosshair },
   { href: "/designer/bounties", label: "悬赏报名", icon: Megaphone },
   { href: "/designer/portfolio", label: "作品管理", icon: ImagePlus },
   { href: "/designer/rates", label: "我的费率", icon: Percent },
-  { href: "/designer/scan-orders", label: "扫码下单", icon: QrCode },
   { href: "/designer/wallet", label: "钱包 · 提现", icon: Wallet },
   { href: "/designer/profile", label: "个人主页", icon: UserCircle },
   { href: "/designer/settings", label: "账号设置", icon: Settings },

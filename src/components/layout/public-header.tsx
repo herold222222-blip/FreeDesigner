@@ -19,7 +19,7 @@ function resolveProfileFallback(role: Role) {
   if (role === "client") return { name: "委托人", avatar: null };
   if (role === "designer") return { name: "设计师", avatar: null };
   if (role === "admin") return { name: "平台管理员", avatar: null };
-  if (role === "super_admin") return { name: "超级管理员", avatar: null };
+  if (role === "super_admin") return { name: "乐平", avatar: null };
   return { name: "用户", avatar: null };
 }
 

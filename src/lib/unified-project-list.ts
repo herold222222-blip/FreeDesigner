@@ -55,10 +55,32 @@ export function isPlatformOrderSource(order: Order): boolean {
   return source !== "bounty";
 }
 
+export function isDirectedOrderSource(order: Order): boolean {
+  const source = inferOrderSource(order);
+  return source === "directed" || source === "scan";
+}
+
 export function isPlatformProjectItem(item: UnifiedProjectItem): boolean {
   if (item.kind === "bounty") return false;
+  if (item.kind === "draft") return false;
   if (item.order && !isPlatformOrderSource(item.order)) return false;
+  if (item.order && isDirectedOrderSource(item.order)) return false;
   return true;
+}
+
+export function isDirectedProjectItem(item: UnifiedProjectItem): boolean {
+  if (item.kind === "draft") return true;
+  if (item.kind === "scan") return true;
+  if (item.order) return isDirectedOrderSource(item.order);
+  return false;
+}
+
+/** 设计师平台项目：悬赏报名与常规接单，不含主页定向下单与扫码下单 */
+export function isDesignerPlatformProjectItem(item: UnifiedProjectItem): boolean {
+  if (item.kind === "bounty") return true;
+  if (item.kind === "scan" || item.kind === "draft") return false;
+  if (item.order && isDirectedOrderSource(item.order)) return false;
+  return item.kind === "order";
 }
 
 export type UnifiedProjectKind = "order" | "bounty" | "scan" | "draft";
@@ -223,7 +245,7 @@ function scanToItem(
         ? `/scan-order/contract?id=${scan.id}`
         : perspective === "client"
           ? "/client/orders"
-          : "/designer/scan-orders",
+          : "/designer/directed-orders",
     counterpartyName,
     categories: [...cats],
     tags,
@@ -263,7 +285,7 @@ function draftToItem(
     statusLabel,
     totalAmount: draft.payload.totalAmount,
     createdAt: draft.createdAt,
-    href: "/client/orders",
+    href: "/client/directed-orders",
     counterpartyName: designerName,
     categories: [...cats],
     tags: ["定向下单", draft.payload.billingMode === "monthly" ? "按月" : "按工时", draft.payload.serviceMode === "onsite" ? "线下" : "线上"],
@@ -324,8 +346,10 @@ export interface BuildUnifiedListInput {
   }>;
   draftBounties?: Array<{ id: string; createdAt: string; payload: Record<string, unknown> }>;
   scanOrders?: ScanOrder[];
-  /** 委托人平台订单：排除悬赏及悬赏转化订单 */
+  /** 委托人平台订单：排除悬赏、定向下单及悬赏转化订单 */
   platformOrdersOnly?: boolean;
+  /** 委托人定向下单：仅定向委托与定向草稿 */
+  directedOrdersOnly?: boolean;
   /** 委托人我的悬赏：仅悬赏与悬赏草稿 */
   bountiesOnly?: boolean;
 }
@@ -353,39 +377,52 @@ export function buildUnifiedProjectList(input: BuildUnifiedListInput): UnifiedPr
     const clientOrders = orders.filter((x) => x.clientId === identityId);
     for (const o of clientOrders) {
       if (input.platformOrdersOnly && !isPlatformOrderSource(o)) continue;
+      if (input.platformOrdersOnly && isDirectedOrderSource(o)) continue;
+      if (input.directedOrdersOnly && !isDirectedOrderSource(o)) continue;
       items.push(orderToItem(o, "client", nameById));
     }
-    if (!input.platformOrdersOnly) {
+    if (!input.platformOrdersOnly && !input.directedOrdersOnly) {
       for (const b of bounties.filter((x) => x.publisherId === identityId)) {
         items.push(bountyToItem(b, "client"));
       }
     }
-    for (const d of input.draftOrders ?? []) {
-      items.push(draftToItem(d, nameById));
+    if (input.directedOrdersOnly || (!input.platformOrdersOnly && !input.bountiesOnly)) {
+      for (const d of input.draftOrders ?? []) {
+        items.push(draftToItem(d, nameById));
+      }
     }
-    if (!input.platformOrdersOnly) {
+    if (!input.platformOrdersOnly && !input.directedOrdersOnly) {
       for (const d of input.draftBounties ?? []) {
         items.push(draftBountyToItem(d));
       }
     }
     for (const s of input.scanOrders ?? []) {
-      if (s.clientId === identityId) items.push(scanToItem(s, "client", nameById));
+      if (s.clientId === identityId && !input.directedOrdersOnly) {
+        items.push(scanToItem(s, "client", nameById));
+      }
     }
   } else {
-    for (const o of orders.filter(
+    const designerOrders = orders.filter(
       (x) =>
         x.designerId === identityId ||
         (x.trackAssignments ?? []).some((a) => a.designerId === identityId),
-    )) {
+    );
+    for (const o of designerOrders) {
+      if (input.platformOrdersOnly && isDirectedOrderSource(o)) continue;
+      if (input.directedOrdersOnly && !isDirectedOrderSource(o)) continue;
       items.push(orderToItem(o, "designer", nameById));
     }
-    for (const b of bounties) {
-      if (b.applicants.some((a) => a.designerId === identityId)) {
-        items.push(bountyToItem(b, "designer"));
+    if (!input.directedOrdersOnly) {
+      for (const b of bounties) {
+        if (b.applicants.some((a) => a.designerId === identityId)) {
+          items.push(bountyToItem(b, "designer"));
+        }
       }
     }
-    for (const s of input.scanOrders ?? []) {
-      if (s.designerId === identityId) items.push(scanToItem(s, "designer", nameById));
+    if (!input.directedOrdersOnly) {
+      for (const s of input.scanOrders ?? []) {
+        if (s.designerId === identityId) items.push(scanToItem(s, "designer", nameById));
+      }
     }
   }
 

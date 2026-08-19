@@ -42,6 +42,8 @@ import {
   filterBySpecialty,
   filterByStatus,
   isPlatformProjectItem,
+  isDesignerPlatformProjectItem,
+  isDirectedProjectItem,
   specialtyCounts,
   type PlatformSpecialtyFilter,
   type ProjectListCategory,
@@ -73,6 +75,7 @@ export function UnifiedProjectList({
   emptyLabel = "暂无项目",
   initialFocus,
   platformOrdersOnly = false,
+  directedOrdersOnly = false,
   bountiesOnly = false,
 }: {
   perspective: "client" | "designer";
@@ -87,8 +90,10 @@ export function UnifiedProjectList({
   scanOrders?: ScanOrder[];
   emptyLabel?: string;
   initialFocus?: ClientOrderFocus | null;
-  /** 委托人平台订单：仅常规委托，不含悬赏 */
+  /** 委托人平台订单：扫码下单、常规委托等，不含悬赏与定向下单 */
   platformOrdersOnly?: boolean;
+  /** 委托人定向下单：指定设计师发起的委托 */
+  directedOrdersOnly?: boolean;
   /** 委托人我的悬赏：仅悬赏项目 */
   bountiesOnly?: boolean;
 }) {
@@ -96,12 +101,14 @@ export function UnifiedProjectList({
   const [status, setStatus] = useState<ListStatusFilter>("all");
   const defaultTabPicked = useRef(false);
   const useClientPlatformStatus =
-    perspective === "client" && platformOrdersOnly && !initialFocus;
+    perspective === "client" &&
+    (platformOrdersOnly || directedOrdersOnly) &&
+    !initialFocus;
   const useDesignerProjectStatus =
     perspective === "designer" && !initialFocus && !bountiesOnly;
   const [bountyStatus, setBountyStatus] = useState<BountyStatusFilter>("all");
   const [specialty, setSpecialty] = useState<PlatformSpecialtyFilter>("all");
-  const listFilterMode = platformOrdersOnly || bountiesOnly;
+  const listFilterMode = platformOrdersOnly || directedOrdersOnly || bountiesOnly;
   const focusMeta =
     perspective === "client" && initialFocus
       ? CLIENT_ORDER_FOCUS_META[initialFocus]
@@ -131,18 +138,28 @@ export function UnifiedProjectList({
       bounties,
       nameById,
       draftOrders:
-        perspective === "client" && !platformOrdersOnly && !bountiesOnly
+        perspective === "client" &&
+        (directedOrdersOnly || (!platformOrdersOnly && !bountiesOnly))
           ? draftOrders
           : [],
       draftBounties:
-        perspective === "client" && (bountiesOnly || !platformOrdersOnly)
+        perspective === "client" && (bountiesOnly || (!platformOrdersOnly && !directedOrdersOnly))
           ? draftBounties
           : [],
-      scanOrders: bountiesOnly ? [] : scanOrders,
+      scanOrders:
+        bountiesOnly || directedOrdersOnly ? [] : scanOrders,
       platformOrdersOnly,
+      directedOrdersOnly,
       bountiesOnly,
     });
-    if (platformOrdersOnly) return built.filter(isPlatformProjectItem);
+    if (platformOrdersOnly) {
+      return built.filter(
+        perspective === "designer"
+          ? isDesignerPlatformProjectItem
+          : isPlatformProjectItem,
+      );
+    }
+    if (directedOrdersOnly) return built.filter(isDirectedProjectItem);
     return built;
   }, [
     perspective,
@@ -154,6 +171,7 @@ export function UnifiedProjectList({
     draftBounties,
     scanOrders,
     platformOrdersOnly,
+    directedOrdersOnly,
     bountiesOnly,
   ]);
 

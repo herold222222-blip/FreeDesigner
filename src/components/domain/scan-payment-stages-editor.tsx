@@ -10,8 +10,10 @@ import {
   paymentStagesValid,
   type ScanPaymentStageDraft,
 } from "@/lib/scan-order";
+import { LANDSCAPE_CONSTRUCTION_PAYMENT_STAGES } from "@/lib/constants";
 import { cn, formatCurrency } from "@/lib/utils";
 import { Plus, Trash2 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 
 export function ScanPaymentStagesEditor({
   stages,
@@ -29,7 +31,17 @@ export function ScanPaymentStagesEditor({
 
   const applyPreset = (index: number) => {
     const preset = SCAN_PAYMENT_PRESETS[index];
-    onChange(preset.stages.map((s) => ({ ...s, id: newStageId() })));
+    const platformNotes =
+      index === 0
+        ? LANDSCAPE_CONSTRUCTION_PAYMENT_STAGES.map((s) => s.note)
+        : [];
+    onChange(
+      preset.stages.map((s, i) => ({
+        ...s,
+        id: newStageId(),
+        note: platformNotes[i] ?? "",
+      })),
+    );
   };
 
   const updateStage = (id: string, patch: Partial<ScanPaymentStageDraft>) => {
@@ -45,7 +57,12 @@ export function ScanPaymentStagesEditor({
     const remain = Math.max(0, 100 - ratioSum);
     onChange([
       ...stages,
-      { id: newStageId(), name: `阶段 ${stages.length + 1}`, ratio: remain || 10 },
+      {
+        id: newStageId(),
+        name: `阶段 ${stages.length + 1}`,
+        ratio: remain || 10,
+        note: "",
+      },
     ]);
   };
 
@@ -78,45 +95,54 @@ export function ScanPaymentStagesEditor({
         ))}
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-3">
         {stages.map((stage) => (
           <div
             key={stage.id}
-            className="grid gap-2 rounded-xl border border-ink-20 bg-ink-20/20 p-3 sm:grid-cols-[1fr_88px_88px_auto]"
+            className="space-y-2 rounded-xl border border-ink-20 bg-ink-20/20 p-3"
           >
-            <Input
-              placeholder="阶段名称，如预付款"
-              value={stage.name}
-              onChange={(e) => updateStage(stage.id, { name: e.target.value })}
-            />
-            <div className="relative">
+            <div className="grid gap-2 sm:grid-cols-[1fr_88px_88px_auto]">
               <Input
-                type="number"
-                min={1}
-                max={100}
-                value={stage.ratio}
-                onChange={(e) =>
-                  updateStage(stage.id, { ratio: Number(e.target.value) || 0 })
-                }
-                className="pr-7"
+                placeholder="阶段名称，如预付款"
+                value={stage.name}
+                onChange={(e) => updateStage(stage.id, { name: e.target.value })}
               />
-              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-ink-40">
-                %
-              </span>
+              <div className="relative">
+                <Input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={stage.ratio}
+                  onChange={(e) =>
+                    updateStage(stage.id, { ratio: Number(e.target.value) || 0 })
+                  }
+                  className="pr-7"
+                />
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-ink-40">
+                  %
+                </span>
+              </div>
+              <div className="flex items-center text-sm font-medium tabular-nums text-ink">
+                {formatCurrency(Math.round((totalAmount * stage.ratio) / 100))}
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="shrink-0 text-ink-40 hover:text-red-600"
+                onClick={() => removeStage(stage.id)}
+                disabled={stages.length <= 1}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
             </div>
-            <div className="flex items-center text-sm font-medium tabular-nums text-ink">
-              {formatCurrency(Math.round((totalAmount * stage.ratio) / 100))}
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="shrink-0 text-ink-40 hover:text-red-600"
-              onClick={() => removeStage(stage.id)}
-              disabled={stages.length <= 1}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
+            <Textarea
+              placeholder="付款条件说明，如合同签订后 2 个工作日内支付"
+              value={stage.note ?? ""}
+              onChange={(e) => updateStage(stage.id, { note: e.target.value })}
+              rows={2}
+              className="min-h-0 text-xs"
+            />
           </div>
         ))}
       </div>

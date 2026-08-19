@@ -28,12 +28,17 @@ function workbenchHref(role: Role): string {
   }
 }
 
+function roleGroupLabel(role: Role) {
+  if (role === "client") return "委托人";
+  if (role === "designer") return "设计师";
+  if (role === "admin") return "管理员";
+  if (role === "super_admin") return "超级管理员";
+  return "";
+}
+
 function roleHomeLabel(role: Role) {
-  if (role === "client") return "委托人工作台";
-  if (role === "designer") return "设计师工作台";
-  if (role === "admin") return "管理员工作台";
-  if (role === "super_admin") return "超级管理员工作台";
-  return "工作台";
+  const group = roleGroupLabel(role);
+  return group ? `${group}工作台` : "工作台";
 }
 
 export function HeaderUserMenu({
@@ -89,6 +94,8 @@ export function HeaderUserMenu({
     };
   }, [open]);
 
+  const groupLabel = roleGroupLabel(role);
+  const displayName = groupLabel ? `${groupLabel} ${name}` : name;
   const otherRole: BusinessRole | null =
     role === "client" ? "designer" : role === "designer" ? "client" : null;
   const canSwitchBusiness =
@@ -157,7 +164,7 @@ export function HeaderUserMenu({
       <button
         type="button"
         className="flex items-center gap-2 rounded-full py-1 pl-0.5 pr-1.5 transition-colors hover:bg-ink-20/40"
-        title={name}
+        title={displayName}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
@@ -168,8 +175,8 @@ export function HeaderUserMenu({
             {name.slice(0, 1)}
           </AvatarFallback>
         </Avatar>
-        <span className="max-w-[8rem] truncate text-sm font-medium text-ink">
-          {name}
+        <span className="max-w-[12rem] truncate text-sm font-medium text-ink">
+          {displayName}
         </span>
         <ChevronDown
           className={cn(
@@ -185,7 +192,7 @@ export function HeaderUserMenu({
           className="absolute right-0 z-50 mt-2 w-56 overflow-hidden rounded-2xl border border-ink-20 bg-white p-1.5 shadow-lg"
         >
           <div className="px-3 py-2">
-            <div className="truncate text-sm font-medium text-ink">{name}</div>
+            <div className="truncate text-sm font-medium text-ink">{displayName}</div>
             <div className="text-xs text-ink-40">{roleHomeLabel(role)}</div>
           </div>
           <div className="my-1 h-px bg-ink-20" />

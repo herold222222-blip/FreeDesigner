@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { OrderProjectWorkCalendar } from "@/components/domain/order-project-work-calendar";
+import { OrderMonthlyServiceCalendar } from "@/components/domain/order-monthly-service-calendar";
 import { ServiceExtensionDialog } from "@/components/domain/service-extension-dialog";
 import { StageParticipantDeliverables } from "@/components/domain/stage-participant-deliverables";
 import { useDesigner, useDesigners, useServiceProviders } from "@/lib/use-data";
@@ -301,7 +302,19 @@ export function OrderScheduleBillingPanel({
         </div>
       )}
 
-      <OrderProjectWorkCalendar events={scheduleEvents} />
+      {isMonthly ? (
+        <div className="space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-ink">按月工时日历</h3>
+            <p className="mt-1 text-xs text-ink-60">
+              红色为工作日服务（不含周末与法定节假日）；灰色为休息日；琥珀色「付」为支付节点（首月预付为开始服务日前 3 天，此后每月 25 日 17:00 前；遇周末或节假日提前至前一个工作日）。
+            </p>
+          </div>
+          <OrderMonthlyServiceCalendar order={order} />
+        </div>
+      ) : (
+        <OrderProjectWorkCalendar events={scheduleEvents} />
+      )}
 
       {isDesignerView ? null : (
       <>

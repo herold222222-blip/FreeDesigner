@@ -466,11 +466,11 @@ export function DesignerPublicProfileView({
             {!embedded ? (
               <>
                 <div className="mt-2 text-[11px] text-ink-60">
-                  按月雇佣：首月预付，每月 25 号前支付下月服务费
+                  按月雇佣：首月预付须在开始服务日前 3 天支付，此后每月 25 号前支付下月服务费；遇周末或节假日提前至前一个工作日
                 </div>
-                <Button asChild variant="brand" size="lg" className="mt-5 w-full">
+                <Button asChild variant="outline" size="lg" className="mt-5 w-full">
                   <Link href={`/order/new?designer=${designer.id}`}>
-                    <Sparkles className="h-4 w-4" /> 发起定向下单
+                    <Sparkles className="h-4 w-4" /> 预约线上服务
                   </Link>
                 </Button>
                 <Button asChild variant="outline" size="lg" className="mt-2 w-full">
@@ -481,6 +481,7 @@ export function DesignerPublicProfileView({
                 <ScanOrderQrDialog
                   designerId={designer.id}
                   designerName={designer.name}
+                  triggerVariant="brand"
                 />
               </>
             ) : (

@@ -1,5 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/server/db";
+import { sumDesignerOrderNetEarnings } from "@/lib/designer-order-scope";
 import { formatCurrency } from "@/lib/utils";
 import type { Order } from "@/lib/types";
 
@@ -151,6 +152,32 @@ export async function userIdForClient(
     select: { id: true },
   });
   return user?.id ?? null;
+}
+
+export async function designerIdForSameAccountAsClient(
+  clientId: string,
+): Promise<string | null> {
+  const userId = await userIdForClient(clientId);
+  if (!userId) return null;
+  const row = await prisma.designer.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
+  return row?.id ?? null;
+}
+
+export async function isSameAccountClientAndDesigner(
+  clientId: string,
+  designerId: string,
+): Promise<boolean> {
+  if (!clientId || !designerId) return false;
+  const [clientUserId, designerUserId] = await Promise.all([
+    userIdForClient(clientId),
+    userIdForDesigner(designerId),
+  ]);
+  return Boolean(
+    clientUserId && designerUserId && clientUserId === designerUserId,
+  );
 }
 
 export async function userIdForDesigner(
@@ -338,13 +365,17 @@ export async function notifyDesignerAssignmentOffer(
   opts?: { designerName?: string; trackLabels?: string },
 ) {
   const designerUserId = await userIdForDesigner(designerId);
-  const money = formatCurrency(order.totalAmount);
+  const net = sumDesignerOrderNetEarnings(order, designerId);
+  const money = net > 0 ? formatCurrency(net) : "";
   const trackNote = opts?.trackLabels
     ? `负责专业：${opts.trackLabels}。`
     : "";
+  const feeNote = money
+    ? `您本专业预计实收 ${money}（不含平台管理费与税费）。`
+    : "";
   await notifySafe(designerUserId, {
     title: "收到订单委派",
-    body: `平台向您委派订单「${order.title}」（${order.code}），确认费用 ${money}。${trackNote}请尽快同意或拒绝接单。`,
+    body: `平台向您委派订单「${order.title}」（${order.code}），${feeNote}${trackNote}请尽快同意或拒绝接单。`,
     linkHref: `/designer/orders/${order.id}`,
   });
 }
@@ -511,6 +542,36 @@ export async function notifyContractFullySigned(order: Order) {
       linkHref: `/designer/orders/${order.id}`,
     }),
   ]);
+}
+
+/** 委托人扫码提交需求 → 通知设计师填写费用与付款阶段 */
+export async function notifyDesignerScanOrderSubmitted(order: Order) {
+  const designerUserId = await userIdForDesigner(order.designerId);
+  await notifySafe(designerUserId, {
+    title: "收到扫码下单",
+    body: `委托人已通过扫码提交「${order.title}」（${order.code}）。请按平台收费标准或自行报价，设置付款阶段后发给委托人确认。`,
+    linkHref: `/designer/orders/${order.id}`,
+  });
+}
+
+/** 设计师提交扫码费用方案 → 通知委托人确认 */
+export async function notifyClientScanQuoteProposed(order: Order) {
+  const clientUserId = await userIdForClient(order.clientId);
+  await notifySafe(clientUserId, {
+    title: "请确认费用与付款阶段",
+    body: `设计师已为订单「${order.title}」（${order.code}）提交费用 ${formatCurrency(order.totalAmount)} 与付款阶段，请确认后进入签约。`,
+    linkHref: `/client/orders/${order.id}`,
+  });
+}
+
+/** 委托人确认扫码费用 → 通知设计师签约 */
+export async function notifyDesignerScanQuoteConfirmed(order: Order) {
+  const designerUserId = await userIdForDesigner(order.designerId);
+  await notifySafe(designerUserId, {
+    title: "委托人已确认费用",
+    body: `委托人已确认订单「${order.title}」（${order.code}）的费用与付款阶段，请双方签署电子合同。`,
+    linkHref: `/designer/orders/${order.id}`,
+  });
 }
 
 /** 委托人提交项目评价 → 通知设计师；结案时一并告知 */

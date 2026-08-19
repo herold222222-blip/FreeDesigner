@@ -97,6 +97,7 @@ export function needsDesignerSign(order: Order): boolean {
 
 /** 委托人已选报价卡并确认设计师后，阶段金额已锁定（支付仍须签约） */
 export function orderHasLockedQuoteAmounts(order: Order): boolean {
+  if (order.orderSource === "scan" && !order.scanQuoteProposedAt) return false;
   if (order.quote?.status === "confirmed") return true;
   if ((order.trackAssignments ?? []).some((a) => Boolean(a.designerId))) {
     return true;
@@ -126,6 +127,18 @@ export function canPayOrderStages(order: Order): boolean {
 /** 全部阶段已验收，等待委托人「最终服务完成」 */
 export function isPendingFinalSettlement(order: Order): boolean {
   return order.pendingSettlement === true;
+}
+
+/** 线上远程为预期交付；线下驻场为开始服务时间 */
+export function orderExpectedDateLabel(
+  order: Pick<{ serviceMode?: string }, "serviceMode">,
+): string {
+  return order.serviceMode === "onsite" ? "开始服务时间" : "预期交付";
+}
+
+/** 下单 / 修改表单中的日期字段名 */
+export function expectedDateFieldLabel(serviceMode?: string): string {
+  return serviceMode === "onsite" ? "开始服务时间" : "期望交付日期";
 }
 
 export {

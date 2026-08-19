@@ -41,7 +41,8 @@ export async function POST(req: NextRequest) {
 
     let quote: CreateOrderInput["quote"];
     let levelQuotes: CreateOrderInput["levelQuotes"];
-    let totalAmount = body.totalAmount ?? 1;
+    let totalAmount =
+      source === "scan" ? (body.totalAmount ?? 0) : (body.totalAmount ?? 1);
 
     if (source === "regular" && isTimeBilling && body.timeQuote?.lines?.length) {
       try {
@@ -71,8 +72,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (!body.title || totalAmount == null || (needsDesigner && !body.designerId)) {
+    if (
+      !body.title ||
+      (source !== "scan" && totalAmount == null) ||
+      (needsDesigner && !body.designerId)
+    ) {
       return fail(400, "缺少必要的下单参数");
+    }
+    const expectedDeliveryAt = body.expectedDeliveryAt?.trim() ?? "";
+    if (!expectedDeliveryAt) {
+      return fail(400, "请填写预期交付时间或开始服务时间");
     }
 
     const order = await placeOrder({
@@ -97,6 +106,7 @@ export async function POST(req: NextRequest) {
       withProjectManagement: body.withProjectManagement,
       customStageRatios: body.customStageRatios,
       attachments: body.attachments,
+      expectedDeliveryAt,
       quote,
       levelQuotes,
     });

@@ -38,13 +38,14 @@ import {
   OrderValueAddedBadges,
   OrderValueAddedServicesPanel,
 } from "@/components/domain/order-value-added-services";
-import { formatDate, formatDateTime } from "@/lib/utils";
+import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 import { useConsoleBasePath } from "@/components/layout/console-base-path";
 import { AdminConsoleReturnBar } from "@/components/layout/admin-console-return-bar";
 import { parseAdminUsersReturnTo, withReturnTo } from "@/lib/admin-return-to";
 import { useSessionStore } from "@/store/session-store";
-import { isContractFullySigned, isOrderCancelled, isOrderDeletable } from "@/lib/order-lifecycle";
+import { isContractFullySigned, isOrderCancelled, isOrderDeletable, orderExpectedDateLabel } from "@/lib/order-lifecycle";
 import { isTimeBilledOrder } from "@/lib/time-billing";
+import { shouldHideScanPaymentTimeline } from "@/lib/scan-order";
 import {
   OrderCancelledBanner,
   OrderInteractionLock,
@@ -266,9 +267,9 @@ function AdminOrderDetailInner({
 
           <Meta
 
-            label="预期交付"
+            label={orderExpectedDateLabel(order)}
 
-            value={formatDate(order.expectedDeliveryAt)}
+            value={formatOptionalDate(order.expectedDeliveryAt)}
 
             icon={Calendar}
 
@@ -406,7 +407,7 @@ function AdminOrderDetailInner({
             {isContractFullySigned(order)
               ? isTimeBilledOrder(order)
                 ? order.billingMode === "monthly"
-                  ? "按月雇佣：首月签约预付，此后按月支付服务费。待付款阶段可转发支付链接给委托人扫码支付。"
+                  ? "按月雇佣：首月预付款须在开始服务日前 3 天支付，此后按月支付服务费。待付款阶段可转发支付链接给委托人扫码支付。"
                   : "按工时计费：签约预付 30%，原合同服务期结束后付清尾款 70%。待付款阶段可转发支付链接给委托人扫码支付。"
                 : "含已确认配合费扣减后的设计师分配；待付款阶段可转发支付链接给委托人扫码支付。"
               : isTimeBilledOrder(order)
@@ -418,6 +419,11 @@ function AdminOrderDetailInner({
 
         </div>
 
+        {shouldHideScanPaymentTimeline(order) ? (
+          <p className="text-sm leading-relaxed text-ink-60">
+            扫码订单待设计师报价，付款阶段预览已在下单页按平台标准展示；确认费用后将在此展示各阶段进度。
+          </p>
+        ) : (
         <StageTimeline
 
           order={order}
@@ -429,6 +435,7 @@ function AdminOrderDetailInner({
           collaboratorMode="client"
 
         />
+        )}
 
       </Card>
 

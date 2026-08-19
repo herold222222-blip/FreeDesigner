@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { handle, ok, fail } from "@/lib/server/api";
 import { requireSession } from "@/lib/server/auth";
 import { getBounty, getDesigner, saveBounty } from "@/lib/server/repo";
+import { isSameAccountClientAndDesigner } from "@/lib/server/inbox";
 import {
   designerHasL3,
   normalizeBountyTrack,
@@ -29,6 +30,9 @@ export async function POST(
     if (bounty.status !== "open") return fail(409, "该悬赏已停止报名");
     if (bounty.applicants.some((a) => a.designerId === session.identityId)) {
       return fail(409, "你已报名该悬赏");
+    }
+    if (await isSameAccountClientAndDesigner(bounty.publisherId, session.identityId)) {
+      return fail(403, "不能报名自己账号发布的悬赏");
     }
 
     const body = (await req.json().catch(() => ({}))) as Partial<BountyApplicant>;

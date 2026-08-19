@@ -149,7 +149,7 @@ export function DesignerMonthPicker({
               </div>
               {value.length > 0 && (
                 <div className="mt-1 text-xs text-ink-60">
-                  共 {value.length} 个月 · 可连续或跳跃选择 · 首月预付，每月 25 号前支付下月
+                  共 {value.length} 个月 · 可连续或跳跃选择 · 首月预付须在开始服务日前 3 天支付，此后每月 25 号前支付下月（遇休息日提前）
                 </div>
               )}
             </div>

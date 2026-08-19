@@ -27,6 +27,15 @@ export function formatDate(value: string | Date) {
   }).format(date);
 }
 
+/** 空日期显示为 —，避免 Invalid Date */
+export function formatOptionalDate(value?: string | Date | null) {
+  if (value == null) return "—";
+  if (typeof value === "string" && !value.trim()) return "—";
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return "—";
+  return formatDate(date);
+}
+
 export function formatDateTime(value: string | Date) {
   const date = typeof value === "string" ? new Date(value) : value;
   return new Intl.DateTimeFormat("zh-CN", {

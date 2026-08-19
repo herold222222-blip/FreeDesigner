@@ -1,33 +1,49 @@
 import { buildMonthlyStages } from "@/lib/monthly-billing";
+import { landscapeConstructionPaymentStageRatios } from "@/lib/landscape-payment-stages";
 import type { BillingMode, Order, PaymentStage } from "@/lib/types";
 
+function normalizeRatio(r: number): number {
+  return r > 1 ? r / 100 : r;
+}
+
+/** 按名称与比例生成付款阶段（ratio 为 0–1 或百分数） */
+export function buildStagesFromRatios(
+  orderId: string,
+  total: number,
+  defs: { name: string; ratio: number; note?: string }[],
+): PaymentStage[] {
+  if (!defs.length) return [];
+  const normalized = defs.map((d) => ({
+    name: d.name.trim() || "付款阶段",
+    ratio: normalizeRatio(d.ratio),
+    note: d.note?.trim() || undefined,
+  }));
+  const sum = normalized.reduce((s, d) => s + d.ratio, 0);
+  const scale = sum > 0 ? 1 / sum : 1 / normalized.length;
+  let allocated = 0;
+  return normalized.map((d, i) => {
+    const amount =
+      i === normalized.length - 1
+        ? Math.max(0, total - allocated)
+        : Math.round(total * d.ratio * scale);
+    allocated += amount;
+    return {
+      id: `${orderId}_s${i + 1}`,
+      name: d.name,
+      amount,
+      ratio: d.ratio * scale,
+      status: "pending" as const,
+      note: d.note,
+    };
+  });
+}
+
 function areaMilestoneStages(orderId: string, total: number): PaymentStage[] {
-  const prepay = Math.round(total * 0.3);
-  const mid = Math.round(total * 0.4);
-  const final = total - prepay - mid;
-  return [
-    {
-      id: `${orderId}_s1`,
-      name: "预付款",
-      amount: prepay,
-      ratio: 0.3,
-      status: "pending",
-    },
-    {
-      id: `${orderId}_s2`,
-      name: "中期成果",
-      amount: mid,
-      ratio: 0.4,
-      status: "pending",
-    },
-    {
-      id: `${orderId}_s3`,
-      name: "尾款验收",
-      amount: final,
-      ratio: 0.3,
-      status: "pending",
-    },
-  ];
+  return buildStagesFromRatios(
+    orderId,
+    total,
+    landscapeConstructionPaymentStageRatios(),
+  );
 }
 
 /** 按工时：签约预付 30% + 服务结束后合同尾款 70% */
@@ -104,7 +120,7 @@ export function normalizeConfirmedReviewStatus(order: Order): boolean {
 function looksLikeAreaMilestones(stages: PaymentStage[]): boolean {
   if (stages.length !== 3) return false;
   return stages.some(
-    (s) => s.name.includes("中期") || s.name.includes("尾款验收"),
+    (s) => s.name.includes("中期") || s.name.includes("尾款"),
   );
 }
 

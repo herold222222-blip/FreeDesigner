@@ -14,6 +14,7 @@ import {
   submitOrderReviewRequest,
   updateMatchingOrderRequest,
   confirmOrderQuoteRequest,
+  confirmScanQuoteRequest,
 } from "@/lib/api-client";
 import {
   MatchingOrderEditDialog,
@@ -33,6 +34,7 @@ import {
   isPendingFinalSettlement,
   needsClientReview,
   needsClientSign,
+  orderExpectedDateLabel,
   resolveDisplayOrderStatus,
 } from "@/lib/order-lifecycle";
 import {
@@ -75,12 +77,20 @@ import { StageTimeline } from "@/components/domain/stage-timeline";
 import { OrderScheduleBillingPanel } from "@/components/domain/order-schedule-billing-panel";
 import { OrderDetailSwitchCard } from "@/components/domain/order-detail-switch-card";
 import { isTimeBilledOrder } from "@/lib/time-billing";
+import {
+  isScanAwaitingClientQuoteConfirm,
+  isScanAwaitingDesignerQuote,
+  isScanSourceOrder,
+  shouldHideScanPaymentTimeline,
+} from "@/lib/scan-order";
+import { ScanQuotePanel } from "@/components/domain/scan-quote-panel";
 import { OrderTrackAssignmentsPanel } from "@/components/domain/order-track-assignments";
 import {
   OrderValueAddedBadges,
   OrderValueAddedServicesPanel,
 } from "@/components/domain/order-value-added-services";
 import { ORDER_STATUS_META, SUBJECT_TYPE_META } from "@/lib/constants";
+import { isDirectedOrderSource } from "@/lib/unified-project-list";
 import type { Order } from "@/lib/types";
 import {
   ArrowLeft,
@@ -97,7 +107,7 @@ import {
   Sparkles,
   Star,
 } from "lucide-react";
-import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
+import { formatCurrency, formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 export default function ClientOrderDetailPage({
   params,
@@ -213,14 +223,20 @@ function ClientOrderDetailInner({ id }: { id: string }) {
   const meta = ORDER_STATUS_META[resolveDisplayOrderStatus(order)];
   const cancelled = isOrderCancelled(order);
   const paymentDeadline = getPayableStageDeadline(order);
+  const ordersListHref = isDirectedOrderSource(order)
+    ? "/client/directed-orders"
+    : "/client/orders";
+  const ordersListLabel = isDirectedOrderSource(order)
+    ? "返回定向下单"
+    : "返回平台订单";
 
   return (
     <div className="space-y-6">
       <Link
-        href="/client/orders"
+        href={ordersListHref}
         className="inline-flex items-center gap-1 text-sm text-ink-60 hover:text-ink"
       >
-        <ArrowLeft className="h-3.5 w-3.5" /> 返回平台订单
+        <ArrowLeft className="h-3.5 w-3.5" /> {ordersListLabel}
       </Link>
 
       <OrderCancelledBanner order={order} />
@@ -234,7 +250,7 @@ function ClientOrderDetailInner({ id }: { id: string }) {
           <OrderDeleteButton
             order={order}
             perspective="client"
-            redirectTo="/client/orders"
+            redirectTo={ordersListHref}
           />
         </div>
       ) : null}
@@ -319,7 +335,7 @@ function ClientOrderDetailInner({ id }: { id: string }) {
                     icon={Clock}
                   />
                   <Field label="项目类型" value={order.projectType} />
-                  <Field label="预期交付" value={formatDate(order.expectedDeliveryAt)} icon={Calendar} />
+                  <Field label={orderExpectedDateLabel(order)} value={formatOptionalDate(order.expectedDeliveryAt)} icon={Calendar} />
                 </div>
 
                 {order.onsiteSchedule ? (
@@ -372,6 +388,10 @@ function ClientOrderDetailInner({ id }: { id: string }) {
                     )
                   }
                 />
+              ) : shouldHideScanPaymentTimeline(order) ? (
+                <p className="text-sm leading-relaxed text-ink-60">
+                  付款阶段与条件已在下单时按平台标准说明。设计师确认费用后将在此展示各阶段金额与进度。
+                </p>
               ) : (
                 <>
                   <p className="mb-5 text-sm text-ink-60">
@@ -593,7 +613,11 @@ function ClientOrderDetailInner({ id }: { id: string }) {
                   ? "双方已签约，请支付预付款启动项目。"
                   : "电子合同已生成，等待双方签署。")}
               {order.status === "pending_schedule" &&
-                "委托人已提交档期申请,请确认后进入合同签署。"}
+                (isScanAwaitingDesignerQuote(order)
+                  ? "需求已提交，等待设计师填写费用与付款阶段。"
+                  : isScanAwaitingClientQuoteConfirm(order)
+                    ? "设计师已提交费用方案，请确认后进入合同签署。"
+                    : "委托人已提交档期申请,请确认后进入合同签署。")}
               {order.status === "pending_quote" &&
                 (needsCsQuoteConfirm(order)
                   ? "报价卡仅供参考。客服根据您的需求二次确认后，即可选择等级报价卡并匹配设计师。"
@@ -630,6 +654,39 @@ function ClientOrderDetailInner({ id }: { id: string }) {
                 }
               >
                 确认报价并提交匹配
+              </Button>
+            </Card>
+          ) : null}
+
+          {!cancelled && order.status === "pending_schedule" && isScanSourceOrder(order) ? (
+            <ScanQuotePanel
+              order={order}
+              perspective="client"
+              onUpdated={refresh}
+              busy={busy}
+              setBusy={setBusy}
+            />
+          ) : null}
+
+          {!cancelled && isScanAwaitingClientQuoteConfirm(order) ? (
+            <Card className="space-y-3 p-5">
+              <div className="text-xs uppercase tracking-wider text-ink-40">
+                待办操作
+              </div>
+              <Button
+                variant="brand"
+                size="sm"
+                className="w-full"
+                disabled={busy}
+                onClick={() =>
+                  runAction(
+                    () => confirmScanQuoteRequest(order.id),
+                    "已确认费用与付款阶段",
+                    "请双方签署电子合同并支付预付款。",
+                  )
+                }
+              >
+                确认费用与付款阶段
               </Button>
             </Card>
           ) : null}

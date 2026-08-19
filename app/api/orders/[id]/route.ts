@@ -6,8 +6,10 @@ import {
   applyOrderTimeouts,
   deleteOrderPermanently,
   updateMatchingOrder,
+  updateScanOrderByDesigner,
   type MatchingOrderUpdateInput,
 } from "@/lib/server/order-service";
+import { designerIdForSameAccountAsClient } from "@/lib/server/inbox";
 import { orderInvolvesDesigner } from "@/lib/order-assign-tracks";
 import { normalizePaymentStages } from "@/lib/order-payment-stages";
 
@@ -35,6 +37,29 @@ export async function GET(
     ) {
       return fail(403, "无权访问该订单");
     }
+
+    const selfDesignerId = await designerIdForSameAccountAsClient(order.clientId);
+    if (selfDesignerId && order.clientMatch) {
+      if (order.clientMatch.trackPools?.length) {
+        order.clientMatch = {
+          ...order.clientMatch,
+          trackPools: order.clientMatch.trackPools.map((p) => ({
+            ...p,
+            candidates: p.candidates.filter((c) => c.designerId !== selfDesignerId),
+          })),
+        };
+      }
+      if (order.clientMatch.pools?.length) {
+        order.clientMatch = {
+          ...order.clientMatch,
+          pools: order.clientMatch.pools.map((p) => ({
+            ...p,
+            candidates: p.candidates.filter((c) => c.designerId !== selfDesignerId),
+          })),
+        };
+      }
+    }
+
     return ok(order);
   });
 }
@@ -55,6 +80,14 @@ export async function PATCH(
     }
     if (session.role === "client") {
       const order = await updateMatchingOrder(
+        params.id,
+        session.identityId,
+        body,
+      );
+      return ok(order);
+    }
+    if (session.role === "designer") {
+      const order = await updateScanOrderByDesigner(
         params.id,
         session.identityId,
         body,

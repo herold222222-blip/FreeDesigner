@@ -244,6 +244,8 @@ export interface CreateOrderBody {
   customStageRatios?: { name: string; ratio: number }[];
   /** 常规委托等场景的项目附件（委托人实际上传） */
   attachments?: import("@/lib/types").BountyAttachment[];
+  /** 预期交付或开始服务时间，须委托人填写，系统不预填 */
+  expectedDeliveryAt?: string;
   /** 按天/按月：用于服务端生成报价单 */
   timeQuote?: {
     unit: "day" | "month";
@@ -358,6 +360,27 @@ export function deleteOrderRequest(orderId: string) {
 
 export function acceptOrderRequest(orderId: string) {
   return apiFetch<Order>(`/api/orders/${orderId}/accept`, { method: "POST" });
+}
+
+/** 扫码下单：设计师提交费用与付款阶段 */
+export function proposeScanQuoteRequest(
+  orderId: string,
+  body: {
+    totalAmount: number;
+    stages: { name: string; ratio: number; note?: string }[];
+  },
+) {
+  return apiFetch<Order>(`/api/orders/${orderId}/scan-quote`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** 扫码下单：委托人确认费用与付款阶段 */
+export function confirmScanQuoteRequest(orderId: string) {
+  return apiFetch<Order>(`/api/orders/${orderId}/confirm-scan-quote`, {
+    method: "POST",
+  });
 }
 
 export function rejectOrderScheduleRequest(orderId: string, reason?: string) {

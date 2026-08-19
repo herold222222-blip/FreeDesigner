@@ -92,7 +92,7 @@ export default function MonthlyHirePage() {
           按月雇佣 · 续费中心
         </h2>
         <p className="mt-1 text-sm text-ink-60">
-          首月签约预付，此后每月 25 号前支付下一个月服务费；逾期未付则次月服务自动终止。
+          首月预付款须在开始服务日前 3 天支付，此后每月 25 号前支付下一个月服务费；逾期未付则次月服务自动终止。
         </p>
       </div>
 
