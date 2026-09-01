@@ -65,9 +65,10 @@ export function isPlatformOrderSource(order: Order): boolean {
   return !isBountySourcedOrder(order);
 }
 
-export function isDirectedOrderSource(order: Order): boolean {
-  const source = inferOrderSource(order);
-  return source === "directed" || source === "scan";
+export function isDirectedOrderSource(
+  order: Pick<Order, "orderSource" | "bountyId">,
+): boolean {
+  return order.orderSource === "directed" || order.orderSource === "scan";
 }
 
 export function isBountySourcedOrder(

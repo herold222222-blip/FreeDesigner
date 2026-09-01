@@ -1263,6 +1263,8 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                   className={scanFieldClass(shownHighlight === "field-schedule")}
                 >
                   <Label>
+                    {timeUnit === "monthly"
+                      ? "选择开始日期与结束日期（设计师工作日历）"
                       : "选择服务日期（设计师工作日历）"}{" "}
                     <span className="text-rose-500">*</span>
                   </Label>

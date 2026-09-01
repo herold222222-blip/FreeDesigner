@@ -113,6 +113,7 @@ export function OrderStatusBadge({
     | "levelQuotes"
     | "quote"
     | "csQuoteConfirmedAt"
+    | "billingMode"
   >;
 }) {
   const awaitingReview = !!order && needsClientReview(order as Order);

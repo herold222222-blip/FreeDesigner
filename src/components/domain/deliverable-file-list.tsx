@@ -150,7 +150,7 @@ async function fetchToBlob(
 
   onProgress(90);
   const type = res.headers.get("content-type")?.split(";")[0]?.trim();
-  return new Blob(chunks, {
+  return new Blob(chunks as BlobPart[], {
     type: type && type !== "application/octet-stream" ? type : mimeHint,
   });
 }
