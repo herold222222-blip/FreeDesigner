@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useParams } from "next/navigation";
 import { Suspense, useState } from "react";
-import { ClientOrderDetailInner } from "../../orders/[id]/page";
+import { ClientOrderDetailInner } from "@/components/domain/client-order-detail-inner";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
