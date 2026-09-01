@@ -1,10 +1,11 @@
 import { NextRequest } from "next/server";
 import { handle, ok, fail } from "@/lib/server/api";
 import { getSessionUser } from "@/lib/server/auth";
+import { maskPhoneDigits } from "@/lib/designer-contact-privacy";
 import {
   getClient,
   getClientWithAccountPhone,
-  hasOrderBetweenClientAndDesigner,
+  hasSignedOrderBetweenClientAndDesigner,
 } from "@/lib/server/repo";
 
 export const dynamic = "force-dynamic";
@@ -22,16 +23,25 @@ export async function GET(
       session?.role === "client" && session.identityId === client.id;
     const isAdmin =
       session?.role === "admin" || session?.role === "super_admin";
-    const isOrderCounterpart =
+    const isSignedCounterpart =
       session?.role === "designer" &&
       Boolean(session.identityId) &&
-      (await hasOrderBetweenClientAndDesigner(client.id, session.identityId));
+      (await hasSignedOrderBetweenClientAndDesigner(
+        client.id,
+        session.identityId,
+      ));
 
-    if (isSelf || isAdmin || isOrderCounterpart) {
-      const withPhone = await getClientWithAccountPhone(params.id);
-      return ok(withPhone ?? client);
+    const withPhone = await getClientWithAccountPhone(params.id);
+    const source = withPhone ?? client;
+    if (isSelf || isAdmin || isSignedCounterpart) {
+      return ok(source);
     }
 
-    return ok({ ...client, phone: undefined });
+    return ok({
+      ...source,
+      phone: source.phone
+        ? maskPhoneDigits(source.phone.replace(/\s/g, ""))
+        : undefined,
+    });
   });
 }

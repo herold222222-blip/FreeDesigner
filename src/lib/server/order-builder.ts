@@ -1,6 +1,12 @@
 import "server-only";
 import { generateProjectId } from "@/lib/project-id";
+import {
+  directedPlatformFeeRate,
+  isDirectedLikeOrderSource,
+  taxPointRateFromCoefficient,
+} from "@/lib/directed-platform-fee";
 import { buildDefaultPaymentStages } from "@/lib/order-payment-stages";
+import type { PlatformCommerceSettings } from "@/lib/platform-commerce";
 import type {
   BillingMode,
   BountyAttachment,
@@ -38,13 +44,16 @@ export interface CreateOrderInput {
   /** 期望交付日期；线下驻场为开始服务时间。不预填，须委托人主动填写。 */
   expectedDeliveryAt?: string;
   /** 扫码下单等自定义付款阶段（ratio 为 0–1 或百分数 30 表示 30%） */
-  customStageRatios?: { name: string; ratio: number }[];
+  customStageRatios?: { name: string; ratio: number; note?: string }[];
   /** 委托人实际上传的项目附件 */
   attachments?: BountyAttachment[];
-  /** 系统报价单（按天/按月常规委托，兼容中级卡） */
+  /** 系统报价单（按面积 / 按天 / 按月常规委托，兼容中级卡） */
   quote?: OrderQuote;
   /** 多档等级报价卡 */
   levelQuotes?: OrderQuote[];
+  commerce?: Partial<PlatformCommerceSettings> | null;
+  /** 发票税率系数（定向下单 / 扫码：5% + 对应税点） */
+  taxCoefficient?: number;
 }
 
 function randomId(prefix: string) {
@@ -60,11 +69,12 @@ function normalizeRatio(r: number): number {
 function buildCustomStages(
   orderId: string,
   total: number,
-  defs: { name: string; ratio: number }[],
+  defs: { name: string; ratio: number; note?: string }[],
 ): PaymentStage[] {
   const normalized = defs.map((d) => ({
     name: d.name,
     ratio: normalizeRatio(d.ratio),
+    note: d.note,
   }));
   const sum = normalized.reduce((s, d) => s + d.ratio, 0);
   const scale = sum > 0 ? 1 / sum : 1 / normalized.length;
@@ -81,6 +91,7 @@ function buildCustomStages(
       amount,
       ratio: d.ratio * scale,
       status: "pending" as const,
+      note: d.note,
     };
   });
 }
@@ -101,16 +112,24 @@ function resolveStages(input: CreateOrderInput, orderId: string): PaymentStage[]
     totalAmount: input.totalAmount,
     billingMode: input.billingMode,
     selectedMonths: input.selectedMonths,
+    expectedDeliveryAt: input.expectedDeliveryAt,
+    onsiteSchedule:
+      input.scheduleFrom || input.scheduleTo
+        ? {
+            from: input.scheduleFrom ?? "",
+            to: input.scheduleTo ?? "",
+            address: input.address ?? "",
+          }
+        : undefined,
+    quote: input.quote,
+    levelQuotes: input.levelQuotes,
+    commerce: input.commerce,
   });
 }
 
 function resolveInitialStatus(input: CreateOrderInput): OrderStatus {
   const source = input.orderSource ?? "directed";
-  if (
-    source === "regular" &&
-    input.quote &&
-    (input.billingMode === "daily" || input.billingMode === "monthly")
-  ) {
+  if (source === "regular" && input.quote) {
     return "pending_quote";
   }
   if (source === "regular" || source === "bounty") return "matching";
@@ -174,7 +193,12 @@ export function buildOrder(input: CreateOrderInput): Order {
     orderSource,
     projectAreaSqm: input.projectAreaSqm,
     totalAmount,
-    feeRate: 0.08,
+    taxCoefficient: input.taxCoefficient,
+    feeRate: isDirectedLikeOrderSource(orderSource)
+      ? directedPlatformFeeRate(
+          taxPointRateFromCoefficient(input.taxCoefficient ?? 1),
+        )
+      : 0.08,
     createdAt: now.toISOString(),
     expectedDeliveryAt: expected,
     contractId: "",
@@ -200,7 +224,14 @@ export function buildOrder(input: CreateOrderInput): Order {
             to: input.scheduleTo ?? "",
             address: input.address,
           }
-        : undefined,
+        : input.billingMode === "monthly" &&
+            (input.scheduleFrom || input.scheduleTo)
+          ? {
+              from: input.scheduleFrom ?? "",
+              to: input.scheduleTo ?? "",
+              address: input.address ?? "",
+            }
+          : undefined,
     selectedSlots: input.selectedSlots,
     selectedMonths: input.selectedMonths,
     withAuditService: input.withAuditService,

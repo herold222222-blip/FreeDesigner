@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
+import { fetchMe } from "@/lib/api-client";
 import { ConsoleShell } from "@/components/layout/console-shell";
 import { ConsoleSidebarActions } from "@/components/layout/console-sidebar-actions";
 import { DesignerPricingBaseSidebarCard } from "@/components/domain/designer-pricing-base-sidebar";
 import { DesignerPortfolioPromptDialog } from "@/components/domain/designer-portfolio-prompt-dialog";
-import { useDesigner } from "@/lib/use-data";
+import { invalidateApiPath, useDesigner } from "@/lib/use-data";
 import { withMessagesNavItem } from "@/lib/inbox-nav";
 import { useInboxUnreadCount } from "@/lib/use-inbox-unread";
 import { useRoleStore } from "@/store/role-store";
@@ -26,7 +27,7 @@ const BASE_NAV = [
   { href: "/designer", label: "工作台", icon: LayoutDashboard, exact: true },
   { href: "/designer/orders", label: "平台项目", icon: PackageCheck },
   { href: "/designer/directed-orders", label: "定向订单", icon: Crosshair },
-  { href: "/designer/bounties", label: "悬赏报名", icon: Megaphone },
+  { href: "/designer/bounties", label: "悬赏订单", icon: Megaphone },
   { href: "/designer/portfolio", label: "作品管理", icon: ImagePlus },
   { href: "/designer/rates", label: "我的费率", icon: Percent },
   { href: "/designer/wallet", label: "钱包 · 提现", icon: Wallet },
@@ -42,6 +43,23 @@ export default function DesignerLayout({
   const identityId = useRoleStore((s) => s.identityId);
   const { data: designer } = useDesigner(identityId || null);
   const { count: unread } = useInboxUnreadCount();
+
+  useEffect(() => {
+    const beat = () => {
+      void fetchMe()
+        .then(() => {
+          if (identityId) {
+            invalidateApiPath(`/api/designers/${identityId}`);
+            invalidateApiPath("/api/designers");
+          }
+        })
+        .catch(() => undefined);
+    };
+    beat();
+    const timer = window.setInterval(beat, 5 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [identityId]);
+
   const nav = useMemo(
     () =>
       withMessagesNavItem(

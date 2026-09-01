@@ -10,7 +10,8 @@ import type { Designer } from "@/lib/types";
 import { useRoleStore } from "@/store/role-store";
 
 export function useDesignerContactPrivacy(
-  designer: Pick<Designer, "id" | "name" | "phone" | "contactName">,
+  designer: Pick<Designer, "id" | "name"> &
+    Partial<Pick<Designer, "phone" | "contactName">>,
 ) {
   const role = useRoleStore((s) => s.role);
   const identityId = useRoleStore((s) => s.identityId);

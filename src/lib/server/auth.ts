@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { randomBytes } from "crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "./db";
+import { touchDesignerPresence } from "./designer-presence";
 import type { Role } from "@/lib/types";
 
 const SESSION_COOKIE = "lezyou_session";
@@ -89,6 +90,10 @@ export async function createSession(params: {
     expires: expiresAt,
   });
 
+  if (params.role === "designer") {
+    await touchDesignerPresence(params.userId, { force: true });
+  }
+
   return token;
 }
 
@@ -161,12 +166,24 @@ export async function switchSessionRole(role: Role, identityId: string) {
     where: { token },
     data: { role, identityId },
   });
+  if (role === "designer") {
+    const session = await prisma.session.findUnique({
+      where: { token },
+      select: { userId: true },
+    });
+    if (session) await touchDesignerPresence(session.userId, { force: true });
+  }
 }
 
 export async function destroySession() {
   const token = cookies().get(SESSION_COOKIE)?.value;
   if (token) {
+    const session = await prisma.session.findUnique({
+      where: { token },
+      select: { userId: true },
+    });
     await prisma.session.deleteMany({ where: { token } });
+    if (session) await touchDesignerPresence(session.userId, { force: true });
   }
   cookies().delete(SESSION_COOKIE);
 }

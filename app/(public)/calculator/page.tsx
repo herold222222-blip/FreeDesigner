@@ -52,6 +52,8 @@ import {
   getCalculatorQuoteRemarks,
   resolveCalculatorQuoteRemarkVariant,
 } from "@/lib/calculator-quote-remarks";
+import { LandscapeAreaDifficultyCards } from "@/components/domain/landscape-area-difficulty-cards";
+import { PaymentEscrowHint } from "@/components/domain/payment-escrow-hint";
 import {
   difficultyOptionKey,
   getHardscapeScopeNote,
@@ -99,26 +101,62 @@ type LandscapeSharedProps = {
   projectAdminTriple: AdministrativeTriple;
   setProjectAdminTriple: (v: AdministrativeTriple) => void;
   projectCity: string;
-  area: number;
-  setArea: (v: number) => void;
+  area: number | "";
+  setArea: (v: number | "") => void;
   landscapeCostWan: string;
   setLandscapeCostWan: (v: string) => void;
   projectType: string;
   setProjectType: (v: string) => void;
-  designerLevel: DesignerLevel;
-  setDesignerLevel: (v: DesignerLevel) => void;
+  designerLevel: DesignerLevel | "";
+  setDesignerLevel: (v: DesignerLevel | "") => void;
   designerCity: string;
   setDesignerCity: (v: string) => void;
-  designerRegion: RegionTier;
-  setDesignerRegion: (v: RegionTier) => void;
-  clientLevel: ClientLevel;
-  setClientLevel: (v: ClientLevel) => void;
-  buildType: "new" | "renovation";
-  setBuildType: (v: "new" | "renovation") => void;
-  tax: TaxOption;
-  setTax: (v: TaxOption) => void;
+  designerRegion: RegionTier | "";
+  setDesignerRegion: (v: RegionTier | "") => void;
+  clientLevel: ClientLevel | "";
+  setClientLevel: (v: ClientLevel | "") => void;
+  buildType: "new" | "renovation" | "";
+  setBuildType: (v: "new" | "renovation" | "") => void;
+  tax: TaxOption | null;
+  setTax: (v: TaxOption | null) => void;
   scopeScheme: boolean;
 };
+
+function landscapeAreaValue(area: number | ""): number {
+  return typeof area === "number" && Number.isFinite(area) && area > 0 ? area : 0;
+}
+
+function landscapeQuoteReady(input: {
+  projectName: string;
+  contactName: string;
+  contactPhone: string;
+  projectCity: string;
+  projectType: string;
+  area: number | "";
+  designerLevel: DesignerLevel | "";
+  designerCity: string;
+  clientLevel: ClientLevel | "";
+  buildType: "new" | "renovation" | "";
+  tax: TaxOption | null;
+}): boolean {
+  return (
+    input.projectName.trim().length > 0 &&
+    input.contactName.trim().length > 0 &&
+    input.contactPhone.trim().length > 0 &&
+    input.projectCity.trim().length > 0 &&
+    input.projectType.trim().length > 0 &&
+    landscapeAreaValue(input.area) > 0 &&
+    Boolean(input.designerLevel) &&
+    input.designerCity.trim().length > 0 &&
+    Boolean(input.clientLevel) &&
+    Boolean(input.buildType) &&
+    Boolean(input.tax)
+  );
+}
+
+function landscapeTaxCoefficient(tax: TaxOption | null): number {
+  return tax?.coefficient ?? 1;
+}
 
 function LandscapeSharedProjectPanel({ shared }: { shared: LandscapeSharedProps }) {
   const {
@@ -156,8 +194,14 @@ function LandscapeSharedProjectPanel({ shared }: { shared: LandscapeSharedProps 
   } = shared;
 
   const projectTypes = Object.keys(pricingConfig.landscapeProjectTypeCoefficient);
-  const constructionTier = getLandscapeBaseFees(area || 1, pricingConfig).tier;
-  const schemeTier = getLandscapeSchemeBaseFee(area || 1, pricingConfig).tier;
+  const constructionTier = getLandscapeBaseFees(
+    landscapeAreaValue(area) || 1,
+    pricingConfig,
+  ).tier;
+  const schemeTier = getLandscapeSchemeBaseFee(
+    landscapeAreaValue(area) || 1,
+    pricingConfig,
+  ).tier;
 
   return (
     <div className="space-y-4">
@@ -186,13 +230,21 @@ function LandscapeSharedProjectPanel({ shared }: { shared: LandscapeSharedProps 
             />
           </div>
           <div className="space-y-1.5">
-            <Label>联系人</Label>
-            <Input value={contactName} onChange={(e) => setContactName(e.target.value)} />
+            <Label>
+              联系人 <span className="text-rose-500">*</span>
+            </Label>
+            <Input
+              placeholder="请填写联系人"
+              value={contactName}
+              onChange={(e) => setContactName(e.target.value)}
+            />
           </div>
           <div className="space-y-1.5">
-            <Label>联系方式</Label>
+            <Label>
+              联系方式 <span className="text-rose-500">*</span>
+            </Label>
             <Input
-              placeholder="验证手机号"
+              placeholder="请填写手机号"
               value={contactPhone}
               onChange={(e) => setContactPhone(e.target.value)}
             />
@@ -210,12 +262,17 @@ function LandscapeSharedProjectPanel({ shared }: { shared: LandscapeSharedProps 
             ) : null}
           </div>
           <div className="space-y-1.5">
-            <Label>项目类型</Label>
+            <Label>
+              项目类型 <span className="text-rose-500">*</span>
+            </Label>
             <select
               value={projectType}
               onChange={(e) => setProjectType(e.target.value)}
               className="h-11 w-full rounded-xl border border-ink-20 bg-white px-3 text-sm text-ink"
             >
+              <option value="" disabled>
+                请选择项目类型
+              </option>
               {projectTypes.map((t) => (
                 <option key={t} value={t}>
                   {t}（{Math.round(pricingConfig.landscapeProjectTypeCoefficient[t] * 100)}%）
@@ -224,20 +281,32 @@ function LandscapeSharedProjectPanel({ shared }: { shared: LandscapeSharedProps 
             </select>
           </div>
           <div className="space-y-1.5">
-            <Label>景观面积（㎡）</Label>
+            <Label>
+              景观面积（㎡） <span className="text-rose-500">*</span>
+            </Label>
             <Input
               type="number"
+              min={0}
+              placeholder="请填写景观面积"
               value={area}
-              onChange={(e) => setArea(Number(e.target.value) || 0)}
+              onChange={(e) =>
+                setArea(e.target.value === "" ? "" : Number(e.target.value))
+              }
             />
             <div className="flex flex-wrap gap-2 text-[11px] text-ink-40">
-              <span>
-                施工图阶梯：<span className="font-medium text-ink">{constructionTier.label}</span>
-              </span>
-              <span>·</span>
-              <span>
-                方案阶梯：<span className="font-medium text-ink">{schemeTier.label}</span>
-              </span>
+              {typeof area === "number" && area > 0 ? (
+                <>
+                  <span>
+                    施工图阶梯：<span className="font-medium text-ink">{constructionTier.label}</span>
+                  </span>
+                  <span>·</span>
+                  <span>
+                    方案阶梯：<span className="font-medium text-ink">{schemeTier.label}</span>
+                  </span>
+                </>
+              ) : (
+                <span>填写面积后显示对应计费阶梯</span>
+              )}
             </div>
           </div>
           {scopeScheme ? (
@@ -259,6 +328,8 @@ function LandscapeSharedProjectPanel({ shared }: { shared: LandscapeSharedProps 
         <div className="grid gap-5 sm:grid-cols-2">
           <CoeffSelector
             label="设计师等级"
+            required
+            placeholder="请选择设计师等级"
             options={Object.entries(DESIGNER_LEVEL_META).map(([k, v]) => ({
               value: k as DesignerLevel,
               label: `${v.label}（${Math.round(pricingConfig.designerLevelCoefficient[k as DesignerLevel] * 100)}%）`,
@@ -267,7 +338,9 @@ function LandscapeSharedProjectPanel({ shared }: { shared: LandscapeSharedProps 
             onChange={(v) => setDesignerLevel(v as DesignerLevel)}
           />
           <div className="space-y-1.5">
-            <Label>设计师所在城市</Label>
+            <Label>
+              设计师所在城市 <span className="text-rose-500">*</span>
+            </Label>
             <CitySelector
               value={designerCity}
               onChange={(c, tier) => {
@@ -277,12 +350,15 @@ function LandscapeSharedProjectPanel({ shared }: { shared: LandscapeSharedProps 
               placeholder="请选择设计师所在城市"
             />
             <div className="text-[11px] text-ink-40">
-              {REGION_TIER_META[designerRegion].label} · 系数{" "}
-              {Math.round(pricingConfig.regionTierCoefficient[designerRegion] * 100)}%
+              {designerCity && designerRegion
+                ? `${REGION_TIER_META[designerRegion].label} · 系数 ${Math.round(pricingConfig.regionTierCoefficient[designerRegion] * 100)}%`
+                : "选择城市后显示区域梯队与系数"}
             </div>
           </div>
           <CoeffSelector
             label="客户等级"
+            required
+            placeholder="请选择客户等级"
             options={Object.entries(CLIENT_LEVEL_META).map(([k, v]) => ({
               value: k as ClientLevel,
               label: `${v.label}（${Math.round(pricingConfig.clientLevelCoefficient[k as ClientLevel] * 100)}%）`,
@@ -291,12 +367,19 @@ function LandscapeSharedProjectPanel({ shared }: { shared: LandscapeSharedProps 
             onChange={(v) => setClientLevel(v as ClientLevel)}
           />
           <div className="space-y-1.5">
-            <Label>建造类型</Label>
+            <Label>
+              建造类型 <span className="text-rose-500">*</span>
+            </Label>
             <div className="flex flex-wrap gap-2">
-              <button onClick={() => setBuildType("new")} className={pillCls(buildType === "new")}>
+              <button
+                type="button"
+                onClick={() => setBuildType("new")}
+                className={pillCls(buildType === "new")}
+              >
                 新建（100%）
               </button>
               <button
+                type="button"
                 onClick={() => setBuildType("renovation")}
                 className={pillCls(buildType === "renovation")}
               >
@@ -305,13 +388,16 @@ function LandscapeSharedProjectPanel({ shared }: { shared: LandscapeSharedProps 
             </div>
           </div>
           <div className="space-y-1.5 sm:col-span-2">
-            <Label>税率</Label>
+            <Label>
+              税率 <span className="text-rose-500">*</span>
+            </Label>
             <div className="flex flex-wrap gap-2">
               {pricingConfig.taxOptions.map((t) => (
                 <button
                   key={t.value}
+                  type="button"
                   onClick={() => setTax(t)}
-                  className={pillCls(tax.value === t.value)}
+                  className={pillCls(tax?.value === t.value)}
                 >
                   {t.label}
                 </button>
@@ -441,15 +527,15 @@ function LandscapeCalculator() {
   );
   const projectCity =
     resolveAdministrativeTriple(projectAdminTriple)?.fullLabel ?? "";
-  const [area, setArea] = useState(8000);
+  const [area, setArea] = useState<number | "">("");
   const [landscapeCostWan, setLandscapeCostWan] = useState("");
-  const [projectType, setProjectType] = useState("高层住宅");
-  const [designerLevel, setDesignerLevel] = useState<DesignerLevel>("mid_v1");
-  const [designerCity, setDesignerCity] = useState("成都");
-  const [designerRegion, setDesignerRegion] = useState<RegionTier>("tier2");
-  const [clientLevel, setClientLevel] = useState<ClientLevel>("normal");
-  const [buildType, setBuildType] = useState<"new" | "renovation">("new");
-  const [tax, setTax] = useState<TaxOption>(pricingConfig.taxOptions[0]!);
+  const [projectType, setProjectType] = useState("");
+  const [designerLevel, setDesignerLevel] = useState<DesignerLevel | "">("");
+  const [designerCity, setDesignerCity] = useState("");
+  const [designerRegion, setDesignerRegion] = useState<RegionTier | "">("");
+  const [clientLevel, setClientLevel] = useState<ClientLevel | "">("");
+  const [buildType, setBuildType] = useState<"new" | "renovation" | "">("");
+  const [tax, setTax] = useState<TaxOption | null>(null);
 
   const [areaTracks, setAreaTracks] = useState<
     ("hardscape" | "softscape" | "drainage" | "electrical")[]
@@ -473,12 +559,15 @@ function LandscapeCalculator() {
   const [schemeDifficultyMode, setSchemeDifficultyMode] = useState<"auto" | "manual">(
     "manual",
   );
+  const [withAudit, setWithAudit] = useState(false);
+  const [withPM, setWithPM] = useState(false);
 
   useEffect(() => {
+    if (!tax) return;
     if (!pricingConfig.taxOptions.some((item) => item.value === tax.value)) {
-      setTax(pricingConfig.taxOptions[0]!);
+      setTax(null);
     }
-  }, [pricingConfig.taxOptions, tax.value]);
+  }, [pricingConfig.taxOptions, tax]);
 
   const shared: LandscapeSharedProps = {
     pricingConfig,
@@ -520,7 +609,7 @@ function LandscapeCalculator() {
     () =>
       calculateAreaBasedFee(
         {
-          area,
+          area: landscapeAreaValue(area),
           projectType,
           designerLevel,
           designerRegion,
@@ -528,7 +617,9 @@ function LandscapeCalculator() {
           selectedTracks: areaTracks,
           difficulty: areaDifficulty,
           buildType,
-          taxCoefficient: tax.coefficient,
+          taxCoefficient: landscapeTaxCoefficient(tax),
+          withAuditService: withAudit,
+          withProjectManagement: withPM,
         },
         pricingConfig,
       ),
@@ -541,7 +632,9 @@ function LandscapeCalculator() {
       areaTracks,
       areaDifficulty,
       buildType,
-      tax.coefficient,
+      landscapeTaxCoefficient(tax),
+      withAudit,
+      withPM,
       pricingConfig,
     ],
   );
@@ -559,7 +652,7 @@ function LandscapeCalculator() {
           clientLevel,
           withDrawing: timeWithDrawing,
           difficulty: timeDifficulty,
-          taxCoefficient: tax.coefficient,
+          taxCoefficient: landscapeTaxCoefficient(tax),
         },
         pricingConfig,
       ),
@@ -573,7 +666,7 @@ function LandscapeCalculator() {
       clientLevel,
       timeWithDrawing,
       timeDifficulty,
-      tax.coefficient,
+      landscapeTaxCoefficient(tax),
       pricingConfig,
     ],
   );
@@ -582,14 +675,14 @@ function LandscapeCalculator() {
     () =>
       calculateSchemeAreaBasedFee(
         {
-          area,
+          area: landscapeAreaValue(area),
           projectType,
           designerLevel,
           designerRegion,
           clientLevel,
           schemeDifficulty,
           buildType,
-          taxCoefficient: tax.coefficient,
+          taxCoefficient: landscapeTaxCoefficient(tax),
         },
         pricingConfig,
       ),
@@ -601,7 +694,7 @@ function LandscapeCalculator() {
       clientLevel,
       schemeDifficulty,
       buildType,
-      tax.coefficient,
+      landscapeTaxCoefficient(tax),
       pricingConfig,
     ],
   );
@@ -686,7 +779,7 @@ function LandscapeCalculator() {
         {scopeConstruction ? (
           <TabsContent value="construction_doc" className="mt-0 space-y-4">
             <p className="text-sm text-ink-60">
-              景观施工图（园建 / 绿化 / 给排水 / 电气）：按面积含审图费、项目管理费；按时间为日 / 月费率。
+              景观施工图（园建 / 绿化 / 给排水 / 电气）：按面积可加购第三方审图与项目管理员；按时间为日 / 月费率。
             </p>
             <Tabs
               value={constructionMode}
@@ -708,6 +801,10 @@ function LandscapeCalculator() {
                   setTracks={setAreaTracks}
                   difficulty={areaDifficulty}
                   setDifficulty={setAreaDifficulty}
+                  withAudit={withAudit}
+                  setWithAudit={setWithAudit}
+                  withPM={withPM}
+                  setWithPM={setWithPM}
                 />
               </TabsContent>
               <TabsContent value="time" className="mt-0">
@@ -796,7 +893,7 @@ function CombinedLandscapeSummary({
   const quoteRemarks = remarkVariant
     ? getCalculatorQuoteRemarks(
         remarkVariant,
-        tax.label,
+        tax?.label ?? "—",
         shared.pricingConfig.calculatorQuoteRemarks,
       )
     : null;
@@ -813,13 +910,13 @@ function CombinedLandscapeSummary({
           <CompactInfo label="项目地" value={projectCity || "—"} />
           <CompactInfo
             label="面积 / 类型"
-            value={`${area > 0 ? `${area.toLocaleString()} ㎡` : "—"} · ${projectType}`}
+            value={`${landscapeAreaValue(area) > 0 ? `${landscapeAreaValue(area).toLocaleString()} ㎡` : "—"} · ${projectType}`}
           />
           <CompactInfo
             label="设计师"
-            value={`${DESIGNER_LEVEL_META[designerLevel].label} · ${designerCity || "—"}`}
+            value={`${designerLevel ? DESIGNER_LEVEL_META[designerLevel].label : "—"} · ${designerCity || "—"}`}
           />
-          <CompactInfo label="税率" value={tax.label} />
+          <CompactInfo label="税率" value={tax?.label ?? "—"} />
         </dl>
       </Card>
 
@@ -924,6 +1021,7 @@ function PaymentStagesCard({
   return (
     <Card className={compact ? "p-4" : "p-6"}>
       <SectionTitle icon={FileText} title={title} />
+      <PaymentEscrowHint className="mb-3" />
       <ul className="space-y-1.5 text-sm">
         {stages.map((stage) => (
           <li
@@ -977,30 +1075,34 @@ function SchemeAreaBasedCalculator({
     tax,
   } = shared;
 
+  const quoteReady = landscapeQuoteReady(shared);
   const schemeDifficultyOptions = getSchemeDifficultyOptions(pricingConfig);
 
   useEffect(() => {
-    if (difficultyMode !== "auto" || !landscapeCostWan.trim() || area <= 0) return;
+    if (difficultyMode !== "auto" || !landscapeCostWan.trim() || landscapeAreaValue(area) <= 0) return;
     const wan = Number(landscapeCostWan);
     if (!Number.isFinite(wan) || wan <= 0) return;
-    const costPerSqm = (wan * 10000) / area;
+    const costPerSqm = (wan * 10000) / landscapeAreaValue(area);
     setSchemeDifficulty(inferSchemeDifficultyFromCostPerSqm(costPerSqm, pricingConfig));
   }, [landscapeCostWan, area, difficultyMode, pricingConfig, setSchemeDifficulty]);
 
-  const { tier } = getLandscapeSchemeBaseFee(area || 1, pricingConfig);
+  const { tier } = getLandscapeSchemeBaseFee(
+    landscapeAreaValue(area) || 1,
+    pricingConfig,
+  );
 
   const result = useMemo(
     () =>
       calculateSchemeAreaBasedFee(
         {
-          area,
+          area: landscapeAreaValue(area),
           projectType,
           designerLevel,
           designerRegion,
           clientLevel,
           schemeDifficulty,
           buildType,
-          taxCoefficient: tax.coefficient,
+          taxCoefficient: landscapeTaxCoefficient(tax),
         },
         pricingConfig,
       ),
@@ -1050,12 +1152,12 @@ function SchemeAreaBasedCalculator({
 
           {difficultyMode === "auto" ? (
             <div className="mb-4 rounded-xl border border-ink-20 bg-ink-20/20 p-4 text-sm">
-              {landscapeCostWan.trim() && area > 0 ? (
+              {landscapeCostWan.trim() && landscapeAreaValue(area) > 0 ? (
                 <>
                   <div className="text-ink-60">
                     单方造价约{" "}
                     <span className="font-semibold text-ink">
-                      {formatCurrency((Number(landscapeCostWan) * 10000) / area)}/㎡
+                      {formatCurrency((Number(landscapeCostWan) * 10000) / landscapeAreaValue(area))}/㎡
                     </span>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -1138,7 +1240,7 @@ function SchemeAreaBasedCalculator({
       </div>
 
       <Card className="space-y-5 p-6 lg:sticky lg:top-20">
-        <SectionTitle icon={Coins} title="报价结果（平台管理员视角）" />
+        <SectionTitle icon={Coins} title="报价预估（平台管理员视角）" />
         {projectName || projectCity ? (
           <div className="rounded-xl border border-ink-20 bg-ink-20/20 p-3 text-xs text-ink-60">
             <div className="font-semibold text-ink">{projectName || "（未填项目名称）"}</div>
@@ -1152,15 +1254,17 @@ function SchemeAreaBasedCalculator({
             {formatCurrency(result.total)}
           </div>
           <div className="mt-1 text-[11px] text-ink-60">
-            税前 {formatCurrency(result.subtotal)} × 税率 {tax.coefficient.toFixed(2)}
+            税前 {formatCurrency(result.subtotal)} × 税率 {landscapeTaxCoefficient(tax).toFixed(2)}
           </div>
         </div>
         <div className="space-y-1.5 text-sm">
           <Row label={`方案设计费基数（${tier.label}）`} value={result.baseFee} />
           <Row label="出图费" value={result.drawingFee} bold />
-          <Row
-            label={`平台管理费（含商务费 ${formatCurrency(result.businessFee)}）`}
-            value={result.platformFee}
+          <FeeAddonRows
+            platformFee={result.platformFee}
+            businessFee={result.businessFee}
+            subtotal={result.subtotal}
+            total={result.total}
           />
         </div>
         <div className="rounded-xl bg-ink-20/30 p-3 text-[11px]">
@@ -1174,13 +1278,23 @@ function SchemeAreaBasedCalculator({
             <CoefRow label="方案难度" v={result.coefficients.schemeDifficulty} />
             <CoefRow label="建造类型" v={result.coefficients.build} />
             <CoefRow label="税率" v={result.coefficients.tax} />
+            <CoefRow
+              label="平台管理费"
+              v={result.coefficients.platformManagement}
+            />
+            <CoefRow label="商务费" v={result.coefficients.businessFee} />
+            <CoefRow
+              label="平台管理费"
+              v={result.coefficients.platformManagement}
+            />
+            <CoefRow label="商务费" v={result.coefficients.businessFee} />
           </div>
         </div>
         <Button
           variant="brand"
           className="w-full"
           size="lg"
-          disabled={!projectName.trim() || !projectCity.trim()}
+          disabled={!quoteReady}
         >
           <Calculator className="h-4 w-4" /> 生成报价单（mock）
         </Button>
@@ -1199,6 +1313,10 @@ function AreaBasedCalculator({
   setTracks,
   difficulty,
   setDifficulty,
+  withAudit,
+  setWithAudit,
+  withPM,
+  setWithPM,
 }: {
   shared: LandscapeSharedProps;
   tracks: ("hardscape" | "softscape" | "drainage" | "electrical")[];
@@ -1207,6 +1325,10 @@ function AreaBasedCalculator({
   >;
   difficulty: Record<string, number>;
   setDifficulty: Dispatch<SetStateAction<Record<string, number>>>;
+  withAudit: boolean;
+  setWithAudit: (v: boolean) => void;
+  withPM: boolean;
+  setWithPM: (v: boolean) => void;
 }) {
   const {
     pricingConfig,
@@ -1222,6 +1344,7 @@ function AreaBasedCalculator({
     tax,
   } = shared;
 
+  const quoteReady = landscapeQuoteReady(shared);
   const landscapeDifficulty = pricingConfig.landscapeDifficulty;
 
   useEffect(() => {
@@ -1250,7 +1373,7 @@ function AreaBasedCalculator({
   const result = useMemo(
     () =>
       calculateAreaBasedFee({
-        area,
+        area: landscapeAreaValue(area),
         projectType,
         designerLevel,
         designerRegion,
@@ -1258,12 +1381,14 @@ function AreaBasedCalculator({
         selectedTracks: tracks,
         difficulty,
         buildType,
-        taxCoefficient: tax.coefficient,
+        taxCoefficient: landscapeTaxCoefficient(tax),
+        withAuditService: withAudit,
+        withProjectManagement: withPM,
       }, pricingConfig),
-    [area, projectType, designerLevel, designerRegion, clientLevel, tracks, difficulty, buildType, tax, pricingConfig],
+    [area, projectType, designerLevel, designerRegion, clientLevel, tracks, difficulty, buildType, tax, pricingConfig, withAudit, withPM],
   );
 
-  const { tier } = getLandscapeBaseFees(area || 1, pricingConfig);
+  const { tier } = getLandscapeBaseFees(landscapeAreaValue(area) || 1, pricingConfig);
 
   const toggleTrack = (t: "hardscape" | "softscape" | "drainage" | "electrical") =>
     setTracks((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
@@ -1307,27 +1432,6 @@ function AreaBasedCalculator({
                         </p>
                       ) : null}
                     </div>
-                    {checked && ui.kind === "select" ? (
-                      <div className="flex flex-shrink-0 flex-wrap gap-1.5 sm:justify-end">
-                        {ui.options.map((opt) => (
-                          <button
-                            key={opt.value}
-                            type="button"
-                            onClick={() =>
-                              setDifficulty((prev) => ({ ...prev, [t]: opt.value }))
-                            }
-                            className={cn(
-                              "rounded-full border px-2.5 py-0.5 text-[11px] transition-colors",
-                              difficulty[t] === opt.value
-                                ? "border-brand bg-brand text-white"
-                                : "border-ink-20 text-ink-60 hover:border-brand/60",
-                            )}
-                          >
-                            {opt.label} {Math.round(opt.value * 100)}%
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
                     {checked && ui.kind === "fixed" ? (
                       <Badge
                         variant="brand"
@@ -1338,36 +1442,18 @@ function AreaBasedCalculator({
                     ) : null}
                   </div>
                   {checked && ui.kind === "select" ? (
-                    <div className="mt-3 border-t border-dashed border-ink-20/70 pt-3">
-                      <div className="mb-2 text-[10px] font-medium uppercase tracking-wider text-ink-40">
-                        {t === "drainage"
+                    <LandscapeAreaDifficultyCards
+                      options={ui.options}
+                      selectedValue={difficulty[t]}
+                      onSelect={(opt) =>
+                        setDifficulty((prev) => ({ ...prev, [t]: opt.value }))
+                      }
+                      heading={
+                        t === "drainage"
                           ? "选项说明 · 给排水"
-                          : `各档难度说明 · ${TRACK_LABEL[t].split("（")[0]?.trim()}`}
-                      </div>
-                      <div
-                        className={cn(
-                          "grid gap-2",
-                          ui.options.length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-2",
-                        )}
-                      >
-                        {ui.options.map((opt) => (
-                          <div
-                            key={opt.value}
-                            className={cn(
-                              "rounded-lg border px-2.5 py-2 text-[11px] leading-snug",
-                              difficulty[t] === opt.value
-                                ? "border-brand/40 bg-brand/5"
-                                : "border-ink-20/80 bg-white/60",
-                            )}
-                          >
-                            <span className="font-semibold text-ink">
-                              {opt.label} · {Math.round(opt.value * 100)}%
-                            </span>
-                            <span className="mt-1 block text-ink-60">{opt.remark}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                          : `各档难度说明 · ${TRACK_LABEL[t].split("（")[0]?.trim()}`
+                      }
+                    />
                   ) : null}
                   {checked && ui.kind === "fixed" ? (
                     <div className="mt-3 border-t border-dashed border-ink-20/70 pt-3">
@@ -1377,6 +1463,66 @@ function AreaBasedCalculator({
                 </div>
               );
             })}
+            <div className="rounded-xl border border-ink-20 p-3">
+              <div className="mb-3 flex items-center gap-1.5 text-xs font-medium text-ink">
+                <Sparkles className="h-3.5 w-3.5 text-brand" />
+                v1.1 增值服务（可选）
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {(
+                  [
+                    {
+                      key: "audit",
+                      checked: withAudit,
+                      onChange: setWithAudit,
+                      badge: "第三方审图",
+                      badgeVariant: "amber" as const,
+                      selectedClass: "border-amber-400 bg-amber-50",
+                      hoverClass: "hover:border-amber-300",
+                      rateLabel: `+${Math.round(pricingConfig.auditServiceRate * 100)}% 设计费`,
+                      note: "独立审图师审核图纸并出具审图文档，对设计师专业水平五档评级。",
+                    },
+                    {
+                      key: "pm",
+                      checked: withPM,
+                      onChange: setWithPM,
+                      badge: "项目管理员",
+                      badgeVariant: "violet" as const,
+                      selectedClass: "border-violet-400 bg-violet-50",
+                      hoverClass: "hover:border-violet-300",
+                      rateLabel: `+${Math.round(pricingConfig.projectManagementRate * 100)}% 设计费`,
+                      note: "项目经理对外沟通、对内协调各专业，出具会议纪要并把控进度。",
+                    },
+                  ] as const
+                ).map((item) => (
+                  <label
+                    key={item.key}
+                    className={cn(
+                      "flex cursor-pointer items-start gap-2 rounded-xl border p-3 transition-colors",
+                      item.checked
+                        ? item.selectedClass
+                        : cn("border-ink-20", item.hoverClass),
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={item.checked}
+                      onChange={(e) => item.onChange(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 shrink-0"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge variant={item.badgeVariant}>{item.badge}</Badge>
+                        <span className="text-[11px] text-ink-60">{item.rateLabel}</span>
+                      </div>
+                      <p className="mt-1.5 text-[11px] leading-relaxed text-ink-60">
+                        {item.note}
+                      </p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
           <div className="mt-3 space-y-2">
             <div className="rounded-xl bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900">
@@ -1392,7 +1538,7 @@ function AreaBasedCalculator({
 
       {/* 输出 */}
       <Card className="space-y-5 p-6 lg:sticky lg:top-20">
-        <SectionTitle icon={Coins} title="报价结果（平台管理员视角）" />
+        <SectionTitle icon={Coins} title="报价预估（平台管理员视角）" />
 
         {projectName || projectCity ? (
           <div className="rounded-xl border border-ink-20 bg-ink-20/20 p-3 text-xs text-ink-60">
@@ -1413,7 +1559,7 @@ function AreaBasedCalculator({
             {formatCurrency(result.total)}
           </div>
           <div className="mt-1 text-[11px] text-ink-60">
-            税前 {formatCurrency(result.subtotal)} × 税率 {tax.coefficient.toFixed(2)}
+            税前 {formatCurrency(result.subtotal)} × 税率 {landscapeTaxCoefficient(tax).toFixed(2)}
           </div>
         </div>
 
@@ -1427,14 +1573,23 @@ function AreaBasedCalculator({
             </div>
           ))}
           <Row label="出图费小计" value={result.drawingFee} bold />
-          <Row label={`审图费（出图 × 8%）`} value={result.auditFee} />
-          <Row
-            label={`项目管理费（出图 × 20%）`}
-            value={result.projectManagementFee}
-          />
-          <Row
-            label={`平台管理费（含商务费 ${formatCurrency(result.businessFee)}）`}
-            value={result.platformFee}
+          {withAudit ? (
+            <Row
+              label={`第三方审图（出图 × ${Math.round(pricingConfig.auditServiceRate * 100)}%）`}
+              value={result.auditFee}
+            />
+          ) : null}
+          {withPM ? (
+            <Row
+              label={`项目管理员（出图 × ${Math.round(pricingConfig.projectManagementRate * 100)}%）`}
+              value={result.projectManagementFee}
+            />
+          ) : null}
+          <FeeAddonRows
+            platformFee={result.platformFee}
+            businessFee={result.businessFee}
+            subtotal={result.subtotal}
+            total={result.total}
           />
         </div>
 
@@ -1449,6 +1604,11 @@ function AreaBasedCalculator({
             <CoefRow label="建造类型" v={result.coefficients.build} />
             <CoefRow label="项目区域" v={result.coefficients.region} />
             <CoefRow label="税率" v={result.coefficients.tax} />
+            <CoefRow
+              label="平台管理费"
+              v={result.coefficients.platformManagement}
+            />
+            <CoefRow label="商务费" v={result.coefficients.businessFee} />
           </div>
         </div>
 
@@ -1456,13 +1616,13 @@ function AreaBasedCalculator({
           variant="brand"
           className="w-full"
           size="lg"
-          disabled={!projectName.trim() || !projectCity.trim()}
+          disabled={!quoteReady}
         >
           <Calculator className="h-4 w-4" /> 生成报价单（mock）
         </Button>
-        {!projectName.trim() || !projectCity.trim() ? (
+        {!quoteReady ? (
           <div className="text-center text-[11px] text-rose-500">
-            请填写项目名称与项目所在地后再生成报价单
+            请填写必填的项目信息与主体系数后再生成报价单
           </div>
         ) : null}
       </Card>
@@ -1514,6 +1674,7 @@ function TimeBasedCalculator({
     tax,
   } = shared;
 
+  const quoteReady = landscapeQuoteReady(shared);
   const landscapeDifficulty = pricingConfig.landscapeDifficulty;
   const [difficultyKey, setDifficultyKey] = useState("mid");
   const timeUi = landscapeTimeDifficultyUI(track, landscapeDifficulty);
@@ -1546,7 +1707,7 @@ function TimeBasedCalculator({
         clientLevel,
         withDrawing,
         difficulty,
-        taxCoefficient: tax.coefficient,
+        taxCoefficient: landscapeTaxCoefficient(tax),
       }, pricingConfig),
     [unit, quantity, mode, track, designerLevel, designerRegion, clientLevel, withDrawing, difficulty, tax, pricingConfig],
   );
@@ -1626,47 +1787,16 @@ function TimeBasedCalculator({
                   : "（按天 / 按月专用档位）"}
               </Label>
               {timeUi.kind === "select" ? (
-                <>
-                  <div className="flex flex-wrap gap-1.5">
-                    {timeUi.options.map((opt) => {
-                      const key = difficultyOptionKey(opt);
-                      return (
-                        <button
-                          key={key}
-                          type="button"
-                          onClick={() => {
-                            setDifficultyKey(key);
-                            setDifficulty(opt.value);
-                          }}
-                          className={pillCls(difficultyKey === key)}
-                        >
-                          {opt.label} {Math.round(opt.value * 100)}%
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                    {timeUi.options.map((opt) => {
-                      const key = difficultyOptionKey(opt);
-                      return (
-                        <div
-                          key={key}
-                          className={cn(
-                            "rounded-lg border px-2.5 py-2 text-[11px] leading-snug",
-                            difficultyKey === key
-                              ? "border-brand/40 bg-brand/5"
-                              : "border-ink-20/80 bg-white/60",
-                          )}
-                        >
-                          <span className="font-semibold text-ink">
-                            {opt.label} · {Math.round(opt.value * 100)}%
-                          </span>
-                          <span className="mt-1 block text-ink-60">{opt.remark}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>
+                <LandscapeAreaDifficultyCards
+                  options={timeUi.options}
+                  selectedKey={difficultyKey}
+                  onSelect={(opt) => {
+                    setDifficultyKey(difficultyOptionKey(opt));
+                    setDifficulty(opt.value);
+                  }}
+                  heading="选项说明"
+                  className="mt-2"
+                />
               ) : (
                 <div className="space-y-2">
                   <Badge variant="brand" className="tabular-nums text-xs font-semibold">
@@ -1685,7 +1815,7 @@ function TimeBasedCalculator({
       </div>
 
       <Card className="space-y-5 p-6 lg:sticky lg:top-20">
-        <SectionTitle icon={Coins} title="报价结果" />
+        <SectionTitle icon={Coins} title="报价预估" />
         {projectName || projectCity ? (
           <div className="rounded-xl border border-ink-20 bg-ink-20/20 p-3 text-xs text-ink-60">
             <div className="font-semibold text-ink">
@@ -1702,7 +1832,7 @@ function TimeBasedCalculator({
             {formatCurrency(result.total)}
           </div>
           <div className="mt-1 text-[11px] text-ink-60">
-            税前 {formatCurrency(result.subtotal)} × 税率 {tax.coefficient.toFixed(2)}
+            税前 {formatCurrency(result.subtotal)} × 税率 {landscapeTaxCoefficient(tax).toFixed(2)}
           </div>
         </div>
         <div className="space-y-1.5 text-sm">
@@ -1710,22 +1840,24 @@ function TimeBasedCalculator({
             label={`基础费 (${formatCurrency(result.perUnit)} × ${quantity} × 系数)`}
             value={result.basicFee}
           />
-          <Row
-            label={`平台管理费（含商务费 ${formatCurrency(result.businessFee)}）`}
-            value={result.platformFee}
+          <FeeAddonRows
+            platformFee={result.platformFee}
+            businessFee={result.businessFee}
+            subtotal={result.subtotal}
+            total={result.total}
           />
         </div>
         <Button
           variant="brand"
           className="w-full"
           size="lg"
-          disabled={!projectName.trim() || !projectCity.trim()}
+          disabled={!quoteReady}
         >
           <Calculator className="h-4 w-4" /> 生成报价单（mock）
         </Button>
-        {!projectName.trim() || !projectCity.trim() ? (
+        {!quoteReady ? (
           <div className="text-center text-[11px] text-rose-500">
-            请填写项目名称与项目所在地后再生成报价单
+            请填写必填的项目信息与主体系数后再生成报价单
           </div>
         ) : null}
       </Card>
@@ -1749,6 +1881,28 @@ function SectionTitle({
       <Icon className="h-4 w-4" />
       {title}
     </div>
+  );
+}
+
+function FeeAddonRows({
+  platformFee,
+  businessFee,
+  subtotal,
+  total,
+}: {
+  platformFee: number;
+  businessFee: number;
+  subtotal: number;
+  total: number;
+}) {
+  const platformOnly = Math.max(0, platformFee - businessFee);
+  const taxAmount = Math.max(0, total - subtotal);
+  return (
+    <>
+      <Row label="平台管理费" value={platformOnly} />
+      <Row label="商务费" value={businessFee} />
+      <Row label="税金" value={taxAmount} />
+    </>
   );
 }
 
@@ -1785,20 +1939,30 @@ function CoeffSelector<T extends string>({
   options,
   value,
   onChange,
+  placeholder,
+  required,
 }: {
   label: string;
   options: { value: T; label: string }[];
-  value: T;
+  value: T | "";
   onChange: (v: T) => void;
+  placeholder?: string;
+  required?: boolean;
 }) {
   return (
     <div className="space-y-1.5">
-      <Label>{label}</Label>
+      <Label>
+        {label}
+        {required ? <span className="text-rose-500"> *</span> : null}
+      </Label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value as T)}
         className="h-11 w-full rounded-xl border border-ink-20 bg-white px-3 text-sm"
       >
+        <option value="" disabled>
+          {placeholder ?? `请选择${label}`}
+        </option>
         {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}

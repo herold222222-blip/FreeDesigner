@@ -72,7 +72,7 @@ export function ConsoleShell({
   const { busy, handleLogout } = useConsoleLogout();
 
   return (
-    <div className="flex min-h-screen bg-[#FAFAFA]">
+    <div className="flex min-h-screen min-w-0 overflow-x-clip bg-[#FAFAFA]">
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col overflow-hidden border-r border-ink-20 bg-white lg:flex">
         <Link href="/" className="flex shrink-0 items-center gap-2 px-6 py-5">
           <BrandLogo size={36} />
@@ -177,10 +177,10 @@ export function ConsoleShell({
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 border-b border-ink-20 bg-white/80 backdrop-blur-xl">
           <div className="flex h-16 items-center justify-between px-4 sm:px-8">
-            <h1 className="text-lg font-semibold tracking-tight text-ink">
+            <h1 className="min-w-0 truncate text-base font-semibold tracking-tight text-ink sm:text-lg">
               {title}
             </h1>
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 shrink-0 items-center gap-2">
               {rightSlot}
               <button
                 type="button"
@@ -193,7 +193,7 @@ export function ConsoleShell({
               </button>
             </div>
           </div>
-          <nav className="flex gap-1 overflow-x-auto border-t border-ink-20 px-3 py-2 lg:hidden">
+          <nav className="flex flex-wrap gap-1 border-t border-ink-20 px-3 py-2 lg:hidden">
             {nav.map((item) => {
               const active = item.exact
                 ? pathname === item.href

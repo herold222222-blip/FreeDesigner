@@ -540,14 +540,14 @@ function LoginInner() {
     ) ?? ["client", "designer"]) as Array<"client" | "designer">;
 
   return (
-    <div className="container-page py-16">
-      <div className="grid gap-12 lg:grid-cols-2 lg:items-center">
+    <div className="container-page py-8 sm:py-16">
+      <div className="grid min-w-0 gap-8 lg:grid-cols-2 lg:items-center lg:gap-12">
         <div className="space-y-6">
           <Badge variant="muted" className="gap-1">
             <Sparkles className="h-3 w-3 text-brand" />
             {isRegister ? "立即注册" : "登录 / 注册"}
           </Badge>
-          <h1 className="text-balance text-4xl font-semibold leading-tight tracking-tight text-ink">
+          <h1 className="text-balance text-2xl font-semibold leading-tight tracking-tight text-ink sm:text-4xl">
             {isRegister ? (
               <>
                 加入乐自由,

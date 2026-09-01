@@ -29,10 +29,12 @@ import { DesignerScheduleWorkspace } from "@/components/domain/designer-schedule
 import { DesignerRegistrationTags } from "@/components/domain/designer-registration-tags";
 import { PortfolioImageLightbox } from "@/components/domain/portfolio-image-lightbox";
 import {
+  ArrowLeft,
   Calendar,
   CheckCircle2,
   Clock,
   MapPin,
+  Pencil,
   Sparkles,
   Star,
 } from "lucide-react";
@@ -50,22 +52,28 @@ import {
 import { normalizePortfolioItem, portfolioCoverUrl } from "@/lib/portfolio-images";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { getOnlineMeetingTimeLabel } from "@/lib/designer-service-settings";
-import { AdminConsoleReturnBar } from "@/components/layout/admin-console-return-bar";
 import type { Designer, DesignerLevel, PortfolioItem } from "@/lib/types";
+import { buildScanOrderPath } from "@/lib/scan-order";
 import { useDesignerContactPrivacy } from "@/lib/use-designer-contact-privacy";
+import { useRoleStore } from "@/store/role-store";
 
 export function DesignerPublicProfileView({
   designer,
   embedded = false,
   returnTo,
+  returnLabel = "返回",
   onSchedulePersisted,
 }: {
   designer: Designer;
   embedded?: boolean;
-  /** 从管理后台用户管理进入时，提供返回列表链接 */
+  /** 从管理后台或悬赏报名进入时，提供返回上一页链接 */
   returnTo?: string;
+  returnLabel?: string;
   onSchedulePersisted?: () => void;
 }) {
+  const identityId = useRoleStore((s) => s.identityId);
+  const role = useRoleStore((s) => s.role);
+  const isOwnProfile = role === "designer" && identityId === designer.id;
   const level: DesignerLevel = designer.level ?? "mid_v1";
   const timeRates = getDesignerV11TimeRates({ ...designer, level });
   const { displayName } = useDesignerContactPrivacy(designer);
@@ -84,18 +92,24 @@ export function DesignerPublicProfileView({
   const startOfMonth = new Date("2026-05-01");
 
   return (
-    <div className={embedded ? "py-2" : "container-page py-10"}>
+    <div className={embedded ? "py-2" : "container-page py-6 sm:py-10"}>
       {!embedded && returnTo ? (
         <div className="mb-6">
-          <AdminConsoleReturnBar returnTo={returnTo} />
+          <Link
+            href={returnTo}
+            className="inline-flex items-center gap-2 rounded-full border border-ink-20 bg-white px-4 py-2 text-sm text-ink-60 shadow-sm transition-colors hover:border-ink/30 hover:text-ink"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            {returnLabel}
+          </Link>
         </div>
       ) : null}
-      <div className="grid gap-8 lg:grid-cols-[1fr_360px]">
-        <div className="space-y-8">
-          <Card className="p-8">
+      <div className="grid min-w-0 gap-6 lg:grid-cols-[1fr_360px] lg:gap-8">
+        <div className="min-w-0 space-y-6 sm:space-y-8">
+          <Card className="p-4 sm:p-8">
             <div className="flex flex-wrap items-start gap-6">
               <div className="relative">
-                <Avatar className="h-24 w-24 ring-4 ring-white">
+                <Avatar className="h-20 w-20 ring-4 ring-white sm:h-24 sm:w-24">
                   <AvatarImage src={designer.avatar} alt={displayName} />
                   <AvatarFallback>{displayName.slice(0, 1)}</AvatarFallback>
                 </Avatar>
@@ -212,7 +226,7 @@ export function DesignerPublicProfileView({
               );
             })()}
             <p className="text-sm leading-relaxed text-ink-60">{designer.bio}</p>
-            {!embedded ? (
+            {!embedded && !isOwnProfile ? (
               <div className="mt-6 flex flex-wrap items-center gap-3">
                 <FavoriteButton designerId={designer.id} variant="labeled" />
               </div>
@@ -464,26 +478,43 @@ export function DesignerPublicProfileView({
               </div>
             </div>
             {!embedded ? (
-              <>
-                <div className="mt-2 text-[11px] text-ink-60">
-                  按月雇佣：首月预付须在开始服务日前 3 天支付，此后每月 25 号前支付下月服务费；遇周末或节假日提前至前一个工作日
-                </div>
-                <Button asChild variant="outline" size="lg" className="mt-5 w-full">
-                  <Link href={`/order/new?designer=${designer.id}`}>
-                    <Sparkles className="h-4 w-4" /> 预约线上服务
-                  </Link>
-                </Button>
-                <Button asChild variant="outline" size="lg" className="mt-2 w-full">
-                  <Link href={`/order/new?designer=${designer.id}&mode=onsite`}>
-                    <Calendar className="h-4 w-4" /> 预约线下上门
-                  </Link>
-                </Button>
-                <ScanOrderQrDialog
-                  designerId={designer.id}
-                  designerName={designer.name}
-                  triggerVariant="brand"
-                />
-              </>
+              isOwnProfile ? (
+                <>
+                  <Button asChild variant="outline" size="lg" className="mt-5 w-full">
+                    <Link href={buildScanOrderPath(designer.id)}>
+                      <Pencil className="h-4 w-4" /> 自己填单
+                    </Link>
+                  </Button>
+                  <ScanOrderQrDialog
+                    designerId={designer.id}
+                    designerName={displayName}
+                    triggerVariant="brand"
+                    triggerLabel="分享下单链接"
+                    showEnterOrder={false}
+                  />
+                </>
+              ) : (
+                <>
+                  <div className="mt-2 text-[11px] text-ink-60">
+                    按月雇佣：首月预付须在开始服务日前 3 天支付，此后每月 25 号前支付下月服务费；遇周末或节假日提前至前一个工作日
+                  </div>
+                  <Button asChild variant="outline" size="lg" className="mt-5 w-full">
+                    <Link href={`/order/new?designer=${designer.id}`}>
+                      <Sparkles className="h-4 w-4" /> 预约线上服务
+                    </Link>
+                  </Button>
+                  <Button asChild variant="outline" size="lg" className="mt-2 w-full">
+                    <Link href={`/order/new?designer=${designer.id}&mode=onsite`}>
+                      <Calendar className="h-4 w-4" /> 预约线下上门
+                    </Link>
+                  </Button>
+                  <ScanOrderQrDialog
+                    designerId={designer.id}
+                    designerName={displayName}
+                    triggerVariant="brand"
+                  />
+                </>
+              )
             ) : (
               <p className="mt-3 text-[11px] text-ink-40">
                 委托人可见的下单入口在预览中已隐藏，对外主页仍正常展示。

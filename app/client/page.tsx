@@ -18,6 +18,11 @@ import {
   bountyStatusLabel,
 } from "@/lib/bounty-manage";
 import { resolveDisplayOrderStatus } from "@/lib/order-lifecycle";
+import {
+  clientOrderDetailHref,
+  isDirectedOrderSource,
+  isPlatformOrderSource,
+} from "@/lib/unified-project-list";
 import { cn, formatBountyReward } from "@/lib/utils";
 import { useMemo } from "react";
 import {
@@ -59,7 +64,10 @@ export default function ClientDashboardPage() {
     () =>
       clientId
         ? orders.filter(
-            (o) => o.clientId === clientId && o.orderSource !== "bounty",
+            (o) =>
+              o.clientId === clientId &&
+              isPlatformOrderSource(o) &&
+              !isDirectedOrderSource(o),
           )
         : [],
     [orders, clientId],
@@ -226,7 +234,7 @@ export default function ClientDashboardPage() {
               <OrderRow
                 key={o.id}
                 order={o}
-                href={`/client/orders/${o.id}`}
+                href={clientOrderDetailHref(o)}
                 perspective="client"
               />
             ))}

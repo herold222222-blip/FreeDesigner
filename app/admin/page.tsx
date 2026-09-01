@@ -84,7 +84,7 @@ export default function AdminDashboardPage() {
     {
       label: "进行中悬赏",
       value: openBountyCount,
-      hint: openBountyCount > 0 ? "点击查看悬赏项目" : "暂无进行中悬赏",
+      hint: openBountyCount > 0 ? "点击查看所有进行中的项目" : "暂无进行中悬赏",
       icon: Gift,
       tone: "sky",
       href: "/bounties",

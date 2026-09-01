@@ -20,11 +20,13 @@ export function StagePaymentSplitsPanel({
   splits,
   getDesigner,
   getServiceProvider,
+  revealFullName = false,
 }: {
   stage: PaymentStage;
   splits: StageDesignerPaymentSplit[];
   getDesigner: (id: string) => Designer | undefined;
   getServiceProvider?: (id: string) => ServiceProvider | undefined;
+  revealFullName?: boolean;
 }) {
   if (!splits.length) return null;
 
@@ -117,6 +119,7 @@ export function StagePaymentSplitsPanel({
         stageRatio={stage.ratio}
         getDesigner={getDesigner}
         getServiceProvider={getServiceProvider}
+        revealFullName={revealFullName}
       />
 
       <div
@@ -142,11 +145,13 @@ export function PaymentSplitsList({
   stageRatio,
   getDesigner,
   getServiceProvider,
+  revealFullName = false,
 }: {
   splits: StageDesignerPaymentSplit[];
   stageRatio?: number;
   getDesigner: (id: string) => Designer | undefined;
   getServiceProvider?: (id: string) => ServiceProvider | undefined;
+  revealFullName?: boolean;
 }) {
   return (
     <div className="space-y-2">
@@ -157,6 +162,7 @@ export function PaymentSplitsList({
           stageRatio={stageRatio}
           getDesigner={getDesigner}
           getServiceProvider={getServiceProvider}
+          revealFullName={revealFullName}
         />
       ))}
     </div>
@@ -168,11 +174,13 @@ function SplitRow({
   stageRatio,
   getDesigner,
   getServiceProvider,
+  revealFullName = false,
 }: {
   split: StageDesignerPaymentSplit;
   stageRatio?: number;
   getDesigner: (id: string) => Designer | undefined;
   getServiceProvider?: (id: string) => ServiceProvider | undefined;
+  revealFullName?: boolean;
 }) {
   const designer = split.designerId ? getDesigner(split.designerId) : undefined;
   const provider =
@@ -204,11 +212,14 @@ function SplitRow({
       {designer ? (
         <Link href={`/designers/${designer.id}`} className="flex items-center gap-2">
           <Avatar className="h-8 w-8">
-            <AvatarImage src={designer.avatar} alt={designer.name} />
+            <AvatarImage
+              src={designer.avatar}
+              alt={revealFullName ? designer.name : designer.name.slice(0, 1)}
+            />
             <AvatarFallback>{designer.name.slice(0, 1)}</AvatarFallback>
           </Avatar>
           <span className="text-sm font-medium text-ink hover:text-brand">
-            <DesignerName designer={designer} />
+            <DesignerName designer={designer} revealFullName={revealFullName} />
           </span>
         </Link>
       ) : provider ? (

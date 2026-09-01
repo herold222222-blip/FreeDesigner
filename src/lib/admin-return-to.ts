@@ -27,3 +27,34 @@ export function withReturnTo(path: string, returnTo: string): string {
   const qs = params.toString();
   return qs ? `${pathname}?${qs}` : pathname;
 }
+
+/** 委托人从悬赏报名列表进入设计师主页时的返回路径 */
+export function parseClientBountyReturnTo(param: string | null): string | null {
+  if (!param || !param.startsWith("/") || param.startsWith("//")) return null;
+  const path = param.split("?")[0];
+  if (!/^\/client\/bounties\/[^/]+$/.test(path)) return null;
+  return path;
+}
+
+/** 从订单详情进入设计师主页时的返回路径 */
+export function parseOrderReturnTo(param: string | null): string | null {
+  if (!param || !param.startsWith("/") || param.startsWith("//")) return null;
+  const path = param.split("?")[0];
+  if (
+    /^\/client\/orders\/[^/]+$/.test(path) ||
+    /^\/designer\/orders\/[^/]+$/.test(path) ||
+    /^\/admin\/orders\/[^/]+$/.test(path)
+  ) {
+    return path;
+  }
+  return null;
+}
+
+/** 设计师从「悬赏订单」进入公开大厅时的返回路径 */
+export function parseDesignerBountiesReturnTo(
+  param: string | null,
+): string | null {
+  if (!param || !param.startsWith("/") || param.startsWith("//")) return null;
+  const path = param.split("?")[0];
+  return path === "/designer/bounties" ? path : null;
+}

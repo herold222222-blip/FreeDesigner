@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { ClientOrderDetailInner } from "../../orders/[id]/page";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,7 @@ import {
 import { BountyApplicantList } from "@/components/domain/bounty-applicant-list";
 import { BountyEditDialog } from "@/components/domain/bounty-edit-dialog";
 import { SpecialtyBadge } from "@/components/domain/status-badges";
-import { useBounty, useDesigners } from "@/lib/use-data";
+import { useBounty, useDesigners, useOrder } from "@/lib/use-data";
 import { useRoleStore } from "@/store/role-store";
 import { useSessionStore } from "@/store/session-store";
 import {
@@ -38,6 +39,7 @@ import {
 import {
   ArrowLeft,
   CalendarDays,
+  Clock,
   MapPin,
   Megaphone,
   Pause,
@@ -46,7 +48,17 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { formatBountyReward, formatDate, formatDateTime } from "@/lib/utils";
+import { bountyInvoiceLabel } from "@/lib/bounty-invoice";
+import { formatBountyReward, formatCurrency, formatDateTime } from "@/lib/utils";
+import {
+  formatBountyDeadline,
+  formatBountyValidUntilLabel,
+  isBountyValidityExpired,
+} from "@/lib/bounty-validity";
+import { isContractFullySigned } from "@/lib/order-lifecycle";
+import { OrderEntrustDescription } from "@/components/domain/order-entrust-description";
+import { OrderAttachmentsList } from "@/components/domain/order-attachments";
+import { BountyPaymentStagesList } from "@/components/domain/bounty-payment-stages-list";
 
 export default function ClientBountyDetailPage() {
   const router = useRouter();
@@ -56,7 +68,15 @@ export default function ClientBountyDetailPage() {
   const push = useSessionStore((s) => s.pushNotification);
   const { data: bounty, refresh } = useBounty(bountyId);
   const { data: designers } = useDesigners();
+  const { data: awardedOrder, loading: orderLoading, refresh: refreshOrder } =
+    useOrder(bounty?.orderId);
+  const showOrderProgress =
+    !!bounty?.orderId &&
+    (bounty.status === "awarded" ||
+      bounty.status === "completed" ||
+      !!bounty.awardedDesignerId);
   const [busy, setBusy] = useState(false);
+  const [justAwarded, setJustAwarded] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -118,6 +138,43 @@ export default function ClientBountyDetailPage() {
     }
   };
 
+  if (justAwarded || (showOrderProgress && bounty.orderId)) {
+    if (awardedOrder) {
+      return (
+        <Suspense
+          fallback={
+            <div className="py-20 text-center text-ink-60">加载订单...</div>
+          }
+        >
+          <ClientOrderDetailInner id={awardedOrder.id} />
+        </Suspense>
+      );
+    }
+    if (!orderLoading && bounty.orderId && !justAwarded) {
+      return (
+        <Card className="p-6 text-sm text-ink-60">
+          已生成履约订单，但暂时无法加载。
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-3"
+            onClick={() => {
+              refresh();
+              refreshOrder();
+            }}
+          >
+            重试
+          </Button>
+        </Card>
+      );
+    }
+    return (
+      <div className="py-20 text-center text-ink-60">
+        正在加载履约信息...
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <Link
@@ -136,21 +193,33 @@ export default function ClientBountyDetailPage() {
               <Badge variant={bountyStatusBadgeVariant(bounty.status)}>
                 {bountyStatusLabel(bounty.status)}
               </Badge>
+              {bounty.status === "open" &&
+              isBountyValidityExpired(bounty.validUntil) ? (
+                <Badge variant="amber">有效期已过</Badge>
+              ) : null}
               <span className="text-xs text-ink-40">{bounty.code}</span>
             </div>
             <h1 className="mt-3 text-2xl font-semibold tracking-tight text-ink">
               {bounty.title}
             </h1>
-            <p className="mt-3 text-sm leading-relaxed text-ink-60">
-              {bounty.description}
-            </p>
+            <OrderEntrustDescription
+              description={bounty.description}
+              primaryTrack={bounty.primaryTrack}
+              className="mt-4 space-y-4"
+              revealContactPhone
+            />
+            <OrderAttachmentsList attachments={bounty.attachments} />
             <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs text-ink-60">
               <span className="inline-flex items-center gap-1.5">
                 <MapPin className="h-3.5 w-3.5" /> {bounty.location.label}
               </span>
               <span className="inline-flex items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5" /> 有效期{" "}
+                {formatBountyValidUntilLabel(bounty.validUntil)}
+              </span>
+              <span className="inline-flex items-center gap-1.5">
                 <CalendarDays className="h-3.5 w-3.5" /> 成果提交{" "}
-                {formatDate(bounty.deadline)}
+                {formatBountyDeadline(bounty.deadline)}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Users className="h-3.5 w-3.5" />{" "}
@@ -158,8 +227,25 @@ export default function ClientBountyDetailPage() {
               </span>
               <span>发布于 {formatDateTime(bounty.publishedAt)}</span>
             </div>
-            <div className="mt-4 text-2xl font-bold text-brand">
-              {formatBountyReward(bounty.reward)}
+            <div className="mt-4">
+              <div className="text-2xl font-bold text-brand">
+                {awardedOrder
+                  ? formatCurrency(awardedOrder.totalAmount)
+                  : formatBountyReward(bounty.reward)}
+              </div>
+              {awardedOrder ? (
+                <div className="mt-1 text-xs text-ink-50">
+                  中标合同金额
+                  {awardedOrder.totalAmount !== bounty.reward
+                    ? ` · 悬赏标价 ${formatBountyReward(bounty.reward)}`
+                    : ""}
+                </div>
+              ) : (
+                <div className="mt-1 text-xs text-ink-50">
+                  发票 {bountyInvoiceLabel(bounty)}
+                </div>
+              )}
+              <BountyPaymentStagesList bounty={bounty} className="mt-4" />
             </div>
           </div>
 
@@ -233,7 +319,7 @@ export default function ClientBountyDetailPage() {
               报名设计师
             </h2>
             <p className="mt-1 text-sm text-ink-60">
-              {bountyApplicantCount(bounty)} 位设计师已申请，可挑选合作方并发起沟通
+              {bountyApplicantCount(bounty)} 位设计师已申请，可挑选合作方。双方签约后才能与中标设计师私信沟通。
             </p>
           </div>
           <Button asChild variant="outline" size="sm">
@@ -245,18 +331,26 @@ export default function ClientBountyDetailPage() {
         <BountyApplicantList
           bounty={bounty}
           designers={designers}
+          messageDesignerId={
+            bounty.awardedDesignerId &&
+            awardedOrder &&
+            isContractFullySigned(awardedOrder)
+              ? bounty.awardedDesignerId
+              : null
+          }
           onSelectDesigner={async (designerId) => {
             if (busy || bounty.status === "awarded") return;
             setBusy(true);
             try {
-              const order = await awardBountyRequest(bounty.id, designerId);
+              await awardBountyRequest(bounty.id, designerId);
+              setJustAwarded(true);
               push({
                 title: "已确认中标设计师",
-                description: "平台订单已生成，请双方签约。",
+                description: "请双方签约，履约将在本页继续。",
                 variant: "success",
               });
               refresh();
-              router.push(`/client/orders/${order.id}`);
+              refreshOrder();
             } catch (e) {
               push({
                 title: "操作失败",

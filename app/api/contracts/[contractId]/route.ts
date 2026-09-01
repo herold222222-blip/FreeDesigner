@@ -1,10 +1,12 @@
 import { NextRequest } from "next/server";
 import { handle, ok, fail } from "@/lib/server/api";
 import { requireSession } from "@/lib/server/auth";
+import { assignContractIdIfMissing } from "@/lib/order-lifecycle";
 import {
   findOrderByContractId,
   getClient,
   getDesigner,
+  saveOrder,
 } from "@/lib/server/repo";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +20,9 @@ export async function GET(
     await requireSession();
     const order = await findOrderByContractId(params.contractId);
     if (!order) return fail(404, "合同不存在或尚未生成");
+    if (assignContractIdIfMissing(order)) {
+      await saveOrder(order);
+    }
 
     const [client, designer] = await Promise.all([
       getClient(order.clientId),

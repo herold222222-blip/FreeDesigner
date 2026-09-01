@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useBounties } from "@/lib/use-data";
 import { BountyCard } from "@/components/domain/bounty-card";
 import {
@@ -12,13 +13,15 @@ import { filterBounties } from "@/lib/bounty-filters";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Megaphone, PlusCircle } from "lucide-react";
+import { ArrowLeft, Megaphone, PlusCircle } from "lucide-react";
+import { parseDesignerBountiesReturnTo } from "@/lib/admin-return-to";
 import { bountyApplicantCount } from "@/lib/bounty-privacy";
 import { canPublishEntrust } from "@/lib/publish-access";
 import { formatCurrency } from "@/lib/utils";
 import type { Bounty } from "@/lib/types";
 import { useRoleStore } from "@/store/role-store";
 import { GuestAccessGate } from "@/components/domain/guest-access-gate";
+import { splitBountiesForHall } from "@/lib/bounty-hall-privacy";
 
 function BountySection({
   title,
@@ -57,7 +60,9 @@ function BountySection({
 export default function BountiesPage() {
   return (
     <GuestAccessGate intent="browse">
-      <BountiesInner />
+      <Suspense>
+        <BountiesInner />
+      </Suspense>
     </GuestAccessGate>
   );
 }
@@ -66,41 +71,45 @@ function BountiesInner() {
   const [filters, setFilters] = useState(createDefaultBountyFilters);
   const { data: bounties } = useBounties();
   const role = useRoleStore((s) => s.role);
-  const identityId = useRoleStore((s) => s.identityId);
   const showPublish = canPublishEntrust(role);
-  const isClient = role === "client" && Boolean(identityId);
+  const searchParams = useSearchParams();
+  const designerReturnTo = parseDesignerBountiesReturnTo(
+    searchParams.get("returnTo"),
+  );
+  const backHref =
+    designerReturnTo ?? (role === "designer" ? "/designer/bounties" : null);
 
   const filtered = useMemo(
     () => filterBounties(bounties, filters),
     [bounties, filters],
   );
 
-  const { mine, others } = useMemo(() => {
-    if (!isClient) {
-      return { mine: [] as Bounty[], others: filtered };
-    }
-    const mineList: Bounty[] = [];
-    const otherList: Bounty[] = [];
-    for (const b of filtered) {
-      if (b.publisherId === identityId) mineList.push(b);
-      else otherList.push(b);
-    }
-    return { mine: mineList, others: otherList };
-  }, [filtered, identityId, isClient]);
+  const { open, awarded } = useMemo(
+    () => splitBountiesForHall(filtered),
+    [filtered],
+  );
 
   const totalReward = bounties
     .filter((b) => b.status === "open")
     .reduce((sum, b) => sum + b.reward, 0);
 
   return (
-    <div className="container-page py-10">
+    <div className="container-page py-6 sm:py-10">
+      {backHref ? (
+        <Link
+          href={backHref}
+          className="mb-4 inline-flex items-center gap-1 text-sm text-ink-60 hover:text-ink"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> 返回悬赏订单
+        </Link>
+      ) : null}
       <Card className="mb-8 overflow-hidden bg-ink p-8 text-white">
         <div className="flex flex-wrap items-end justify-between gap-6">
           <div>
             <Badge className="mb-3 bg-brand/20 text-white">
               <Megaphone className="h-3 w-3" /> 悬赏大厅
             </Badge>
-            <h1 className="text-3xl font-semibold tracking-tight">
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
               公开招标 · 设计师主动报名
             </h1>
             <p className="mt-2 max-w-2xl text-sm text-white/70">
@@ -145,30 +154,28 @@ function BountiesInner() {
         resultCount={filtered.length}
       />
 
-      {isClient ? (
-        <div className="space-y-10">
-          <BountySection
-            title="我的委托"
-            count={mine.length}
-            bounties={mine}
-            emptyHint="当前筛选下暂无您发布的悬赏。"
-          />
-          <BountySection
-            title="其他悬赏"
-            count={others.length}
-            bounties={others}
-            emptyHint="当前筛选下暂无其他悬赏。"
-          />
-        </div>
-      ) : filtered.length === 0 ? (
+      {filtered.length === 0 ? (
         <Card className="p-16 text-center text-ink-60">
           没有符合筛选条件的悬赏，请放宽专业、地区或状态条件。
         </Card>
       ) : (
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {filtered.map((b) => (
-            <BountyCard key={b.id} bounty={b} />
-          ))}
+        <div className="space-y-10">
+          {open.length > 0 ? (
+            <BountySection
+              title="正在报名"
+              count={open.length}
+              bounties={open}
+              emptyHint="当前筛选下暂无正在报名的悬赏。"
+            />
+          ) : null}
+          {awarded.length > 0 ? (
+            <BountySection
+              title="已选定设计师"
+              count={awarded.length}
+              bounties={awarded}
+              emptyHint="当前筛选下暂无已选定设计师的悬赏。"
+            />
+          ) : null}
         </div>
       )}
     </div>

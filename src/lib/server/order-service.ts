@@ -13,7 +13,13 @@ import type {
   WalletTransaction,
   BountyAttachment,
 } from "@/lib/types";
-import { designerHasL3 } from "@/lib/bounty-tracks";
+import { designerHasL3, normalizeBountyTrack } from "@/lib/bounty-tracks";
+import { resolveBountyPaymentStages } from "@/lib/bounty-payment-stages";
+import {
+  bountyDesignerDeductionRate,
+  bountyTaxCoefficient,
+  resolveBountyInvoiceType,
+} from "@/lib/bounty-invoice";
 import {
   extractOrderAssignTracks,
   formatAssignTrackLabel,
@@ -21,7 +27,13 @@ import {
   resolveL2ForL3,
 } from "@/lib/order-assign-tracks";
 import { resolveTrackLabels } from "@/lib/constants";
+import { resolveOrderPlatformFeeRate, platformFeeAmountFromOrder } from "@/lib/directed-platform-fee";
+import {
+  resolveDeliverableConfirmDeadlineAt,
+  resolveStageEscrowEndsAt,
+} from "@/lib/platform-commerce";
 import { formatCurrency } from "@/lib/utils";
+import { maskDesignerPublicName } from "@/lib/designer-contact-privacy";
 import {
   buildMatchPools,
   buildTrackMatchPools,
@@ -32,18 +44,52 @@ import {
   trackPoolTitle,
 } from "@/lib/client-quote-match";
 import {
+  allowsPostPaymentDeliverables,
   buildDefaultPaymentStages,
   buildStagesFromRatios,
-  isPrepaymentStage,
+  isLastDeliverablesConfirmed,
+  stageRequiresDeliverables,
 } from "@/lib/order-payment-stages";
+import { getStageParticipantGroups } from "@/lib/stage-track-groups";
+import { isAllowedDeliverableFile } from "@/lib/deliverable-files";
+import {
+  canClientConfirmPhase,
+  clientConfirmLabel,
+  resolveDeliverablePhase,
+  uploadKindForPhase,
+} from "@/lib/deliverable-phase";
 import {
   CLIENT_REVIEW_DAYS,
   allOrderStagesPaid,
+  formatClientReviewWindow,
+  isClientReviewClosed,
+  needsClientReview,
   resolveReviewDeadlineAt,
 } from "@/lib/client-review";
+import { assignContractIdIfMissing } from "@/lib/order-lifecycle";
+import {
+  SELF_ORDER_PENDING_CLIENT_ID,
+  isSelfOrderPendingClaim,
+} from "@/lib/self-order-share";
+import {
+  describeScanQuoteDiff,
+  isScanAwaitingClientQuoteConfirm,
+  isScanAwaitingDesignerQuote,
+  normalizeScanQuoteTerms,
+  scanQuoteTermsEqual,
+  scanQuoteTermsFromOrder,
+} from "@/lib/scan-order";
 import { needsCsQuoteConfirm } from "@/lib/order-supervision";
 import { describeEntrustUpdates } from "@/lib/entrust-update-diff";
-import { CLIENT_QUOTE_LEVELS, buildRegularTimeQuotesByLevel, extractTimeQuoteLineInputsFromOrder, rebuildTimeQuoteFromAssignments, type RegularTimeQuoteLineInput } from "@/lib/regular-entrust-quote";
+import { CLIENT_QUOTE_LEVELS, buildRegularAreaQuotesByLevel, buildRegularTimeQuotesByLevel, extractAreaQuoteInputFromOrder, extractTimeQuoteLineInputsFromOrder, rebuildTimeQuoteFromAssignments, type RegularAreaQuoteTrackInput, type RegularTimeQuoteLineInput } from "@/lib/regular-entrust-quote";
+import {
+  STRUCTURE_L3,
+  STRUCTURE_L3_LABEL,
+  applyStructureLineToQuotes,
+  getStructureSheetsFromOrder,
+  parsePositiveIntSheets,
+  structureFeeFromSheets,
+} from "@/lib/structure-sheets";
 import { DEFAULT_CLIENT_LEVEL } from "@/lib/level-management";
 import {
   createOrder,
@@ -65,6 +111,10 @@ import {
   createDesignerReview,
   getBounty,
   saveBounty,
+  getPlatformPricing,
+  findOrderByDeliverablesConfirmShareId,
+  findOrderByReviewShareId,
+  findOrderBySelfOrderShareId,
 } from "./repo";
 import { buildOrder, type CreateOrderInput } from "./order-builder";
 import {
@@ -74,6 +124,7 @@ import {
 } from "@/lib/designer-portfolio-readiness";
 import {
   notifyAdminsMatchingOrder,
+  notifyAdminsClientSelectedDesigner,
   notifyAdminsPendingCsQuote,
   notifyClientCsQuoteConfirmed,
   notifyClientDesignerAccepted,
@@ -87,8 +138,9 @@ import {
   notifyDesignerAssignmentOffer,
   notifyDesignerReviewSubmitted,
   notifyDesignerScanOrderSubmitted,
-  notifyClientScanQuoteProposed,
   notifyDesignerScanQuoteConfirmed,
+  notifyClientScanQuoteConfirmed,
+  notifyDirectedScanQuoteChanged,
   notifyFinalSettlementConfirmed,
   notifyOrderCancelledByAdmin,
   notifyRevisionRequested,
@@ -106,18 +158,21 @@ export const ADMIN_CANCELLABLE_ORDER_STATUSES: OrderStatus[] = [
   "matching",
 ];
 
-function rebuildDefaultStages(order: Order) {
+async function rebuildDefaultStages(order: Order) {
+  const pricing = await getPlatformPricing();
   order.stages = buildDefaultPaymentStages({
     orderId: order.id,
     totalAmount: order.totalAmount,
     billingMode: order.billingMode,
     selectedMonths: order.selectedMonths,
+    expectedDeliveryAt: order.expectedDeliveryAt,
+    onsiteSchedule: order.onsiteSchedule,
+    quote: order.quote,
+    levelQuotes: order.levelQuotes,
+    commerce: pricing.commerce,
   });
 }
 import { AuthError } from "./auth";
-
-const ACCEPTANCE_DAYS = 10;
-const SETTLEMENT_DAYS = 30;
 
 function nowIso() {
   return new Date().toISOString();
@@ -179,9 +234,7 @@ async function assertNotSameAccountCounterparty(
 }
 
 function markContractReady(order: Order): boolean {
-  if (!order.contractId) {
-    order.contractId = `CT-${Date.now().toString(36).toUpperCase()}`;
-  }
+  assignContractIdIfMissing(order);
   const newlyFullySigned =
     isContractFullySigned(order) && !order.contractSignedAt;
   if (newlyFullySigned) {
@@ -221,10 +274,11 @@ function randomReviewMessage(at: string, content: string) {
   };
 }
 
-/** 最后一笔费用支付后开启 30 天评价窗口。返回是否新开窗（需通知委托人）。 */
+/** 费用付清且最终成果已确认后开启 30 天评价窗口。返回是否新开窗（需通知委托人）。 */
 function openClientReviewWindow(order: Order, at: string): boolean {
   if (order.status === "cancelled" || order.clientReviewed) return false;
   if (!allOrderStagesPaid(order)) return false;
+  if (!isLastDeliverablesConfirmed(order)) return false;
   const deadline =
     resolveReviewDeadlineAt(order) ?? addDays(at, CLIENT_REVIEW_DAYS);
   const firstOpen = !order.reviewDeadlineAt;
@@ -238,7 +292,7 @@ function openClientReviewWindow(order: Order, at: string): boolean {
   order.messages.push(
     randomReviewMessage(
       at,
-      `最后一笔费用已支付。欢迎对设计师进行评分和评论，评价将于 ${CLIENT_REVIEW_DAYS} 天后关闭。`,
+      `最终成果已确认。欢迎对设计师进行评分和评论，评价将于 ${CLIENT_REVIEW_DAYS} 天后关闭。`,
     ),
   );
   return true;
@@ -275,7 +329,11 @@ export async function placeOrder(input: CreateOrderInput): Promise<Order> {
     }
   }
 
-  const order = buildOrder(input);
+  const pricing = await getPlatformPricing();
+  const order = buildOrder({ ...input, commerce: input.commerce ?? pricing.commerce });
+  if (order.orderSource === "scan") {
+    order.scanQuoteLastActor = "client";
+  }
   await createOrder(order);
 
   if (order.status === "pending_schedule" && order.designerId) {
@@ -313,6 +371,152 @@ export async function placeOrder(input: CreateOrderInput): Promise<Order> {
   return order;
 }
 
+/** 设计师自己下单：先填项目与费用，再把确认链接发给委托人 */
+export async function placeDesignerSelfOrder(
+  designerId: string,
+  input: Omit<CreateOrderInput, "clientId" | "designerId">,
+): Promise<{ order: Order; share: { code: string; shareId: string } }> {
+  const designer = await getDesigner(designerId);
+  if (!designer) throw new AuthError(404, "设计师不存在");
+  if (!designerCanAcceptOrders(designer)) {
+    throw new AuthError(403, "请先上传作品案例后再发起自己下单");
+  }
+  if (
+    input.projectType?.trim() &&
+    !designerCoversProjectType(designer, input.projectType)
+  ) {
+    throw new AuthError(403, projectTypeMismatchMessage(input.projectType.trim()));
+  }
+  const total = Math.round(Number(input.totalAmount) || 0);
+  if (!Number.isFinite(total) || total <= 0) {
+    throw new AuthError(400, "请填写有效的订单金额");
+  }
+  const stages = (input.customStageRatios ?? []).filter(
+    (s) => s.name.trim() && s.ratio > 0,
+  );
+  if (stages.length < 1) {
+    throw new AuthError(400, "请至少设置一个付款阶段");
+  }
+  const ratioSum = stages.reduce(
+    (sum, s) => sum + (s.ratio > 1 ? s.ratio / 100 : s.ratio),
+    0,
+  );
+  if (Math.abs(ratioSum - 1) > 0.02) {
+    throw new AuthError(400, "付款阶段比例合计须为 100%");
+  }
+
+  const pricing = await getPlatformPricing();
+  const order = buildOrder({
+    ...input,
+    designerId,
+    clientId: SELF_ORDER_PENDING_CLIENT_ID,
+    totalAmount: total,
+    customStageRatios: stages,
+    commerce: input.commerce ?? pricing.commerce,
+  });
+  const at = nowIso();
+  order.selfOrderPendingClaim = true;
+  order.selfOrderShareCode = fourDigitCode();
+  order.selfOrderShareId = randomId("slf");
+  if (order.orderSource === "scan") {
+    order.scanQuoteProposedAt = at;
+    order.scanQuoteLastActor = "designer";
+  }
+  order.messages[0] = {
+    id: randomId("msg"),
+    authorId: "system",
+    authorRole: "system",
+    content: "设计师已填写订单，等待委托人通过分享链接确认后双方签约。",
+    createdAt: at,
+  };
+  await createOrder(order);
+  return {
+    order,
+    share: {
+      code: order.selfOrderShareCode,
+      shareId: order.selfOrderShareId,
+    },
+  };
+}
+
+export async function getSelfOrderShareView(shareId: string) {
+  const order = await findOrderBySelfOrderShareId(shareId);
+  if (!order || !order.selfOrderShareId) {
+    throw new AuthError(404, "确认链接不存在或已失效");
+  }
+  const designer = order.designerId
+    ? await getDesigner(order.designerId)
+    : undefined;
+  const pending = isSelfOrderPendingClaim(order);
+  return {
+    shareId: order.selfOrderShareId,
+    confirmed: !pending && order.status !== "pending_schedule",
+    canConfirm: pending && order.status === "pending_schedule",
+    order: {
+      id: order.id,
+      code: order.code,
+      title: order.title,
+      projectType: order.projectType,
+      billingMode: order.billingMode,
+      serviceMode: order.serviceMode,
+      expectedDeliveryAt: order.expectedDeliveryAt,
+      specialty: order.specialty,
+      description: order.description,
+      totalAmount: order.totalAmount,
+      projectAreaSqm: order.projectAreaSqm,
+    },
+    designer: {
+      id: designer?.id ?? order.designerId ?? "",
+      name: designer ? maskDesignerPublicName(designer.name) : "设计师",
+      avatar: designer?.avatar ?? null,
+    },
+    stages: order.stages.map((s) => ({
+      name: s.name,
+      ratio: s.ratio,
+      amount: s.amount,
+      note: s.note,
+    })),
+  };
+}
+
+/** 委托人通过分享链接确认设计师自己下单 → 绑定委托人并进入签约 */
+export async function confirmSelfOrderByShare(
+  shareId: string,
+  code: string,
+  clientId: string,
+) {
+  const order = await findOrderBySelfOrderShareId(shareId);
+  if (!order) throw new AuthError(404, "确认链接不存在或已失效");
+  if (!order.selfOrderShareCode || !codesEqual(code, order.selfOrderShareCode)) {
+    throw new AuthError(403, "验证码不正确");
+  }
+  if (!isSelfOrderPendingClaim(order) || order.status !== "pending_schedule") {
+    throw new AuthError(409, "该订单已确认或已进入后续流程");
+  }
+  await assertNotSameAccountCounterparty(clientId, order.designerId);
+  const client = await getClient(clientId);
+  if (!client) throw new AuthError(404, "委托人不存在");
+
+  const at = nowIso();
+  order.clientId = clientId;
+  order.selfOrderPendingClaim = false;
+  order.status = "pending_contract";
+  assignContractIdIfMissing(order);
+  if (order.orderSource === "scan" && !order.scanQuoteProposedAt) {
+    order.scanQuoteProposedAt = at;
+  }
+  order.messages.push({
+    id: randomId("msg"),
+    authorId: clientId,
+    authorRole: "client",
+    content: "委托人已确认订单、费用与付款阶段，请双方签署电子合同。",
+    createdAt: at,
+  });
+  await saveOrder(order);
+  await notifyDesignerScanQuoteConfirmed(order);
+  return getSelfOrderShareView(shareId);
+}
+
 export type MatchingOrderUpdateInput = {
   title?: string;
   description?: string;
@@ -326,6 +530,17 @@ export type MatchingOrderUpdateInput = {
   taxCoefficient?: number;
   attachments?: BountyAttachment[];
   timeQuoteLines?: RegularTimeQuoteLineInput[];
+  areaQuote?: {
+    area: number;
+    projectType: string;
+    buildType: "new" | "renovation";
+    tracks: RegularAreaQuoteTrackInput[];
+    taxCoefficient?: number;
+    structure?: {
+      mode: "pending" | "estimate";
+      sheets?: number;
+    };
+  };
 };
 
 /** 委托人确认系统报价 → matching，并推送管理员分配设计师 */
@@ -349,7 +564,7 @@ export async function confirmOrderQuote(
     confirmedAt: nowIso(),
   };
   order.totalAmount = order.quote.total;
-  rebuildDefaultStages(order);
+  await rebuildDefaultStages(order);
   order.status = "matching";
   order.messages.push({
     id: randomId("msg"),
@@ -465,7 +680,7 @@ export async function matchDesignersFromQuoteCards(
     confirmedAt: nowIso(),
   };
   order.totalAmount = primaryQuote.total;
-  rebuildDefaultStages(order);
+  await rebuildDefaultStages(order);
   order.status = "matching";
   order.clientMatch = {
     selectedLevels: uniqueLevels,
@@ -586,7 +801,7 @@ export async function confirmClientMatchedDesigner(
       confirmedAt: nowIso(),
     };
     order.totalAmount = levelQuote.total;
-    rebuildDefaultStages(order);
+    await rebuildDefaultStages(order);
   }
 
   await applyDesignerOffer(order, designer.id, pool.level);
@@ -612,6 +827,7 @@ export async function confirmClientMatchedDesigner(
   await notifyDesignerAssignmentOffer(order, designer.id, {
     designerName: designer.name,
   });
+  await notifyAdminsClientSelectedDesigner(order, [designer.name]);
   return order;
 }
 
@@ -722,7 +938,7 @@ async function confirmTrackPoolSelections(
       confirmedAt: nowIso(),
     };
     order.totalAmount = locked.total;
-    rebuildDefaultStages(order);
+    await rebuildDefaultStages(order);
   }
 
   const nameList = designers.map((d) => d.name).join("、");
@@ -777,6 +993,10 @@ async function confirmTrackPoolSelections(
       trackLabels: trackLabels || undefined,
     });
   }
+  await notifyAdminsClientSelectedDesigner(
+    order,
+    designers.map((d) => d.name),
+  );
   return order;
 }
 
@@ -921,7 +1141,7 @@ async function rematchAfterDesignerReject(
           confirmedAt: nowIso(),
         };
         order.totalAmount = levelQuote.total;
-        rebuildDefaultStages(order);
+        await rebuildDefaultStages(order);
       }
       await applyDesignerOffer(order, next.id, level);
       const pools = buildMatchPools({
@@ -1369,8 +1589,10 @@ export async function updateMatchingOrder(
     const baseQuote =
       order.levelQuotes?.find((q) => q.lines?.length) ?? order.quote;
     const unit =
-      baseQuote?.lines[0]?.unit ??
-      (order.billingMode === "monthly" ? "month" : "day");
+      baseQuote?.lines.find((l) => l.unit === "month" || l.unit === "day")
+        ?.unit === "month"
+        ? "month"
+        : "day";
     const taxCoefficient =
       patch.taxCoefficient && patch.taxCoefficient > 0
         ? patch.taxCoefficient
@@ -1394,13 +1616,74 @@ export async function updateMatchingOrder(
         levelQuotes[0]!;
       order.quote = { ...mid, status: "pending" };
       order.totalAmount = mid.total;
-      rebuildDefaultStages(order);
+      await rebuildDefaultStages(order);
       regeneratedQuotes = true;
     } catch (e) {
       throw new AuthError(
         400,
         e instanceof Error ? e.message : "无法按最新信息重新生成报价",
       );
+    }
+  } else if (order.billingMode === "area") {
+    const extracted = extractAreaQuoteInputFromOrder(order);
+    const areaInput = patch.areaQuote
+      ? {
+          area: patch.areaQuote.area,
+          projectType: patch.areaQuote.projectType || order.projectType,
+          buildType: patch.areaQuote.buildType,
+          tracks: patch.areaQuote.tracks,
+          structure: patch.areaQuote.structure ?? extracted?.structure,
+          taxCoefficient: patch.areaQuote.taxCoefficient,
+          designerRegion: extracted?.designerRegion,
+          clientLevel: extracted?.clientLevel,
+        }
+      : extracted
+        ? {
+            ...extracted,
+            area: patch.projectAreaSqm ?? extracted.area,
+            projectType: order.projectType || extracted.projectType,
+            taxCoefficient:
+              patch.taxCoefficient && patch.taxCoefficient > 0
+                ? patch.taxCoefficient
+                : extracted.taxCoefficient,
+          }
+        : null;
+    if (
+      areaInput &&
+      (areaInput.tracks.length > 0 || areaInput.structure) &&
+      (areaInput.tracks.length === 0 || areaInput.area > 0)
+    ) {
+      try {
+        const client = await getClient(order.clientId);
+        const levelQuotes = buildRegularAreaQuotesByLevel({
+          ...areaInput,
+          withAudit: Boolean(order.withAuditService),
+          withPM: Boolean(order.withProjectManagement),
+          clientLevel: client?.level ?? DEFAULT_CLIENT_LEVEL,
+        });
+        order.levelQuotes = levelQuotes;
+        const mid =
+          levelQuotes.find((q) => q.assumptions.designerLevel === "mid_v1") ??
+          levelQuotes[0]!;
+        order.quote = { ...mid, status: "pending" };
+        order.totalAmount = mid.total;
+        await rebuildDefaultStages(order);
+        regeneratedQuotes = true;
+      } catch (e) {
+        throw new AuthError(
+          400,
+          e instanceof Error ? e.message : "无法按最新信息重新生成报价",
+        );
+      }
+    } else if (patch.totalAmount !== undefined) {
+      if (!(patch.totalAmount > 0)) {
+        throw new AuthError(400, "订单预算须大于 0");
+      }
+      const next = Math.round(patch.totalAmount);
+      if (next !== order.totalAmount) {
+        order.totalAmount = next;
+        await rebuildDefaultStages(order);
+      }
     }
   } else if (patch.totalAmount !== undefined) {
     if (!(patch.totalAmount > 0)) {
@@ -1409,8 +1692,15 @@ export async function updateMatchingOrder(
     const next = Math.round(patch.totalAmount);
     if (next !== order.totalAmount) {
       order.totalAmount = next;
-      rebuildDefaultStages(order);
+      await rebuildDefaultStages(order);
     }
+  }
+
+  if (
+    order.billingMode === "monthly" &&
+    order.stages.every((s) => !s.status || s.status === "pending")
+  ) {
+    await rebuildDefaultStages(order);
   }
 
   // 修改后需重新选卡 / 匹配，并重新走客服确认
@@ -1458,7 +1748,253 @@ export async function updateMatchingOrder(
   return order;
 }
 
-/** 管理员取消尚未履约的订单 → cancelled，并通知委托人 */
+function canRebuildStructureIntoQuotes(order: Order) {
+  if (isContractFullySigned(order)) return false;
+  if (order.stages.some((s) => s.status && s.status !== "pending")) return false;
+  return (
+    order.status === "pending_quote" ||
+    order.status === "matching" ||
+    order.status === "pending_designer_accept" ||
+    order.status === "pending_contract"
+  );
+}
+
+function addStructureFeeToUnpaidStage(order: Order, delta: number) {
+  if (!(delta > 0)) return;
+  const amount = Math.round(delta);
+  const unpaid = [...order.stages]
+    .reverse()
+    .find((s) => !s.status || s.status === "pending");
+  if (unpaid) {
+    unpaid.amount = Math.round((unpaid.amount ?? 0) + amount);
+  } else {
+    order.stages.push({
+      id: randomId("stg"),
+      name: "结构增补",
+      amount,
+      ratio: 0,
+      status: "pending",
+    });
+  }
+  const total =
+    order.totalAmount > 0
+      ? order.totalAmount
+      : order.stages.reduce((sum, s) => sum + (s.amount ?? 0), 0);
+  for (const stage of order.stages) {
+    stage.ratio = total > 0 ? (stage.amount ?? 0) / total : 0;
+  }
+}
+
+/** 管理员 / 超级管理员在任意环节设定或增加景观结构张数（450 元/张） */
+export async function updateOrderStructureSheets(
+  orderId: string,
+  input: { sheets?: number; addSheets?: number },
+): Promise<Order> {
+  const order = await getOrder(orderId);
+  if (!order) throw new AuthError(404, "订单不存在");
+  assertOrderNotCancelled(order);
+
+  const current = getStructureSheetsFromOrder(order);
+  const addSheets = parsePositiveIntSheets(input.addSheets);
+  const setSheets = parsePositiveIntSheets(input.sheets);
+  let next: number;
+  if (addSheets != null) {
+    next = current + addSheets;
+  } else if (setSheets != null) {
+    if (setSheets < current && current > 0 && !canRebuildStructureIntoQuotes(order)) {
+      throw new AuthError(409, "履约中仅可增加结构设计张数");
+    }
+    next = setSheets;
+  } else {
+    throw new AuthError(400, "请填写大于零的整数张数");
+  }
+  if (next === current) return order;
+
+  const beforeSheets = current;
+  const rebuilt = canRebuildStructureIntoQuotes(order);
+  const isTimeBilling =
+    order.billingMode === "daily" || order.billingMode === "monthly";
+
+  if (rebuilt && order.billingMode === "area") {
+    const extracted = extractAreaQuoteInputFromOrder(order);
+    if (extracted) {
+      const client = await getClient(order.clientId);
+      const levelQuotes = buildRegularAreaQuotesByLevel({
+        ...extracted,
+        structure: { mode: "estimate", sheets: next },
+        withAudit: Boolean(order.withAuditService),
+        withPM: Boolean(order.withProjectManagement),
+        clientLevel: client?.level ?? DEFAULT_CLIENT_LEVEL,
+      });
+      order.levelQuotes = levelQuotes;
+      const mid =
+        levelQuotes.find((q) => q.assumptions.designerLevel === "mid_v1") ??
+        levelQuotes[0]!;
+      order.quote = {
+        ...mid,
+        status: order.quote?.status ?? "pending",
+        confirmedAt: order.quote?.confirmedAt,
+      };
+      order.totalAmount = mid.total;
+      await rebuildDefaultStages(order);
+    } else {
+      applyStructureSheetsInPlace(order, next, { retax: true });
+      await rebuildDefaultStages(order);
+    }
+  } else if (rebuilt && isTimeBilling) {
+    const lineInputs = extractTimeQuoteLineInputsFromOrder(order);
+    const without = lineInputs.filter((l) => l.l3 !== STRUCTURE_L3);
+    without.push({
+      l3: STRUCTURE_L3,
+      l3Label: STRUCTURE_L3_LABEL,
+      quantity: next,
+      quantityPending: false,
+    });
+    if (without.length > 0) {
+      const baseQuote =
+        order.levelQuotes?.find((q) => q.lines?.length) ?? order.quote;
+      const unit =
+        baseQuote?.lines.find((l) => l.unit === "month" || l.unit === "day")
+          ?.unit === "month"
+          ? "month"
+          : "day";
+      const client = await getClient(order.clientId);
+      const levelQuotes = buildRegularTimeQuotesByLevel({
+        unit,
+        serviceMode: order.serviceMode === "onsite" ? "onsite" : "remote",
+        withDrawing: Boolean(baseQuote?.assumptions.withDrawing),
+        withAudit: Boolean(order.withAuditService),
+        withPM: Boolean(order.withProjectManagement),
+        lines: without,
+        designerRegion: baseQuote?.assumptions.designerRegion,
+        clientLevel: client?.level ?? DEFAULT_CLIENT_LEVEL,
+        taxCoefficient: baseQuote?.taxCoefficient,
+      });
+      order.levelQuotes = levelQuotes;
+      const mid =
+        levelQuotes.find((q) => q.assumptions.designerLevel === "mid_v1") ??
+        levelQuotes[0]!;
+      order.quote = {
+        ...mid,
+        status: order.quote?.status ?? "pending",
+        confirmedAt: order.quote?.confirmedAt,
+      };
+      order.totalAmount = mid.total;
+      await rebuildDefaultStages(order);
+    } else {
+      applyStructureSheetsInPlace(order, next, { retax: true });
+      await rebuildDefaultStages(order);
+    }
+  } else {
+    const delta = structureFeeFromSheets(next) - structureFeeFromSheets(current);
+    applyStructureSheetsInPlace(order, next, { retax: false });
+    order.totalAmount = Math.max(0, Math.round((order.totalAmount ?? 0) + delta));
+    addStructureFeeToUnpaidStage(order, delta);
+  }
+
+  if (
+    rebuilt &&
+    (order.status === "pending_quote" || order.status === "matching")
+  ) {
+    order.csQuoteConfirmedAt = undefined;
+    order.csQuoteConfirmedBy = undefined;
+    if (order.status === "matching") {
+      order.status = "pending_quote";
+    }
+    if (order.quote) {
+      order.quote = {
+        ...order.quote,
+        status: "pending",
+        confirmedAt: undefined,
+      };
+    }
+  }
+
+  order.messages.push({
+    id: randomId("msg"),
+    authorId: "system",
+    authorRole: "system",
+    content:
+      beforeSheets > 0
+        ? `管理员已将景观结构专业调整为 ${next} 张（原 ${beforeSheets} 张），结构费用按 450 元/张计入订单。`
+        : `管理员已确认景观结构专业 ${next} 张，结构费用按 450 元/张计入订单。`,
+    createdAt: nowIso(),
+  });
+  await saveOrder(order);
+  try {
+    await notifyClientEntrustUpdatedByAdmin(order, [
+      beforeSheets > 0
+        ? `· 景观结构专业：${beforeSheets} 张 → ${next} 张`
+        : `· 景观结构专业：已确认为 ${next} 张`,
+    ]);
+  } catch (err) {
+    console.error("[order] 通知委托人结构张数已更新失败", order.id, err);
+  }
+  if (
+    rebuilt &&
+    order.status === "pending_quote" &&
+    (order.levelQuotes?.length || order.quote)
+  ) {
+    await notifyAdminsPendingCsQuote(order);
+  }
+  return order;
+}
+
+function applyStructureSheetsInPlace(
+  order: Order,
+  sheets: number,
+  options?: { retax?: boolean },
+) {
+  if (order.quote || order.levelQuotes?.length) {
+    const next = applyStructureLineToQuotes(
+      { quote: order.quote, levelQuotes: order.levelQuotes },
+      { sheets, pending: false },
+      options,
+    );
+    order.quote = next.quote;
+    order.levelQuotes = next.levelQuotes;
+    if (options?.retax && order.quote) {
+      order.totalAmount = order.quote.total;
+    }
+    return;
+  }
+  const fee = structureFeeFromSheets(sheets);
+  order.quote = {
+    status: "confirmed",
+    generatedAt: nowIso(),
+    basicFee: fee,
+    platformFee: 0,
+    auditFee: 0,
+    projectManagementFee: 0,
+    subtotal: fee,
+    taxCoefficient: 1,
+    total: fee,
+    lines: [
+      {
+        track: "structure",
+        trackLabel: "结构",
+        l3: STRUCTURE_L3,
+        l3Label: STRUCTURE_L3_LABEL,
+        quantity: sheets,
+        unit: "sheet",
+        difficulty: 1,
+        difficultyLabel: "按张计价",
+        basicFee: fee,
+        platformFee: 0,
+        subtotal: fee,
+      },
+    ],
+    assumptions: {
+      designerLevel: "mid_v1",
+      designerRegion: "tier3",
+      clientLevel: DEFAULT_CLIENT_LEVEL,
+      serviceMode: order.serviceMode === "onsite" ? "onsite" : "remote",
+      withDrawing: false,
+      note: "景观结构专业按 450 元/张计入。",
+    },
+  };
+  if (options?.retax) order.totalAmount = fee;
+}
 export async function cancelOrderByAdmin(
   orderId: string,
   reason?: string,
@@ -1598,7 +2134,7 @@ export async function assignDesignerToOrder(
 
   if (payload.totalAmount != null && payload.totalAmount > 0) {
     order.totalAmount = payload.totalAmount;
-    rebuildDefaultStages(order);
+    await rebuildDefaultStages(order);
   }
 
   const stageId = order.stages[0]?.id ?? `${order.id}_s1`;
@@ -1719,6 +2255,7 @@ export async function acceptDesignerAssignment(
   }
 
   order.status = "pending_contract";
+  assignContractIdIfMissing(order);
   if (order.clientMatch) {
     order.clientMatch = {
       ...order.clientMatch,
@@ -1807,6 +2344,7 @@ export async function awardBountyToDesigner(
     );
   }
 
+  const bountyStages = resolveBountyPaymentStages(bounty);
   const order = buildOrder({
     designerId,
     clientId,
@@ -1818,9 +2356,22 @@ export async function awardBountyToDesigner(
     orderSource: "bounty",
     totalAmount: applicant.quotedAmount ?? bounty.reward,
     description: bounty.description,
+    customStageRatios: bountyStages.map((stage) => ({
+      name: stage.name,
+      ratio: stage.ratio,
+      note: stage.note,
+    })),
+    taxCoefficient: bountyTaxCoefficient(resolveBountyInvoiceType(bounty)),
   });
+  const invoiceType = resolveBountyInvoiceType(bounty);
+  order.taxCoefficient = bountyTaxCoefficient(invoiceType);
+  order.feeRate = bountyDesignerDeductionRate(invoiceType);
   order.status = "pending_contract";
+  assignContractIdIfMissing(order);
   order.bountyId = bountyId;
+  if (bounty.primaryTrack) {
+    order.primaryTrack = normalizeBountyTrack(bounty.primaryTrack);
+  }
   order.messages.push({
     id: randomId("msg"),
     authorId: "system",
@@ -1834,6 +2385,11 @@ export async function awardBountyToDesigner(
   bounty.awardedDesignerId = designerId;
   bounty.orderId = order.id;
   await saveBounty(bounty);
+
+  await notifyAdminsClientSelectedDesigner(order, [designer.name], {
+    source: "bounty",
+    bountyCode: bounty.code,
+  });
 
   return order;
 }
@@ -1871,6 +2427,7 @@ export async function confirmSchedule(
   }
 
   order.status = "pending_contract";
+  assignContractIdIfMissing(order);
   const at = nowIso();
   if (order.scheduleRequestId) {
     const sch = await getScheduleRequest(order.scheduleRequestId);
@@ -1891,28 +2448,27 @@ export async function confirmSchedule(
   return order;
 }
 
-/** 扫码下单：设计师提交费用与付款阶段，发给委托人确认 */
-export async function proposeScanQuote(
-  orderId: string,
-  designerId: string,
-  input: {
-    totalAmount: number;
-    stages: { name: string; ratio: number; note?: string }[];
-  },
-): Promise<Order> {
-  const order = await getOrder(orderId);
-  if (!order) throw new AuthError(404, "订单不存在");
-  if (order.orderSource !== "scan") {
-    throw new AuthError(409, "仅扫码订单可提交费用方案");
-  }
-  if (order.designerId !== designerId) throw new AuthError(403, "无权操作该订单");
-  if (order.status !== "pending_schedule") {
-    throw new AuthError(409, "订单当前状态不可提交费用方案");
-  }
-  if (order.scanQuoteProposedAt) {
-    throw new AuthError(409, "费用方案已提交，等待委托人确认");
-  }
+type DirectedScanQuoteInput = {
+  totalAmount: number;
+  stages: { name: string; ratio: number; note?: string }[];
+};
 
+async function assertInternCanTakeScanOrder(designerId: string, orderId: string) {
+  const designer = await getDesigner(designerId);
+  if ((designer?.level ?? "intern") !== "intern") return;
+  const myOrders = await listOrders({ designerId });
+  const hasActive = myOrders.some(
+    (o) => o.id !== orderId && ACTIVE_ORDER_STATUSES.includes(o.status),
+  );
+  if (hasActive) {
+    throw new AuthError(
+      409,
+      "见习等级同时仅可接 1 单，请先完成当前进行中的订单，或等待管理员晋升后再接单。",
+    );
+  }
+}
+
+function parseDirectedScanQuoteInput(input: DirectedScanQuoteInput): DirectedScanQuoteInput {
   const total = Math.round(Number(input.totalAmount));
   if (!Number.isFinite(total) || total <= 0) {
     throw new AuthError(400, "请填写有效的项目费用");
@@ -1928,35 +2484,106 @@ export async function proposeScanQuote(
   if (Math.abs(ratioSum - 1) > 0.02) {
     throw new AuthError(400, "付款阶段比例合计须为 100%");
   }
+  return { totalAmount: total, stages };
+}
 
-  const designer = await getDesigner(designerId);
-  if ((designer?.level ?? "intern") === "intern") {
-    const myOrders = await listOrders({ designerId });
-    const hasActive = myOrders.some(
-      (o) => o.id !== orderId && ACTIVE_ORDER_STATUSES.includes(o.status),
-    );
-    if (hasActive) {
-      throw new AuthError(
-        409,
-        "见习等级同时仅可接 1 单，请先完成当前进行中的订单，或等待管理员晋升后再接单。",
-      );
+/** 定向委托：接收方未改条款则确认进入签约；有改动则发回对方确认 */
+async function respondDirectedScanQuote(
+  orderId: string,
+  actor: "designer" | "client",
+  identityId: string,
+  input: DirectedScanQuoteInput,
+): Promise<Order> {
+  const order = await getOrder(orderId);
+  if (!order) throw new AuthError(404, "订单不存在");
+  if (order.orderSource !== "scan") {
+    throw new AuthError(409, "仅扫码订单可确认费用方案");
+  }
+  if (isSelfOrderPendingClaim(order)) {
+    throw new AuthError(409, "请先通过分享链接确认订单");
+  }
+  if (order.status !== "pending_schedule") {
+    throw new AuthError(409, "订单当前状态不可确认费用方案");
+  }
+  if (actor === "designer") {
+    if (order.designerId !== identityId) throw new AuthError(403, "无权操作该订单");
+    if (!isScanAwaitingDesignerQuote(order)) {
+      throw new AuthError(409, "当前由委托人确认费用方案");
+    }
+    await assertInternCanTakeScanOrder(identityId, orderId);
+  } else {
+    if (order.clientId !== identityId) throw new AuthError(403, "无权操作该订单");
+    if (!isScanAwaitingClientQuoteConfirm(order)) {
+      throw new AuthError(409, "当前由设计师确认费用方案");
     }
   }
 
+  const parsed = parseDirectedScanQuoteInput(input);
+  const prevTerms = scanQuoteTermsFromOrder(order);
+  const nextTerms = normalizeScanQuoteTerms(parsed.totalAmount, parsed.stages);
+  const unchanged = scanQuoteTermsEqual(prevTerms, nextTerms);
   const at = nowIso();
-  order.totalAmount = total;
-  order.stages = buildStagesFromRatios(order.id, total, stages);
+  const actorLabel = actor === "designer" ? "设计师" : "委托人";
+  const otherLabel = actor === "designer" ? "委托人" : "设计师";
+
+  if (unchanged) {
+    if (parsed.totalAmount <= 0 && order.totalAmount <= 0) {
+      throw new AuthError(409, "费用尚未确定");
+    }
+    if (order.totalAmount <= 0 || order.stages.every((s) => s.amount <= 0)) {
+      order.totalAmount = parsed.totalAmount;
+      order.stages = buildStagesFromRatios(
+        order.id,
+        parsed.totalAmount,
+        parsed.stages,
+      );
+      order.feeRate = resolveOrderPlatformFeeRate(order);
+    }
+    order.status = "pending_contract";
+    assignContractIdIfMissing(order);
+    order.scanQuoteProposedAt = order.scanQuoteProposedAt ?? at;
+    order.scanQuoteLastActor = actor;
+    order.messages.push({
+      id: randomId("msg"),
+      authorId: identityId,
+      authorRole: actor,
+      content: `${actorLabel}已确认费用与付款阶段，请双方签署电子合同。`,
+      createdAt: at,
+    });
+    await saveOrder(order);
+    if (actor === "designer") {
+      await notifyClientScanQuoteConfirmed(order);
+    } else {
+      await notifyDesignerScanQuoteConfirmed(order);
+    }
+    return order;
+  }
+
+  const changes = describeScanQuoteDiff(prevTerms, nextTerms);
+  order.totalAmount = parsed.totalAmount;
+  order.stages = buildStagesFromRatios(order.id, parsed.totalAmount, parsed.stages);
+  order.feeRate = resolveOrderPlatformFeeRate(order);
   order.scanQuoteProposedAt = at;
+  order.scanQuoteLastActor = actor;
   order.messages.push({
     id: randomId("msg"),
-    authorId: designerId,
-    authorRole: "designer",
-    content: `设计师已提交费用 ${formatCurrency(total)} 与付款阶段，请委托人确认。`,
+    authorId: identityId,
+    authorRole: actor,
+    content: `${actorLabel}已修改费用条款：${changes.join("；")}。请${otherLabel}确认。`,
     createdAt: at,
   });
   await saveOrder(order);
-  await notifyClientScanQuoteProposed(order);
+  await notifyDirectedScanQuoteChanged(order, actor, changes);
   return order;
+}
+
+/** 扫码下单：设计师提交或确认费用与付款阶段 */
+export async function proposeScanQuote(
+  orderId: string,
+  designerId: string,
+  input: DirectedScanQuoteInput,
+): Promise<Order> {
+  return respondDirectedScanQuote(orderId, "designer", designerId, input);
 }
 
 /** 扫码下单待报价：设计师可修正项目信息 */
@@ -1974,7 +2601,7 @@ export async function updateScanOrderByDesigner(
     throw new AuthError(409, "仅扫码订单可修改");
   }
   if (order.designerId !== designerId) throw new AuthError(403, "无权操作该订单");
-  if (order.status !== "pending_schedule" || order.scanQuoteProposedAt) {
+  if (!isScanAwaitingDesignerQuote(order)) {
     throw new AuthError(409, "当前状态不可修改项目信息");
   }
   if (patch.title !== undefined) {
@@ -1995,36 +2622,26 @@ export async function updateScanOrderByDesigner(
   return order;
 }
 
-/** 扫码下单：委托人确认费用与付款阶段 → 进入签约 */
+/** 扫码下单：委托人确认费用，或修改后发回设计师 */
 export async function confirmScanQuote(
   orderId: string,
   clientId: string,
+  input?: DirectedScanQuoteInput,
 ): Promise<Order> {
   const order = await getOrder(orderId);
   if (!order) throw new AuthError(404, "订单不存在");
-  if (order.orderSource !== "scan") {
-    throw new AuthError(409, "仅扫码订单可确认费用方案");
-  }
-  if (order.clientId !== clientId) throw new AuthError(403, "无权操作该订单");
-  if (order.status !== "pending_schedule" || !order.scanQuoteProposedAt) {
-    throw new AuthError(409, "设计师尚未提交费用方案，或订单已进入后续流程");
-  }
-  if (order.totalAmount <= 0) {
-    throw new AuthError(409, "费用尚未确定");
-  }
-
-  const at = nowIso();
-  order.status = "pending_contract";
-  order.messages.push({
-    id: randomId("msg"),
-    authorId: clientId,
-    authorRole: "client",
-    content: "委托人已确认费用与付款阶段，请双方签署电子合同。",
-    createdAt: at,
+  const stages =
+    input?.stages ??
+    (order.stages ?? []).map((s) => ({
+      name: s.name,
+      ratio: s.ratio,
+      note: s.note,
+    }));
+  const totalAmount = input?.totalAmount ?? order.totalAmount;
+  return respondDirectedScanQuote(orderId, "client", clientId, {
+    totalAmount,
+    stages,
   });
-  await saveOrder(order);
-  await notifyDesignerScanQuoteConfirmed(order);
-  return order;
 }
 
 /** 设计师拒绝档期：订单终止并同步档期申请 */
@@ -2066,6 +2683,7 @@ export async function rejectSchedule(
 export async function signContract(
   orderId: string,
   clientId: string,
+  signature?: string,
 ): Promise<Order> {
   const order = await getOrder(orderId);
   if (!order) throw new AuthError(404, "订单不存在");
@@ -2078,6 +2696,7 @@ export async function signContract(
   }
 
   order.clientSignedContract = true;
+  if (signature) order.clientContractSignature = signature;
   const newlyFullySigned = markContractReady(order);
   order.messages.push({
     id: randomId("msg"),
@@ -2099,6 +2718,7 @@ export async function signContract(
 export async function designerSignContract(
   orderId: string,
   designerId: string,
+  signature?: string,
 ): Promise<Order> {
   const order = await getOrder(orderId);
   if (!order) throw new AuthError(404, "订单不存在");
@@ -2111,6 +2731,7 @@ export async function designerSignContract(
   }
 
   order.designerSignedContract = true;
+  if (signature) order.designerContractSignature = signature;
   const newlyFullySigned = markContractReady(order);
   order.messages.push({
     id: randomId("msg"),
@@ -2144,9 +2765,17 @@ export async function payStage(
   if (stage.status !== "pending") throw new AuthError(409, "该阶段已支付");
 
   const at = nowIso();
+  const pricing = await getPlatformPricing();
+  const afterSalesDays = pricing.commerce.afterSalesDays;
   stage.status = "frozen";
   stage.paidAt = at;
-  stage.acceptanceDeadlineAt = addDays(at, ACCEPTANCE_DAYS);
+  if (stage.deliverablesConfirmedAt) {
+    stage.acceptanceDeadlineAt = addDays(at, afterSalesDays);
+  } else if (!stageRequiresDeliverables(order, stage)) {
+    stage.acceptanceDeadlineAt = addDays(at, afterSalesDays);
+  } else {
+    stage.acceptanceDeadlineAt = undefined;
+  }
   unlockStageCadDeliverables(stage);
 
   const hadNoPaidStage = order.stages.every(
@@ -2204,6 +2833,30 @@ export async function payStage(
   return order;
 }
 
+function assertDeliverableStageWritable(
+  order: Order,
+  stage: NonNullable<Order["stages"][number]>,
+  revising: boolean,
+  action: "upload" | "skip" | "delete",
+) {
+  if (!stageRequiresDeliverables(order, stage)) {
+    throw new AuthError(409, "预付款阶段无需上传成果");
+  }
+  if (stage.status === "released") {
+    throw new AuthError(409, "该阶段已结算，不可再处理成果");
+  }
+  const postPay = allowsPostPaymentDeliverables(order, stage);
+  if (stage.status !== "pending" && !revising && !postPay) {
+    throw new AuthError(
+      409,
+      action === "delete" ? "该阶段已付款，不可删除成果" : "该阶段已付款，不可重复上传",
+    );
+  }
+  if (postPay && stage.deliverablesConfirmedAt && !revising) {
+    throw new AuthError(409, "最终成果已确认，不可再更改");
+  }
+}
+
 /** 设计师上传阶段成果：预览免费、CAD 付款后解锁 */
 export async function submitStageDeliverables(
   orderId: string,
@@ -2222,15 +2875,17 @@ export async function submitStageDeliverables(
 
   const stage = order.stages.find((s) => s.id === stageId);
   if (!stage) throw new AuthError(404, "付款阶段不存在");
-  if (isPrepaymentStage(order, stage)) {
-    throw new AuthError(409, "预付款阶段无需上传成果");
-  }
   const revising = order.status === "in_revision";
-  if (stage.status !== "pending" && !revising) {
-    throw new AuthError(409, "该阶段已付款，不可重复上传");
-  }
+  assertDeliverableStageWritable(order, stage, revising, "upload");
   if (!files?.length) {
-    throw new AuthError(400, "请上传成果或确认单（图片或 PDF）");
+    throw new AuthError(400, "请上传成果或确认单（图片、PDF、CAD 或压缩包）");
+  }
+  const invalid = files.find((f) => !isAllowedDeliverableFile(f));
+  if (invalid) {
+    throw new AuthError(
+      400,
+      `「${invalid.name}」类型不支持，请上传图片、PDF、CAD 或压缩包`,
+    );
   }
 
   const at = nowIso();
@@ -2239,15 +2894,14 @@ export async function submitStageDeliverables(
     designerId: f.designerId ?? designerId,
     uploadedAt: f.uploadedAt || at,
     locked: false,
+    kind: f.kind ?? uploadKindForPhase(stage, order.status),
   }));
-  const appending =
-    revising ||
-    (order.status === "pending_review" &&
-      (stage.deliverables?.length ?? 0) > 0);
-  stage.deliverables = appending
-    ? [...(stage.deliverables ?? []), ...incoming]
-    : incoming;
-  stage.deliverablesConfirmedAt = undefined;
+  stage.deliverables = [...(stage.deliverables ?? []), ...incoming];
+  const kind = incoming[0]?.kind ?? "preliminary";
+  if (kind === "final" || kind === "revision") {
+    stage.deliverablesConfirmedAt = undefined;
+    stage.acceptanceDeadlineAt = undefined;
+  }
 
   for (const assignment of order.trackAssignments ?? []) {
     if (assignment.designerId !== designerId) continue;
@@ -2264,15 +2918,116 @@ export async function submitStageDeliverables(
   }
 
   order.status = "pending_review";
+  const phaseLabel =
+    kind === "preliminary"
+      ? "初步成果"
+      : kind === "revision"
+        ? "返修成果"
+        : "最终成果 / 确认单";
   order.messages.push({
     id: randomId("msg"),
     authorId: "system",
     authorRole: "system",
-    content: `设计师已上传「${stage.name}」成果，请委托人预览并付款解锁下载。`,
+    content: `设计师已上传「${stage.name}」${phaseLabel}，请委托人预览确认。`,
     createdAt: at,
   });
   await saveOrder(order);
-  await notifyDeliverablesSubmitted(order, stage.name);
+  await notifyDeliverablesSubmitted(order, stage.name, kind);
+  return order;
+}
+
+/** 设计师跳过初步成果，直接进入最终成果 / 确认单 */
+export async function skipPreliminaryDeliverables(
+  orderId: string,
+  stageId: string,
+  designerId: string,
+): Promise<Order> {
+  const order = await getOrder(orderId);
+  if (!order) throw new AuthError(404, "订单不存在");
+  if (!orderInvolvesDesigner(order, designerId)) {
+    throw new AuthError(403, "无权操作该订单");
+  }
+  if (!["in_progress", "pending_review"].includes(order.status)) {
+    throw new AuthError(409, "当前订单状态不可跳过初步成果");
+  }
+  const stage = order.stages.find((s) => s.id === stageId);
+  if (!stage) throw new AuthError(404, "付款阶段不存在");
+  assertDeliverableStageWritable(order, stage, false, "skip");
+  if (resolveDeliverablePhase(stage, order.status) !== "preliminary") {
+    throw new AuthError(409, "当前已进入最终成果步骤");
+  }
+
+  const at = nowIso();
+  stage.preliminarySkippedAt = at;
+  if (order.status === "pending_review") {
+    order.status = "in_progress";
+  }
+  order.messages.push({
+    id: randomId("msg"),
+    authorId: "system",
+    authorRole: "system",
+    content: `设计师已跳过「${stage.name}」初步成果，将直接上传最终成果 / 确认单。`,
+    createdAt: at,
+  });
+  await saveOrder(order);
+  return order;
+}
+
+/** 设计师删除尚未付款阶段的本人成果 */
+export async function deleteStageDeliverable(
+  orderId: string,
+  stageId: string,
+  designerId: string,
+  fileId: string,
+): Promise<Order> {
+  const order = await getOrder(orderId);
+  if (!order) throw new AuthError(404, "订单不存在");
+  if (!orderInvolvesDesigner(order, designerId)) {
+    throw new AuthError(403, "无权操作该订单");
+  }
+  if (!["in_progress", "in_revision", "pending_review"].includes(order.status)) {
+    throw new AuthError(409, "当前订单状态不可删除成果");
+  }
+
+  const stage = order.stages.find((s) => s.id === stageId);
+  if (!stage) throw new AuthError(404, "付款阶段不存在");
+  const revising = order.status === "in_revision";
+  assertDeliverableStageWritable(order, stage, revising, "delete");
+
+  const file = stage.deliverables?.find((f) => f.id === fileId);
+  if (!file) throw new AuthError(404, "成果文件不存在");
+  if (file.locked) throw new AuthError(409, "该成果已锁定，不可删除");
+  const ownFile =
+    file.designerId === designerId ||
+    (!file.designerId && order.designerId === designerId);
+  if (!ownFile) throw new AuthError(403, "只能删除本人上传的成果");
+
+  const at = nowIso();
+  stage.deliverables = (stage.deliverables ?? []).filter((f) => f.id !== fileId);
+  stage.deliverablesConfirmedAt = undefined;
+
+  for (const assignment of order.trackAssignments ?? []) {
+    if (!assignment.deliverableIds?.length) continue;
+    assignment.deliverableIds = assignment.deliverableIds.filter(
+      (id) => id !== fileId,
+    );
+  }
+
+  if (
+    !(stage.deliverables?.length ?? 0) &&
+    order.status === "pending_review"
+  ) {
+    order.status = "in_progress";
+  }
+
+  order.messages.push({
+    id: randomId("msg"),
+    authorId: "system",
+    authorRole: "system",
+    content: `设计师已删除「${stage.name}」成果「${file.name}」。`,
+    createdAt: at,
+  });
+  await saveOrder(order);
   return order;
 }
 
@@ -2292,7 +3047,7 @@ export async function requestStageRevision(
 
   const stage = order.stages.find((s) => s.id === stageId);
   if (!stage) throw new AuthError(404, "付款阶段不存在");
-  if (isPrepaymentStage(order, stage)) {
+  if (!stageRequiresDeliverables(order, stage)) {
     throw new AuthError(409, "预付款阶段无需确认或返修成果");
   }
   if (stage.status === "released") {
@@ -2319,6 +3074,7 @@ export async function requestStageRevision(
     fileName: fileName ?? target?.name,
   });
   stage.deliverablesConfirmedAt = undefined;
+  stage.acceptanceDeadlineAt = undefined;
   order.status = "in_revision";
   order.messages.push({
     id: randomId("msg"),
@@ -2348,31 +3104,201 @@ export async function confirmStageDeliverables(
 
   const stage = order.stages.find((s) => s.id === stageId);
   if (!stage) throw new AuthError(404, "付款阶段不存在");
-  if (isPrepaymentStage(order, stage)) {
+  if (!stageRequiresDeliverables(order, stage)) {
     throw new AuthError(409, "预付款阶段无需确认成果");
   }
   if (stage.status === "released") {
     throw new AuthError(409, "该阶段已结算");
   }
-  if (!(stage.deliverables?.length ?? 0)) {
-    throw new AuthError(409, "该阶段暂无成果，不可确认");
+  if (!canClientConfirmPhase(stage, order.status)) {
+    throw new AuthError(409, "该步骤暂无待确认成果");
   }
 
   const at = nowIso();
+  const phase = resolveDeliverablePhase(stage, order.status);
+  if (phase === "preliminary") {
+    stage.preliminaryConfirmedAt = at;
+    if (order.status === "pending_review" || order.status === "in_revision") {
+      order.status = "in_progress";
+    }
+    order.messages.push({
+      id: randomId("msg"),
+      authorId: "system",
+      authorRole: "system",
+      content: `委托人已确认「${stage.name}」初步成果，请设计师上传最终成果 / 确认单。`,
+      createdAt: at,
+    });
+    await saveOrder(order);
+    await notifyDeliverablesConfirmed(order, stage.name, "preliminary");
+    return order;
+  }
+
   stage.deliverablesConfirmedAt = at;
+  if (stage.status === "frozen" || stage.status === "paid") {
+    const pricing = await getPlatformPricing();
+    stage.acceptanceDeadlineAt = addDays(
+      at,
+      pricing.commerce.afterSalesDays,
+    );
+  }
   if (order.status === "pending_review" || order.status === "in_revision") {
     order.status = "in_progress";
   }
+  const fulfillmentDone =
+    allOrderStagesPaid(order) && isLastDeliverablesConfirmed(order);
+  const reviewJustOpened = fulfillmentDone
+    ? openClientReviewWindow(order, at)
+    : false;
   order.messages.push({
     id: randomId("msg"),
     authorId: "system",
     authorRole: "system",
-    content: `委托人已确认「${stage.name}」成果，等待付款。`,
+    content: fulfillmentDone
+      ? `委托人已确认「${stage.name}」最终成果，项目履约完成，可进行评价。`
+      : `委托人已确认「${stage.name}」最终成果，等待付款。`,
     createdAt: at,
   });
   await saveOrder(order);
-  await notifyDeliverablesConfirmed(order, stage.name);
+  await notifyDeliverablesConfirmed(order, stage.name, "final");
+  if (reviewJustOpened) await notifyClientReviewOpened(order);
   return order;
+}
+
+function fourDigitCode() {
+  return String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+}
+
+function codesEqual(a: string, b: string) {
+  return a.trim() === b.trim();
+}
+
+/** 委托人 / 设计师 / 管理员：确保本阶段有转发成果码与链接 */
+export async function ensureDeliverablesConfirmShare(
+  orderId: string,
+  stageId: string,
+): Promise<{ code: string; shareId: string }> {
+  const order = await getOrder(orderId);
+  if (!order) throw new AuthError(404, "订单不存在");
+  const stage = order.stages.find((s) => s.id === stageId);
+  if (!stage) throw new AuthError(404, "付款阶段不存在");
+  if (!stageRequiresDeliverables(order, stage)) {
+    throw new AuthError(409, "预付款阶段无需转发成果");
+  }
+
+  let changed = false;
+  if (!stage.deliverablesConfirmCode) {
+    stage.deliverablesConfirmCode = fourDigitCode();
+    changed = true;
+  }
+  if (!stage.deliverablesConfirmShareId) {
+    stage.deliverablesConfirmShareId = randomId("dcf");
+    changed = true;
+  }
+  if (changed) await saveOrder(order);
+  return {
+    code: stage.deliverablesConfirmCode,
+    shareId: stage.deliverablesConfirmShareId,
+  };
+}
+
+async function buildDeliverablesConfirmView(
+  order: Order,
+  stageId: string,
+): Promise<import("@/lib/deliverables-confirm-share").DeliverablesConfirmView> {
+  const stage = order.stages.find((s) => s.id === stageId);
+  if (!stage || !stage.deliverablesConfirmShareId) {
+    throw new AuthError(404, "确认链接不存在或已失效");
+  }
+  const groups = getStageParticipantGroups(order, stage);
+  const { DEFAULT_SERVICE_PROVIDERS } = await import(
+    "@/lib/service-provider-catalog"
+  );
+  const people = await Promise.all(
+    groups.map(async (group) => {
+      if (group.role === "designer") {
+        const designer = await getDesigner(group.personId);
+        return {
+          id: group.personId,
+          name: designer?.name ?? "设计师",
+          avatar: designer?.avatar ?? null,
+          roleLabel: "设计师",
+          trackLabel: group.label,
+        };
+      }
+      const provider = DEFAULT_SERVICE_PROVIDERS.find(
+        (p) => p.id === group.personId,
+      );
+      return {
+        id: group.personId,
+        name: provider?.name ?? group.label,
+        avatar: provider?.avatar ?? null,
+        roleLabel: group.role === "auditor" ? "审图师" : "项目管理员",
+        trackLabel: group.label,
+      };
+    }),
+  );
+  const files = (stage.deliverables ?? []).map((file) => {
+    const designerName = people.find((p) => p.id === file.designerId)?.name;
+    return { ...file, uploaderName: designerName };
+  });
+  const phase = resolveDeliverablePhase(stage, order.status);
+  return {
+    shareId: stage.deliverablesConfirmShareId,
+    confirmed: phase === "done",
+    confirmedAt: stage.deliverablesConfirmedAt,
+    phase,
+    confirmLabel: clientConfirmLabel(phase),
+    canConfirm: canClientConfirmPhase(stage, order.status),
+    preliminaryConfirmedAt: stage.preliminaryConfirmedAt,
+    preliminarySkipped: Boolean(stage.preliminarySkippedAt),
+    order: {
+      id: order.id,
+      code: order.code,
+      title: order.title,
+      projectType: order.projectType,
+      billingMode: order.billingMode,
+      serviceMode: order.serviceMode,
+      expectedDeliveryAt: order.expectedDeliveryAt,
+      specialty: order.specialty,
+      description: order.description,
+    },
+    stage: {
+      id: stage.id,
+      name: stage.name,
+      amount: stage.amount,
+      ratio: stage.ratio,
+    },
+    people,
+    files,
+  };
+}
+
+/** 公开页：按转发链接查看待确认成果 */
+export async function getDeliverablesConfirmShareView(shareId: string) {
+  const found = await findOrderByDeliverablesConfirmShareId(shareId);
+  if (!found) throw new AuthError(404, "确认链接不存在或已失效");
+  return buildDeliverablesConfirmView(found.order, found.stageId);
+}
+
+/** 公开页：输入验证码后确认成果 */
+export async function confirmStageDeliverablesByShare(
+  shareId: string,
+  code: string,
+) {
+  const found = await findOrderByDeliverablesConfirmShareId(shareId);
+  if (!found) throw new AuthError(404, "确认链接不存在或已失效");
+  const { order } = found;
+  const stage = order.stages.find((s) => s.id === found.stageId);
+  if (!stage) throw new AuthError(404, "付款阶段不存在");
+  if (stage.deliverablesConfirmedAt && resolveDeliverablePhase(stage, order.status) === "done") {
+    return buildDeliverablesConfirmView(order, stage.id);
+  }
+  if (!stage.deliverablesConfirmCode || !codesEqual(code, stage.deliverablesConfirmCode)) {
+    throw new AuthError(400, "验证码不正确");
+  }
+  await confirmStageDeliverables(order.id, stage.id, order.clientId);
+  const latest = (await getOrder(order.id)) ?? order;
+  return buildDeliverablesConfirmView(latest, stage.id);
 }
 
 function hasPendingRevisionForStage(order: Order, stageId: string) {
@@ -2391,6 +3317,10 @@ async function releaseStageOnOrder(
 ): Promise<void> {
   const stage = order.stages.find((s) => s.id === stageId);
   if (!stage || stage.status !== "frozen") return;
+
+  if (stageRequiresDeliverables(order, stage) && !stage.deliverablesConfirmedAt) {
+    stage.deliverablesConfirmedAt = at;
+  }
 
   stage.status = "released";
   stage.releasedAt = at;
@@ -2428,6 +3358,7 @@ async function releaseStageOnOrder(
     });
   }
 
+  const reviewJustOpened = openClientReviewWindow(order, at);
   await saveOrder(order);
 
   const designerTx: WalletTransaction = {
@@ -2444,7 +3375,8 @@ async function releaseStageOnOrder(
   };
   await updateWalletTransaction(designerTx);
 
-  const fee = Math.round(stage.amount * (order.feeRate ?? 0.08));
+  const feeRate = resolveOrderPlatformFeeRate(order);
+  const fee = platformFeeAmountFromOrder(order, stage.amount);
   if (fee > 0) {
     await createWalletTransaction(order.designerId, "designer", {
       id: `${stageId}_fee`,
@@ -2455,11 +3387,12 @@ async function releaseStageOnOrder(
       amount: -fee,
       status: "available",
       occurredAt: at,
-      note: `平台手续费 ${Math.round((order.feeRate ?? 0.08) * 100)}%`,
+      note: `平台手续费 ${Math.round(feeRate * 100)}%`,
     });
   }
 
   await notifyStageReleased(order, stageName, stageAmount, auto);
+  if (reviewJustOpened) await notifyClientReviewOpened(order);
 }
 
 /** 委托人确认验收某阶段：解冻设计师款项并扣除平台手续费 */
@@ -2561,8 +3494,11 @@ export async function submitOrderReview(
   if (!allOrderStagesPaid(order)) {
     throw new AuthError(409, "项目费用尚未全部支付，暂不可评价");
   }
+  if (!isLastDeliverablesConfirmed(order)) {
+    throw new AuthError(409, "请先确认最终成果后再评价");
+  }
   if (order.clientReviewed) {
-    throw new AuthError(409, "已完成评价");
+    return order;
   }
   const deadline = resolveReviewDeadlineAt(order);
   if (
@@ -2605,6 +3541,93 @@ export async function submitOrderReview(
   await saveOrder(order);
   await notifyDesignerReviewSubmitted(order, order.status === "completed");
   return order;
+}
+
+/** 委托人工作台：确保本单有转发评价码与链接 */
+export async function ensureOrderReviewShare(
+  orderId: string,
+  clientId: string,
+): Promise<{ code: string; shareId: string }> {
+  const order = await getOrder(orderId);
+  if (!order) throw new AuthError(404, "订单不存在");
+  if (order.clientId !== clientId) throw new AuthError(403, "无权操作该订单");
+  if (!needsClientReview(order)) {
+    throw new AuthError(409, "当前订单不可转发评价");
+  }
+
+  let changed = false;
+  if (!order.reviewShareCode) {
+    order.reviewShareCode = fourDigitCode();
+    changed = true;
+  }
+  if (!order.reviewShareId) {
+    order.reviewShareId = randomId("revf");
+    changed = true;
+  }
+  if (changed) await saveOrder(order);
+  return {
+    code: order.reviewShareCode,
+    shareId: order.reviewShareId,
+  };
+}
+
+async function buildOrderReviewShareView(
+  order: Order,
+): Promise<import("@/lib/review-share").OrderReviewShareView> {
+  if (!order.reviewShareId) {
+    throw new AuthError(404, "评价链接不存在或已失效");
+  }
+  const designer = order.designerId
+    ? await getDesigner(order.designerId)
+    : undefined;
+  const canSubmit = needsClientReview(order);
+  return {
+    shareId: order.reviewShareId,
+    submitted: Boolean(order.clientReviewed),
+    closed: isClientReviewClosed(order),
+    canSubmit,
+    deadlineHint: formatClientReviewWindow(order),
+    order: {
+      id: order.id,
+      code: order.code,
+      title: order.title,
+      projectType: order.projectType,
+      billingMode: order.billingMode,
+      specialty: order.specialty,
+    },
+    designer: {
+      id: designer?.id ?? order.designerId ?? "",
+      name: designer
+        ? maskDesignerPublicName(designer.name)
+        : "设计师",
+      avatar: designer?.avatar ?? null,
+    },
+  };
+}
+
+/** 公开页：按转发链接查看待评价项目 */
+export async function getOrderReviewShareView(shareId: string) {
+  const order = await findOrderByReviewShareId(shareId);
+  if (!order) throw new AuthError(404, "评价链接不存在或已失效");
+  return buildOrderReviewShareView(order);
+}
+
+/** 公开页：输入验证码后提交评价 */
+export async function submitOrderReviewByShare(
+  shareId: string,
+  code: string,
+  input: SubmitOrderReviewInput,
+) {
+  const order = await findOrderByReviewShareId(shareId);
+  if (!order) throw new AuthError(404, "评价链接不存在或已失效");
+  if (order.clientReviewed) {
+    return buildOrderReviewShareView(order);
+  }
+  if (!order.reviewShareCode || !codesEqual(code, order.reviewShareCode)) {
+    throw new AuthError(400, "验证码不正确");
+  }
+  const latest = await submitOrderReview(order.id, order.clientId, input);
+  return buildOrderReviewShareView(latest);
 }
 
 /** 见习设计师完成订单后，生成等待管理员确认的晋升中级工单 */
@@ -2657,23 +3680,98 @@ async function confirmSettlementOnOrder(order: Order, at: string, systemMessage:
   await maybeRequestPromotion(order);
 }
 
+async function autoConfirmOverdueDeliverables(
+  order: Order,
+  stage: Order["stages"][number],
+  at: string,
+  confirmDays: number,
+): Promise<boolean> {
+  if (stage.deliverablesConfirmedAt) return false;
+  if (!stageRequiresDeliverables(order, stage)) return false;
+  if (hasPendingRevisionForStage(order, stage.id)) return false;
+  if (resolveDeliverablePhase(stage, order.status) === "preliminary") {
+    return false;
+  }
+  if (!canClientConfirmPhase(stage, order.status)) return false;
+  const deadline = resolveDeliverableConfirmDeadlineAt(stage, {
+    deliverableConfirmDays: confirmDays,
+  });
+  if (!deadline || !isPastDeadline(deadline)) return false;
+
+  stage.deliverablesConfirmedAt = at;
+  if (stage.status === "frozen" || stage.status === "paid") {
+    const pricing = await getPlatformPricing();
+    stage.acceptanceDeadlineAt = addDays(at, pricing.commerce.afterSalesDays);
+  }
+  if (order.status === "pending_review" || order.status === "in_revision") {
+    order.status = "in_progress";
+  }
+  const fulfillmentDone =
+    allOrderStagesPaid(order) && isLastDeliverablesConfirmed(order);
+  const reviewJustOpened = fulfillmentDone
+    ? openClientReviewWindow(order, at)
+    : false;
+  order.messages.push({
+    id: randomId("msg"),
+    authorId: "system",
+    authorRole: "system",
+    content: `设计师提交「${stage.name}」成果已满 ${confirmDays} 天，委托人未主动确认，系统已自动确认最终成果，验收期开始计时。`,
+    createdAt: at,
+  });
+  await saveOrder(order);
+  await notifyDeliverablesConfirmed(order, stage.name, "final");
+  if (reviewJustOpened) await notifyClientReviewOpened(order);
+  return true;
+}
+
 /**
- * 处理单订单超时：10 天成果自动验收、30 天自动结案、评价期（30 天）结束标记。
- * 有变更时写库并返回更新后的订单。
+ * 处理单订单超时：提交成果 20 天未确认则自动确认并开始验收期；
+ * 验收期满自动解冻；待结案期满自动结案；评价期结束标记。
  */
 export async function applyOrderTimeouts(order: Order): Promise<Order> {
   let changed = false;
   const at = nowIso();
+  const pricing = await getPlatformPricing();
+  const afterSalesDays = pricing.commerce.afterSalesDays;
+  const confirmDays = pricing.commerce.deliverableConfirmDays;
+  const escrowDays = pricing.commerce.escrowDays;
+
+  for (const stage of order.stages) {
+    if (
+      stageRequiresDeliverables(order, stage) &&
+      !stage.deliverablesConfirmedAt &&
+      stage.acceptanceDeadlineAt
+    ) {
+      stage.acceptanceDeadlineAt = undefined;
+      changed = true;
+    }
+  }
+  if (changed) await saveOrder(order);
+
+  for (const stage of order.stages) {
+    if (await autoConfirmOverdueDeliverables(order, stage, at, confirmDays)) {
+      changed = true;
+    }
+  }
 
   for (const stage of order.stages) {
     if (stage.status !== "frozen") continue;
-    if (!isPastDeadline(stage.acceptanceDeadlineAt)) continue;
     if (hasPendingRevisionForStage(order, stage.id)) continue;
+    if (
+      stageRequiresDeliverables(order, stage) &&
+      !stage.deliverablesConfirmedAt
+    ) {
+      continue;
+    }
+    const endsAt = resolveStageEscrowEndsAt(stage, pricing.commerce, {
+      requiresDeliverables: stageRequiresDeliverables(order, stage),
+    });
+    if (!isPastDeadline(endsAt ?? undefined)) continue;
     await releaseStageOnOrder(
       order,
       stage.id,
       at,
-      `「${stage.name}」验收期已满 ${ACCEPTANCE_DAYS} 天且无异议，系统已自动确认成果。`,
+      `「${stage.name}」验收期已满 ${afterSalesDays} 天且无异议，系统已自动解冻结算。`,
       { auto: true },
     );
     changed = true;
@@ -2683,12 +3781,12 @@ export async function applyOrderTimeouts(order: Order): Promise<Order> {
     order.pendingSettlement &&
     order.status !== "completed" &&
     order.pendingSettlementAt &&
-    isPastDeadline(addDays(order.pendingSettlementAt, SETTLEMENT_DAYS))
+    isPastDeadline(addDays(order.pendingSettlementAt, escrowDays))
   ) {
     await confirmSettlementOnOrder(
       order,
       at,
-      `待结案已满 ${SETTLEMENT_DAYS} 天，系统已自动确认最终服务完成，项目结案。`,
+      `待结案已满 ${escrowDays} 天，系统已自动确认最终服务完成，项目结案。`,
     );
     changed = true;
   }
@@ -2696,7 +3794,8 @@ export async function applyOrderTimeouts(order: Order): Promise<Order> {
   if (
     !order.clientReviewed &&
     !order.reviewExpired &&
-    allOrderStagesPaid(order)
+    allOrderStagesPaid(order) &&
+    isLastDeliverablesConfirmed(order)
   ) {
     const deadline = resolveReviewDeadlineAt(order);
     let reviewChanged = false;
@@ -2885,7 +3984,8 @@ export async function platformSplitFrozenStage(
         note: `平台部分裁决解冻（${100 - pct}%）`,
       });
     }
-    const fee = Math.round(designerPart * (order.feeRate ?? 0.08));
+    const feeRate = resolveOrderPlatformFeeRate(order);
+    const fee = platformFeeAmountFromOrder(order, designerPart);
     if (fee > 0) {
       await createWalletTransaction(order.designerId, "designer", {
         id: `${stageId}_fee_split`,
@@ -2896,7 +3996,7 @@ export async function platformSplitFrozenStage(
         amount: -fee,
         status: "available",
         occurredAt: at,
-        note: `平台手续费 ${Math.round((order.feeRate ?? 0.08) * 100)}%`,
+        note: `平台手续费 ${Math.round(feeRate * 100)}%`,
       });
     }
   } else {

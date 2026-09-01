@@ -128,7 +128,7 @@ export function cloneDefaultContractTemplates(): ContractTemplatesConfig {
 月费标准：{{monthlyRate}} 元/月
 服务方式：{{serviceMode}}
 
-按月预付，每月验收后结算；提前终止须提前 15 日书面通知。`,
+按月预付：首月须在开始服务日前 3 天支付一个月服务费；此后每月 25 日前支付下一个月服务费（遇周末或法定节假日提前至前一个工作日），直至服务结束。提前终止须提前 15 日书面通知。`,
       },
       {
         id: "ct_b2b",

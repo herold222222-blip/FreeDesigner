@@ -3,7 +3,26 @@ import { handle, ok, fail } from "@/lib/server/api";
 import { getBounty, saveBounty, deleteBounty } from "@/lib/server/repo";
 import { getSessionUser, requireSession } from "@/lib/server/auth";
 import { applyBountyApplicantPrivacy } from "@/lib/bounty-privacy";
-import { canManageBountyBeforeContract } from "@/lib/bounty-manage";
+import { applyBountyPublicPrivacyWithContract } from "@/lib/server/bounty-hall-privacy";
+import { parseBountyTitleVisibility } from "@/lib/bounty-hall-privacy";
+import {
+  canManageBountyBeforeContract,
+  isBountyRewardValid,
+} from "@/lib/bounty-manage";
+import { parseBountyPaymentStages } from "@/lib/bounty-payment-stages";
+import {
+  normalizeBountyDeadline,
+  normalizeBountyValidUntil,
+} from "@/lib/bounty-validity";
+import {
+  bountyTaxCoefficient,
+  parseBountyInvoiceType,
+} from "@/lib/bounty-invoice";
+import type {
+  BountyInvoiceType,
+  BountyPaymentStage,
+  BountyTitleVisibility,
+} from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 export async function GET(
@@ -14,7 +33,7 @@ export async function GET(
     const session = await getSessionUser();
     const bounty = await getBounty(params.id);
     if (!bounty) return fail(404, "悬赏不存在");
-    return ok(applyBountyApplicantPrivacy(bounty, session));
+    return ok(await applyBountyPublicPrivacyWithContract(bounty, session));
   });
 }
 
@@ -26,7 +45,11 @@ type ManageBody =
       title?: string;
       description?: string;
       reward?: number;
+      invoiceType?: BountyInvoiceType;
+      paymentStages?: BountyPaymentStage[];
       deadline?: string;
+      validUntil?: string | null;
+      titleVisibility?: BountyTitleVisibility;
       requirements?: string[];
     };
 
@@ -58,14 +81,44 @@ export async function PATCH(
       bounty.status = "open";
     } else if (body.action === "update") {
       if (body.title?.trim()) bounty.title = body.title.trim();
+      if (body.titleVisibility !== undefined) {
+        bounty.titleVisibility = parseBountyTitleVisibility(body.titleVisibility);
+      }
       if (body.description !== undefined) {
         bounty.description = body.description.trim();
       }
       if (body.reward !== undefined) {
-        if (body.reward <= 0) return fail(400, "悬赏金额须大于 0");
-        bounty.reward = Math.round(body.reward);
+        const reward = Math.round(Number(body.reward));
+        if (!isBountyRewardValid(reward)) {
+          return fail(400, "悬赏金额须大于 100 元");
+        }
+        bounty.reward = reward;
       }
-      if (body.deadline) bounty.deadline = body.deadline;
+      if (body.invoiceType !== undefined) {
+        const invoiceType = parseBountyInvoiceType(body.invoiceType);
+        if (!invoiceType) return fail(400, "请选择发票信息");
+        bounty.invoiceType = invoiceType;
+        bounty.taxCoefficient = bountyTaxCoefficient(invoiceType);
+      }
+      if (body.paymentStages !== undefined) {
+        const stages = parseBountyPaymentStages(body.paymentStages);
+        if (!stages) {
+          return fail(400, "付款阶段比例须合计 100%，且每阶段须填写付款条件说明");
+        }
+        bounty.paymentStages = stages;
+      }
+      if (body.deadline !== undefined) {
+        const deadlineResult = normalizeBountyDeadline(body.deadline);
+        if (!deadlineResult.ok) return fail(400, deadlineResult.error);
+        bounty.deadline = deadlineResult.value;
+      }
+      if (body.validUntil !== undefined) {
+        const validUntilResult = normalizeBountyValidUntil(body.validUntil, {
+          requireFuture: body.validUntil != null && body.validUntil !== "",
+        });
+        if (!validUntilResult.ok) return fail(400, validUntilResult.error);
+        bounty.validUntil = validUntilResult.value;
+      }
       if (body.requirements) {
         bounty.requirements = body.requirements
           .map((r) => r.trim())

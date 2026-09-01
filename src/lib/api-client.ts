@@ -220,6 +220,16 @@ export function markAllInboxReadRequest() {
   return apiFetch<{ updated: number }>("/api/inbox", { method: "PATCH" });
 }
 
+export function deleteInboxMessageRequest(id: string) {
+  return apiFetch<{ deleted: boolean }>(`/api/inbox/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function deleteAllInboxMessagesRequest() {
+  return apiFetch<{ deleted: number }>("/api/inbox", { method: "DELETE" });
+}
+
 /* --------------- 订单写操作 --------------- */
 
 export interface CreateOrderBody {
@@ -241,11 +251,13 @@ export interface CreateOrderBody {
   scheduleTo?: string;
   withAuditService?: boolean;
   withProjectManagement?: boolean;
-  customStageRatios?: { name: string; ratio: number }[];
+  customStageRatios?: { name: string; ratio: number; note?: string }[];
   /** 常规委托等场景的项目附件（委托人实际上传） */
   attachments?: import("@/lib/types").BountyAttachment[];
   /** 预期交付或开始服务时间，须委托人填写，系统不预填 */
   expectedDeliveryAt?: string;
+  /** 发票税率系数（定向下单 / 扫码：5% + 对应税点） */
+  taxCoefficient?: number;
   /** 按天/按月：用于服务端生成报价单 */
   timeQuote?: {
     unit: "day" | "month";
@@ -256,7 +268,24 @@ export interface CreateOrderBody {
       l3Label: string;
       quantity: number;
       difficultyKey?: string;
+      quantityPending?: boolean;
     }>;
+  };
+  /** 按面积：用于服务端生成四档等级报价单 */
+  areaQuote?: {
+    area: number;
+    projectType: string;
+    buildType: "new" | "renovation";
+    tracks: Array<{
+      track: "hardscape" | "softscape" | "drainage" | "electrical";
+      difficulty?: number;
+      difficultyLabel?: string;
+    }>;
+    taxCoefficient?: number;
+    structure?: {
+      mode: "pending" | "estimate";
+      sheets?: number;
+    };
   };
 }
 
@@ -267,7 +296,30 @@ export function createOrderRequest(body: CreateOrderBody) {
   });
 }
 
-/** 委托人确认按天/按月系统报价 → 进入待匹配并通知管理员 */
+export function createDesignerSelfOrderRequest(body: CreateOrderBody) {
+  return apiFetch<Order & { share: { code: string; shareId: string; url: string } }>(
+    "/api/orders/self",
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export function fetchSelfOrderShareRequest(shareId: string) {
+  return apiFetch<import("@/lib/self-order-share").SelfOrderShareView>(
+    `/api/confirm-self-order/${shareId}`,
+  );
+}
+
+export function confirmSelfOrderByShareRequest(shareId: string, code: string) {
+  return apiFetch<import("@/lib/self-order-share").SelfOrderShareView>(
+    `/api/confirm-self-order/${shareId}`,
+    { method: "POST", body: JSON.stringify({ code }) },
+  );
+}
+
+/** 委托人确认常规委托系统报价 → 进入待匹配并通知管理员 */
 export function confirmOrderQuoteRequest(orderId: string) {
   return apiFetch<Order>(`/api/orders/${orderId}/confirm-quote`, {
     method: "POST",
@@ -334,10 +386,37 @@ export function updateMatchingOrderRequest(
       difficulty?: number;
       difficultyLabel?: string;
       difficultyKey?: string;
+      quantityPending?: boolean;
     }>;
+    areaQuote?: {
+      area: number;
+      projectType: string;
+      buildType: "new" | "renovation";
+      tracks: Array<{
+        track: "hardscape" | "softscape" | "drainage" | "electrical";
+        difficulty?: number;
+        difficultyLabel?: string;
+      }>;
+      taxCoefficient?: number;
+      structure?: {
+        mode: "pending" | "estimate";
+        sheets?: number;
+      };
+    };
   },
 ) {
   return apiFetch<Order>(`/api/orders/${orderId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+/** 管理员 / 超级管理员设定或增加景观结构张数（450 元/张） */
+export function updateOrderStructureSheetsRequest(
+  orderId: string,
+  body: { sheets?: number; addSheets?: number },
+) {
+  return apiFetch<Order>(`/api/orders/${orderId}/structure-sheets`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
@@ -377,9 +456,16 @@ export function proposeScanQuoteRequest(
 }
 
 /** 扫码下单：委托人确认费用与付款阶段 */
-export function confirmScanQuoteRequest(orderId: string) {
+export function confirmScanQuoteRequest(
+  orderId: string,
+  body?: {
+    totalAmount: number;
+    stages: { name: string; ratio: number; note?: string }[];
+  },
+) {
   return apiFetch<Order>(`/api/orders/${orderId}/confirm-scan-quote`, {
     method: "POST",
+    body: JSON.stringify(body ?? {}),
   });
 }
 
@@ -403,8 +489,11 @@ export function createBountyRequest(body: Partial<import("@/lib/types").Bounty>)
   });
 }
 
-export function signOrderRequest(orderId: string) {
-  return apiFetch<Order>(`/api/orders/${orderId}/sign`, { method: "POST" });
+export function signOrderRequest(orderId: string, signature: string) {
+  return apiFetch<Order>(`/api/orders/${orderId}/sign`, {
+    method: "POST",
+    body: JSON.stringify({ signature }),
+  });
 }
 
 export function payStageRequest(orderId: string, stageId: string) {
@@ -524,9 +613,10 @@ export function releaseStageRequest(orderId: string, stageId: string) {
   });
 }
 
-export function designerSignOrderRequest(orderId: string) {
+export function designerSignOrderRequest(orderId: string, signature: string) {
   return apiFetch<Order>(`/api/orders/${orderId}/designer-sign`, {
     method: "POST",
+    body: JSON.stringify({ signature }),
   });
 }
 
@@ -544,6 +634,28 @@ export function submitStageDeliverablesRequest(
   );
 }
 
+export function skipPreliminaryDeliverablesRequest(
+  orderId: string,
+  stageId: string,
+) {
+  return apiFetch<Order>(
+    `/api/orders/${orderId}/stages/${stageId}/skip-preliminary`,
+    { method: "POST" },
+  );
+}
+
+export function deleteStageDeliverableRequest(
+  orderId: string,
+  stageId: string,
+  fileId: string,
+) {
+  const qs = new URLSearchParams({ fileId });
+  return apiFetch<Order>(
+    `/api/orders/${orderId}/stages/${stageId}/deliverables?${qs.toString()}`,
+    { method: "DELETE" },
+  );
+}
+
 export function confirmStageDeliverablesRequest(
   orderId: string,
   stageId: string,
@@ -552,6 +664,34 @@ export function confirmStageDeliverablesRequest(
     `/api/orders/${orderId}/stages/${stageId}/confirm-deliverables`,
     { method: "POST" },
   );
+}
+
+export function ensureDeliverablesConfirmShareRequest(
+  orderId: string,
+  stageId: string,
+) {
+  return apiFetch<{ code: string; shareId: string; url: string }>(
+    `/api/orders/${orderId}/stages/${stageId}/confirm-share`,
+    { method: "POST" },
+  );
+}
+
+export function fetchDeliverablesConfirmShareRequest(shareId: string) {
+  return apiFetch<
+    import("@/lib/deliverables-confirm-share").DeliverablesConfirmView
+  >(`/api/confirm-deliverables/${shareId}`);
+}
+
+export function confirmDeliverablesByShareRequest(
+  shareId: string,
+  code: string,
+) {
+  return apiFetch<
+    import("@/lib/deliverables-confirm-share").DeliverablesConfirmView
+  >(`/api/confirm-deliverables/${shareId}`, {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
 }
 
 export function requestStageRevisionRequest(
@@ -596,6 +736,35 @@ export function submitOrderReviewRequest(
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+export function ensureOrderReviewShareRequest(orderId: string) {
+  return apiFetch<{ code: string; shareId: string; url: string }>(
+    `/api/orders/${orderId}/review-share`,
+    { method: "POST" },
+  );
+}
+
+export function fetchOrderReviewShareRequest(shareId: string) {
+  return apiFetch<import("@/lib/review-share").OrderReviewShareView>(
+    `/api/review-order/${shareId}`,
+  );
+}
+
+export function submitOrderReviewByShareRequest(
+  shareId: string,
+  body: {
+    code: string;
+    overall: number;
+    breakdown: import("@/lib/types").RatingBreakdown;
+    content: string;
+    anonymous?: boolean;
+  },
+) {
+  return apiFetch<import("@/lib/review-share").OrderReviewShareView>(
+    `/api/review-order/${shareId}`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
 }
 
 export function awardBountyRequest(bountyId: string, designerId: string) {
@@ -648,6 +817,8 @@ export function updateDesignerProfileRequest(
     calendarBatchSettings?: import("@/lib/types").Designer["calendarBatchSettings"];
     portfolio?: import("@/lib/types").PortfolioItem[];
     acceptingOrders?: boolean;
+    isOpenToTravel?: boolean;
+    supportsHandDrawing?: boolean;
   },
 ) {
   return apiFetch<import("@/lib/types").Designer>(
@@ -828,7 +999,11 @@ export function updateBountyRequest(
     title?: string;
     description?: string;
     reward?: number;
+    invoiceType?: import("@/lib/types").BountyInvoiceType;
+    paymentStages?: import("@/lib/types").BountyPaymentStage[];
     deadline?: string;
+    validUntil?: string | null;
+    titleVisibility?: import("@/lib/types").BountyTitleVisibility;
     requirements?: string[];
   },
 ) {

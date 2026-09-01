@@ -43,10 +43,11 @@ import {
   normalizePaymentStages,
 } from "@/lib/order-payment-stages";
 import { hydrateClientReviewWindow } from "@/lib/client-review";
-import { normalizeCompletedStatus } from "@/lib/order-lifecycle";
+import { isContractFullySigned, normalizeCompletedStatus } from "@/lib/order-lifecycle";
 import { syncTrackAssignmentStatuses } from "@/lib/order-track-status";
 import { resolveDesignerRegionTier } from "@/lib/constants";
 import { formatDesignerCode, normalizeDesignerCode } from "@/lib/designer-code";
+import { applyDesignerPresence } from "@/lib/designer-presence";
 import { applyReviewStatsToDesigner } from "@/lib/designer-rating";
 import { buildDesignerOnboardingReviewItem } from "@/lib/designer-onboarding-review";
 import {
@@ -104,7 +105,7 @@ function mergeDesignerRow(row: DesignerRow): Designer {
     typeof row.acceptingOrders === "boolean"
       ? row.acceptingOrders
       : d.acceptingOrders !== false;
-  return {
+  return applyDesignerPresence({
     ...d,
     code,
     portfolio,
@@ -112,7 +113,7 @@ function mergeDesignerRow(row: DesignerRow): Designer {
     regionTier,
     reviewStatus,
     acceptingOrders,
-  };
+  });
 }
 
 function mergeDesignerContact(
@@ -678,6 +679,16 @@ export async function hasOrderBetweenClientAndDesigner(
   return orders.length > 0;
 }
 
+/** 双方已完成合同签署后，才可互看对方电话 */
+export async function hasSignedOrderBetweenClientAndDesigner(
+  clientId: string,
+  designerId: string,
+): Promise<boolean> {
+  if (!clientId || !designerId) return false;
+  const orders = await listOrders({ clientId, designerId });
+  return orders.some((order) => isContractFullySigned(order));
+}
+
 export async function getClientWithAccountPhone(
   id: string,
 ): Promise<Client | null> {
@@ -701,10 +712,51 @@ export async function getOrder(id: string): Promise<Order | null> {
 export async function findOrderByContractId(
   contractId: string,
 ): Promise<Order | null> {
+  const key = contractId.trim();
+  if (!key || key === "preview") return null;
   const rows = await prisma.order.findMany({ select: { data: true } });
   for (const row of rows) {
     const order = hydrateOrder(parse<Order>(row.data));
-    if (order.contractId === contractId) return order;
+    if (order.contractId === key || order.id === key) return order;
+  }
+  return null;
+}
+
+export async function findOrderByDeliverablesConfirmShareId(
+  shareId: string,
+): Promise<{ order: Order; stageId: string } | null> {
+  if (!shareId.trim()) return null;
+  const rows = await prisma.order.findMany({ select: { data: true } });
+  for (const row of rows) {
+    const order = hydrateOrder(parse<Order>(row.data));
+    const stage = order.stages.find(
+      (s) => s.deliverablesConfirmShareId === shareId,
+    );
+    if (stage) return { order, stageId: stage.id };
+  }
+  return null;
+}
+
+export async function findOrderByReviewShareId(
+  shareId: string,
+): Promise<Order | null> {
+  if (!shareId.trim()) return null;
+  const rows = await prisma.order.findMany({ select: { data: true } });
+  for (const row of rows) {
+    const order = hydrateOrder(parse<Order>(row.data));
+    if (order.reviewShareId === shareId) return order;
+  }
+  return null;
+}
+
+export async function findOrderBySelfOrderShareId(
+  shareId: string,
+): Promise<Order | null> {
+  if (!shareId.trim()) return null;
+  const rows = await prisma.order.findMany({ select: { data: true } });
+  for (const row of rows) {
+    const order = hydrateOrder(parse<Order>(row.data));
+    if (order.selfOrderShareId === shareId) return order;
   }
   return null;
 }
@@ -750,6 +802,7 @@ export async function saveOrder(order: Order) {
     where: { id: order.id },
     data: {
       title: order.title,
+      clientId: order.clientId,
       designerId: order.designerId,
       status: order.status,
       totalAmount: order.totalAmount,

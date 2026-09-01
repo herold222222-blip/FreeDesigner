@@ -11,35 +11,31 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import type { DeliverableFile, PaymentStage } from "@/lib/types";
-import { FileBox, ImageIcon, Trash2, Upload } from "lucide-react";
+import { Archive, FileBox, ImageIcon, Trash2, Upload } from "lucide-react";
 import { useSessionStore } from "@/store/session-store";
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_LABEL,
   oversizedAttachmentMessage,
 } from "@/lib/attachment-limits";
-
-const ACCEPT = "image/jpeg,image/png,image/webp,image/gif,application/pdf,.jpg,.jpeg,.png,.webp,.gif,.pdf";
+import {
+  DELIVERABLE_ACCEPT,
+  DELIVERABLE_TYPE_HINT,
+  inferDeliverableMime,
+  isAllowedDeliverableFile,
+  isArchiveDeliverable,
+  isCadDeliverable,
+} from "@/lib/deliverable-files";
+import {
+  designerUploadHint,
+  designerUploadLabel,
+  type DeliverablePhase,
+} from "@/lib/deliverable-phase";
 
 function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function isAllowedFile(file: File) {
-  const name = file.name.toLowerCase();
-  const type = file.type.toLowerCase();
-  return (
-    type.startsWith("image/") ||
-    type === "application/pdf" ||
-    name.endsWith(".pdf") ||
-    name.endsWith(".jpg") ||
-    name.endsWith(".jpeg") ||
-    name.endsWith(".png") ||
-    name.endsWith(".webp") ||
-    name.endsWith(".gif")
-  );
 }
 
 function readFileAsDeliverable(file: File): Promise<DeliverableFile> {
@@ -50,12 +46,13 @@ function readFileAsDeliverable(file: File): Promise<DeliverableFile> {
         reject(new Error("读取失败"));
         return;
       }
-      const isImage = file.type.startsWith("image/");
+      const type = inferDeliverableMime(file);
+      const isImage = type.startsWith("image/");
       resolve({
         id: `file_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         name: file.name,
         size: formatFileSize(file.size),
-        type: file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream"),
+        type,
         uploadedAt: new Date().toISOString(),
         url: reader.result,
         thumbnail: isImage ? reader.result : undefined,
@@ -73,6 +70,8 @@ export function StageDeliverableUploadDialog({
   stage,
   revising,
   submitting,
+  appending,
+  phase = "preliminary",
   onConfirm,
 }: {
   open: boolean;
@@ -80,6 +79,9 @@ export function StageDeliverableUploadDialog({
   stage: PaymentStage | null;
   revising?: boolean;
   submitting?: boolean;
+  /** 已有成果时继续追加 */
+  appending?: boolean;
+  phase?: DeliverablePhase;
   onConfirm: (files: DeliverableFile[]) => void;
 }) {
   const push = useSessionStore((s) => s.pushNotification);
@@ -98,11 +100,11 @@ export function StageDeliverableUploadDialog({
   const handleFiles = (list: FileList | null) => {
     if (!list?.length) return;
     const picked = Array.from(list);
-    const invalid = picked.find((f) => !isAllowedFile(f));
+    const invalid = picked.find((f) => !isAllowedDeliverableFile(f));
     if (invalid) {
       push({
         title: "文件类型不支持",
-        description: "请上传图片（JPG / PNG / WebP / GIF）或 PDF。",
+        description: `请上传${DELIVERABLE_TYPE_HINT}。`,
         variant: "destructive",
       });
       return;
@@ -139,10 +141,12 @@ export function StageDeliverableUploadDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {revising ? "上传返修成果" : "上传本阶段成果"}
+            {designerUploadLabel(phase, { revising, appending })}
           </DialogTitle>
           <DialogDescription>
-            {stage ? `「${stage.name}」` : "本阶段"}请上传成果或确认单，仅支持图片或 PDF，单文件不超过 {MAX_ATTACHMENT_LABEL}。至少上传 1 个文件后才能确认。
+            {stage ? `「${stage.name}」。` : ""}
+            {designerUploadHint(phase, revising)}{" "}
+            可上传{DELIVERABLE_TYPE_HINT}，单文件不超过 {MAX_ATTACHMENT_LABEL}。至少选择 1 个文件后才能确认。
           </DialogDescription>
         </DialogHeader>
 
@@ -155,13 +159,13 @@ export function StageDeliverableUploadDialog({
             onClick={() => fileRef.current?.click()}
           >
             <Upload className="h-4 w-4" />
-            {reading ? "读取中..." : "选择图片或 PDF"}
+            {reading ? "读取中..." : "选择文件"}
           </Button>
           <input
             ref={fileRef}
             type="file"
             multiple
-            accept={ACCEPT}
+            accept={DELIVERABLE_ACCEPT}
             className="hidden"
             onChange={(e) => handleFiles(e.target.files)}
           />
@@ -185,7 +189,10 @@ export function StageDeliverableUploadDialog({
                     />
                   ) : (
                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white">
-                      {file.type === "application/pdf" ? (
+                      {isArchiveDeliverable(file) ? (
+                        <Archive className="h-4 w-4 text-ink-60" />
+                      ) : isCadDeliverable(file) ||
+                        file.type === "application/pdf" ? (
                         <FileBox className="h-4 w-4 text-ink-60" />
                       ) : (
                         <ImageIcon className="h-4 w-4 text-ink-60" />

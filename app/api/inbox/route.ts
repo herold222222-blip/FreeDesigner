@@ -4,6 +4,7 @@ import { handle, ok, fail } from "@/lib/server/api";
 import { requireSession } from "@/lib/server/auth";
 import {
   createInboxMessage,
+  deleteAllInboxMessages,
   listInboxMessages,
   markAllInboxRead,
 } from "@/lib/server/inbox";
@@ -64,5 +65,14 @@ export async function PATCH() {
     const session = await requireSession();
     const updated = await markAllInboxRead(session.userId);
     return ok({ updated });
+  });
+}
+
+/** 清空当前用户全部消息 */
+export async function DELETE() {
+  return handle(async () => {
+    const session = await requireSession();
+    const deleted = await deleteAllInboxMessages(session.userId);
+    return ok({ deleted });
   });
 }

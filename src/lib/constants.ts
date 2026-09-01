@@ -94,6 +94,7 @@ export const SPECIALTY_TRACKS: SpecialtyTrackL1[] = [
           { value: "scheme_doc", label: "方案文本" },
           { value: "scheme_model", label: "方案深化建模" },
           { value: "scheme_model_render", label: "方案深化建模 + 效果图" },
+          { value: "scheme_render_existing", label: "效果图（已有模型）" },
         ],
       },
       {
@@ -121,6 +122,7 @@ export const SPECIALTY_TRACKS: SpecialtyTrackL1[] = [
           { value: "scheme_doc", label: "方案文本" },
           { value: "scheme_model", label: "方案深化建模" },
           { value: "scheme_model_render", label: "方案深化建模 + 效果图" },
+          { value: "scheme_render_existing", label: "效果图（已有模型）" },
         ],
       },
       {
@@ -159,6 +161,7 @@ export const SPECIALTY_TRACKS: SpecialtyTrackL1[] = [
           { value: "scheme_doc", label: "方案文本" },
           { value: "scheme_model", label: "方案深化建模" },
           { value: "scheme_model_render", label: "方案深化建模 + 效果图" },
+          { value: "scheme_render_existing", label: "效果图（已有模型）" },
         ],
       },
       {
@@ -895,6 +898,20 @@ export const TAX_OPTIONS = [
   { value: "special_3", label: "3% 专票", coefficient: 1.04 },
 ];
 
+/** 报价卡 / 摘要：按系数精确对照发票类型（1% 普票=1.00，1% 专票=1.02，3% 专票=1.04） */
+export function resolveTaxCoefficientLabel(
+  coefficient: number,
+  options: { label: string; coefficient: number }[] = TAX_OPTIONS,
+): string {
+  if (!Number.isFinite(coefficient)) return "未注明发票类型";
+  const list = options.length ? options : TAX_OPTIONS;
+  const exact = list.find(
+    (t) => Math.abs(t.coefficient - coefficient) < 0.001,
+  );
+  if (exact) return exact.label;
+  return `未匹配的税率系数 ${coefficient.toFixed(2)}`;
+}
+
 /* ------------------------------------------------------------------ */
 /* 多语言（v1.1 新增）                                                  */
 /* ------------------------------------------------------------------ */
@@ -913,7 +930,7 @@ export const ORDER_STATUS_META = {
   pending_quote: { label: "待确认报价", tone: "amber" as const },
   matching: { label: "待匹配设计师", tone: "muted" as const },
   pending_designer_accept: { label: "待设计师确认委派", tone: "blue" as const },
-  pending_schedule: { label: "待确认档期", tone: "blue" as const },
+  pending_schedule: { label: "待确认匹配", tone: "blue" as const },
   pending_contract: { label: "待签约", tone: "amber" as const },
   in_progress: { label: "进行中", tone: "brand" as const },
   pending_review: { label: "待成果确认", tone: "blue" as const },
@@ -940,7 +957,7 @@ export const FROZEN_PERIOD_DAYS = 30;
 
 /** 平台管理费费率（v1.1：出图费的 10%） */
 export const PLATFORM_MANAGEMENT_RATE = 0.1;
-/** 商务费率：出图费 × 3% / 97%（v1.1） */
+/** 商务费率：按（出图/服务费 + 10%平台管理费）× 3% / 97%，约占税前总额 3% */
 export const BUSINESS_FEE_RATE = 0.03 / 0.97;
 /** 审图服务比例（v1.1：出图费的 8%） */
 export const AUDIT_SERVICE_RATE = 0.08;

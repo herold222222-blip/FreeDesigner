@@ -32,7 +32,13 @@ import {
   TimerReset,
   Wifi,
 } from "lucide-react";
-import { SUB_SPECIALTIES, getProjectTypes } from "@/lib/constants";
+import { SUB_SPECIALTIES, TAX_OPTIONS, getProjectTypes } from "@/lib/constants";
+import {
+  directedPlatformFeeRate,
+  formatDirectedPlatformFeeLabel,
+  netFromInclusiveFee,
+  taxPointRateFromOption,
+} from "@/lib/directed-platform-fee";
 import { getDesignerV11TimeRates } from "@/lib/designer-rates";
 import { expectedDateFieldLabel } from "@/lib/order-lifecycle";
 import { formatCurrency } from "@/lib/utils";
@@ -41,9 +47,13 @@ import type { DesignerLevel, HalfDaySlot, ServiceMode } from "@/lib/types";
 type DirectedBillingMode = "daily" | "monthly";
 import { useSessionStore } from "@/store/session-store";
 import { useRoleStore } from "@/store/role-store";
-import { createOrderRequest } from "@/lib/api-client";
+import { createDesignerSelfOrderRequest, createOrderRequest } from "@/lib/api-client";
+import { ScanPaymentStagesEditor } from "@/components/domain/scan-payment-stages-editor";
+import { defaultBountyPaymentStageDrafts } from "@/lib/bounty-payment-stages";
+import { paymentStagesValid, type ScanPaymentStageDraft } from "@/lib/scan-order";
 import { cn } from "@/lib/utils";
 import { DesignerName } from "@/components/domain/designer-name";
+import { maskDesignerPublicName } from "@/lib/designer-contact-privacy";
 import { GuestAccessGate } from "@/components/domain/guest-access-gate";
 import {
   DesignerLevelBadge,
@@ -59,9 +69,11 @@ import {
   type MonthKey,
 } from "@/lib/designer-schedule";
 import {
-  MONTHLY_BILLING_RULE,
   buildMonthlyStages,
+  formatMonthlyDueHint,
 } from "@/lib/monthly-billing";
+import { formatMonthlyBillingRule } from "@/lib/platform-commerce";
+import { usePlatformPricingStore } from "@/store/platform-pricing-store";
 
 export default function NewOrderPage() {
   return (
@@ -94,11 +106,19 @@ function NewOrderInner() {
   const [expectedDeliveryAt, setExpectedDeliveryAt] = useState("");
   const [withAudit, setWithAudit] = useState(false);
   const [withPM, setWithPM] = useState(false);
+  const [tax, setTax] = useState<(typeof TAX_OPTIONS)[number]>(TAX_OPTIONS[0]);
+  const commerce = usePlatformPricingStore((s) => s.config.commerce);
 
   const { data: designer } = useDesigner(designerId);
   const push = useSessionStore((s) => s.pushNotification);
   const role = useRoleStore((s) => s.role);
   const identityId = useRoleStore((s) => s.identityId);
+  const fromSelf = params.get("from") === "self";
+  const isSelfOrder =
+    fromSelf && role === "designer" && !!designerId && identityId === designerId;
+  const [paymentStages, setPaymentStages] = useState<ScanPaymentStageDraft[]>(
+    defaultBountyPaymentStageDrafts,
+  );
 
   const workDays = halfDaysToWorkDays(selectedSlots);
   const months = selectedMonths.length;
@@ -133,28 +153,34 @@ function NewOrderInner() {
     return unitDaily * Math.max(workDays, 0);
   }, [billingMode, workDays, months, designer, unitDaily, unitMonthly, v11Rates]);
 
-  const monthlyPreviewStages = useMemo(
-    () =>
-      billingMode === "monthly" && selectedMonths.length > 0
-        ? buildMonthlyStages("preview", totalAmount, selectedMonths)
-        : [],
-    [billingMode, selectedMonths, totalAmount],
-  );
+  const monthlyPreviewStages = useMemo(() => {
+    if (billingMode !== "monthly" || selectedMonths.length === 0) return [];
+    const start = expectedDeliveryAt.trim() || `${selectedMonths[0]}-01`;
+    return buildMonthlyStages(
+      "preview",
+      totalAmount,
+      selectedMonths,
+      start,
+      commerce,
+    );
+  }, [billingMode, selectedMonths, totalAmount, expectedDeliveryAt, commerce]);
 
-  const platformFee = Math.round(totalAmount * 0.08);
+  const taxPoint = taxPointRateFromOption(tax);
+  const platformFeeRate = directedPlatformFeeRate(taxPoint);
+  const designerNet = netFromInclusiveFee(totalAmount, platformFeeRate);
+  const platformFee = Math.max(0, totalAmount - designerNet);
   const auditFee = withAudit ? Math.round(totalAmount * 0.08) : 0;
   const pmFee = withPM ? Math.round(totalAmount * 0.2) : 0;
   const grandTotal = totalAmount + auditFee + pmFee;
-  const designerNet = totalAmount - platformFee;
 
   const [submitting, setSubmitting] = useState(false);
 
   const handleConfirm = async () => {
     if (!designer || !hasScheduleSelection || submitting) return;
+    if (isSelfOrder && !paymentStagesValid(paymentStages)) return;
     setSubmitting(true);
     try {
-      // 优先写入数据库（已登录的委托人）
-      const order = await createOrderRequest({
+      const payload = {
         designerId: designer.id,
         title,
         specialty: designer.specialty,
@@ -162,7 +188,7 @@ function NewOrderInner() {
         projectType,
         serviceMode,
         billingMode,
-        orderSource: "directed",
+        orderSource: "directed" as const,
         totalAmount,
         description,
         selectedSlots: billingMode === "daily" ? selectedSlots : [],
@@ -173,10 +199,29 @@ function NewOrderInner() {
         withAuditService: withAudit,
         withProjectManagement: withPM,
         expectedDeliveryAt,
-      });
+        taxCoefficient: tax.coefficient,
+        customStageRatios: isSelfOrder
+          ? paymentStages.map((s) => ({
+              name: s.name.trim(),
+              ratio: s.ratio,
+              note: s.note?.trim() || undefined,
+            }))
+          : undefined,
+      };
+      if (isSelfOrder) {
+        const created = await createDesignerSelfOrderRequest(payload);
+        push({
+          title: "订单已生成",
+          description: `请把确认链接发给委托人。订单号 ${created.code}。`,
+          variant: "success",
+        });
+        router.push(`/designer/orders/${created.id}?selfShare=1`);
+        return;
+      }
+      const order = await createOrderRequest(payload);
       push({
         title: "下单成功",
-        description: `订单号 ${order.code}，已发送给 ${designer.name} 确认档期。`,
+        description: `订单号 ${order.code}，已发送给 ${maskDesignerPublicName(designer.name)} 确认档期。`,
         variant: "success",
       });
       router.push("/client/directed-orders");
@@ -222,7 +267,7 @@ function NewOrderInner() {
   const STEPS = [
     { id: "service", label: "服务类型" },
     { id: "scope", label: "项目内容" },
-    { id: "payment", label: "确认 · 支付" },
+    { id: "payment", label: isSelfOrder ? "确认 · 付款阶段" : "确认 · 支付" },
   ];
 
   const canNextStep0 =
@@ -237,7 +282,7 @@ function NewOrderInner() {
     !!expectedDeliveryAt;
 
   return (
-    <div className="container-page py-10">
+    <div className="container-page py-6 sm:py-10">
       <Link
         href={`/designers/${designer.id}`}
         className="mb-4 inline-flex items-center gap-1 text-sm text-ink-60 hover:text-ink"
@@ -245,14 +290,14 @@ function NewOrderInner() {
         <ArrowLeft className="h-3.5 w-3.5" /> 返回设计师主页
       </Link>
 
-      <div className="grid gap-8 lg:grid-cols-[1fr_360px]">
-        <div className="space-y-6">
-          <div className="flex items-center gap-2">
+      <div className="grid min-w-0 gap-6 lg:grid-cols-[1fr_360px] lg:gap-8">
+        <div className="min-w-0 space-y-6">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
             {STEPS.map((s, i) => (
-              <div key={s.id} className="flex items-center gap-2">
+              <div key={s.id} className="flex min-w-0 items-center gap-1.5 sm:gap-2">
                 <div
                   className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold transition-colors",
+                    "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-colors sm:h-8 sm:w-8",
                     i <= step
                       ? "bg-ink text-white"
                       : "border border-ink-20 text-ink-40",
@@ -262,22 +307,22 @@ function NewOrderInner() {
                 </div>
                 <span
                   className={cn(
-                    "text-sm",
+                    "text-xs sm:text-sm",
                     i === step ? "font-medium text-ink" : "text-ink-60",
                   )}
                 >
                   {s.label}
                 </span>
                 {i < STEPS.length - 1 && (
-                  <div className="mx-2 h-px w-12 bg-ink-20" />
+                  <div className="mx-1 hidden h-px w-8 bg-ink-20 sm:mx-2 sm:block sm:w-12" />
                 )}
               </div>
             ))}
           </div>
 
           {step === 0 && (
-            <Card className="p-8">
-              <h2 className="text-lg font-semibold text-ink">第 1 步 · 选择服务类型与计费</h2>
+            <Card className="p-4 sm:p-8">
+              <h2 className="text-base font-semibold text-ink sm:text-lg">第 1 步 · 选择服务类型与计费</h2>
 
               <div className="mt-6 grid gap-4 md:grid-cols-2">
                 <ChoiceCard
@@ -364,9 +409,10 @@ function NewOrderInner() {
                 </div>
               )}
 
-              <div className="mt-7 flex items-center justify-end gap-2">
+              <div className="mt-7 flex justify-end">
                 <Button
                   variant="brand"
+                  className="w-full sm:w-auto"
                   onClick={() => setStep(1)}
                   disabled={!canNextStep0}
                 >
@@ -377,8 +423,8 @@ function NewOrderInner() {
           )}
 
           {step === 1 && (
-            <Card className="p-8">
-              <h2 className="text-lg font-semibold text-ink">
+            <Card className="p-4 sm:p-8">
+              <h2 className="text-base font-semibold text-ink sm:text-lg">
                 第 2 步 · 项目详细信息
               </h2>
               <div className="mt-6 grid gap-5">
@@ -450,6 +496,32 @@ function NewOrderInner() {
                 </div>
 
                 <div>
+                  <Label>
+                    发票类型 <span className="ml-1 text-rose-500">*</span>
+                  </Label>
+                  <p className="mt-1 text-[11px] text-ink-60">
+                    定向下单平台服务费为 {formatDirectedPlatformFeeLabel(taxPoint)}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {TAX_OPTIONS.map((t) => (
+                      <button
+                        key={t.value}
+                        type="button"
+                        onClick={() => setTax(t)}
+                        className={cn(
+                          "rounded-full border px-3 py-1.5 text-xs",
+                          tax.value === t.value
+                            ? "border-ink bg-ink text-white"
+                            : "border-ink-20 text-ink-60",
+                        )}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
                   <Label>v1.1 增值服务（可选加购）</Label>
                   <div className="mt-2 grid gap-3 md:grid-cols-2">
                     <label
@@ -504,12 +576,13 @@ function NewOrderInner() {
                 </div>
               </div>
 
-              <div className="mt-7 flex items-center justify-end gap-2">
-                <Button variant="ghost" onClick={() => setStep(0)}>
+              <div className="mt-7 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+                <Button variant="ghost" className="w-full sm:w-auto" onClick={() => setStep(0)}>
                   <ArrowLeft className="h-4 w-4" /> 上一步
                 </Button>
                 <Button
                   variant="brand"
+                  className="w-full sm:w-auto"
                   onClick={() => setStep(2)}
                   disabled={!canNextStep1}
                 >
@@ -520,27 +593,38 @@ function NewOrderInner() {
           )}
 
           {step === 2 && (
-            <Card className="p-8">
-              <h2 className="text-lg font-semibold text-ink">
-                第 3 步 · 确认订单并支付
+            <Card className="p-4 sm:p-8">
+              <h2 className="text-base font-semibold text-ink sm:text-lg">
+                {isSelfOrder
+                  ? "第 3 步 · 确认费用与付款阶段"
+                  : "第 3 步 · 确认订单并支付"}
               </h2>
               <div className="mt-6 space-y-4">
                 <div className="rounded-2xl border border-ink-20 bg-ink-20/20 p-5">
                   <div className="text-xs font-medium uppercase tracking-wider text-ink-40">
-                    {billingMode === "monthly"
-                      ? "按月雇佣付款方案"
-                      : "分阶段付款方案 · 默认 30 / 40 / 30"}
+                    {isSelfOrder
+                      ? "付款阶段（发给委托人确认）"
+                      : billingMode === "monthly"
+                        ? "按月雇佣付款方案"
+                        : "分阶段付款方案 · 默认 30 / 40 / 30"}
                   </div>
                   <div className="mt-3 grid gap-2 text-sm">
-                    {billingMode === "monthly"
-                      ? monthlyPreviewStages.map((stage) => (
+                    {isSelfOrder ? (
+                      <ScanPaymentStagesEditor
+                        stages={paymentStages}
+                        onChange={setPaymentStages}
+                        totalAmount={totalAmount}
+                      />
+                    ) : billingMode === "monthly" ? (
+                      monthlyPreviewStages.map((stage) => (
                           <MonthlyStageRow
                             key={stage.id}
                             label={stage.name}
                             amount={stage.amount}
+                            hint={formatMonthlyDueHint(stage, commerce)}
                           />
                         ))
-                      : (
+                      ) : (
                         <>
                           <StageRow label="预付款" ratio={0.3} amount={totalAmount} />
                           <StageRow
@@ -559,8 +643,8 @@ function NewOrderInner() {
                   <div className="mt-3 flex items-start gap-2 text-xs text-ink-60">
                     <TimerReset className="mt-0.5 h-3.5 w-3.5" />
                     {billingMode === "monthly"
-                      ? MONTHLY_BILLING_RULE
-                      : "每笔款项支付后进入平台 30 天托管,验收无误自动解冻给设计师。"}
+                      ? formatMonthlyBillingRule(commerce)
+                      : `每笔款项支付后进入平台 ${commerce.escrowDays} 天托管,验收无误自动解冻给设计师。`}
                   </div>
                 </div>
 
@@ -595,18 +679,25 @@ function NewOrderInner() {
                 </div>
               </div>
 
-              <div className="mt-7 flex items-center justify-end gap-2">
-                <Button variant="ghost" onClick={() => setStep(1)}>
+              <div className="mt-7 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+                <Button variant="ghost" className="w-full sm:w-auto" onClick={() => setStep(1)}>
                   <ArrowLeft className="h-4 w-4" /> 上一步
                 </Button>
                 <Button
                   variant="brand"
+                  className="h-auto w-full whitespace-normal py-3 text-center sm:w-auto"
                   onClick={handleConfirm}
-                  disabled={!hasScheduleSelection || submitting}
+                  disabled={
+                    !hasScheduleSelection ||
+                    submitting ||
+                    (isSelfOrder && !paymentStagesValid(paymentStages))
+                  }
                 >
                   {submitting
                     ? "提交中..."
-                    : `发送档期申请并支付预付款 ${formatCurrency(Math.round(totalAmount * 0.3))}`}
+                    : isSelfOrder
+                      ? "生成确认链接发给委托人"
+                      : `发送档期申请并支付预付款 ${formatCurrency(Math.round(totalAmount * 0.3))}`}
                 </Button>
               </div>
             </Card>
@@ -617,8 +708,13 @@ function NewOrderInner() {
           <Card className="p-6">
             <div className="mb-4 flex items-center gap-3">
               <Avatar className="h-12 w-12">
-                <AvatarImage src={designer.avatar} alt={designer.name} />
-                <AvatarFallback>{designer.name.slice(0, 1)}</AvatarFallback>
+                <AvatarImage
+                  src={designer.avatar}
+                  alt={maskDesignerPublicName(designer.name)}
+                />
+                <AvatarFallback>
+                  {maskDesignerPublicName(designer.name).slice(0, 1)}
+                </AvatarFallback>
               </Avatar>
               <div className="min-w-0 flex-1">
                 <div className="text-base font-semibold text-ink">
@@ -688,7 +784,7 @@ function NewOrderInner() {
                 />
               ) : null}
               <Row
-                label="平台手续费 (8%)"
+                label={`平台服务费（${formatDirectedPlatformFeeLabel(taxPoint)}）`}
                 value={`-${formatCurrency(platformFee)}`}
                 tone="rose"
               />
@@ -746,7 +842,7 @@ function ChoiceCard({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "flex items-start gap-3 rounded-2xl border p-5 text-left transition-all",
+        "flex min-w-0 items-start gap-3 rounded-2xl border p-4 text-left transition-all sm:p-5",
         disabled && "cursor-not-allowed opacity-50",
         active
           ? "border-ink bg-ink-20/30 shadow-sm"
@@ -761,7 +857,7 @@ function ChoiceCard({
       >
         <Icon className="h-4 w-4" />
       </div>
-      <div className="flex-1">
+      <div className="min-w-0 flex-1">
         <div className="text-sm font-semibold text-ink">{title}</div>
         <div className="mt-1 text-xs text-ink-60">{description}</div>
       </div>
@@ -794,13 +890,20 @@ function StageRow({
 function MonthlyStageRow({
   label,
   amount,
+  hint,
 }: {
   label: string;
   amount: number;
+  hint?: string | null;
 }) {
   return (
-    <div className="flex items-center justify-between rounded-xl border border-ink-20 bg-white p-3">
-      <div className="text-sm font-medium text-ink">{label}</div>
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-ink-20 bg-white p-3">
+      <div>
+        <div className="text-sm font-medium text-ink">{label}</div>
+        {hint ? (
+          <div className="mt-0.5 text-[11px] text-ink-60">{hint}</div>
+        ) : null}
+      </div>
       <div className="text-base font-semibold tracking-tight text-ink">
         {formatCurrency(amount)}
       </div>
@@ -826,9 +929,9 @@ function Row({
           ? "text-violet-700"
           : "text-ink";
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-ink-60">{label}</span>
-      <span className={toneCls}>{value}</span>
+    <div className="flex items-start justify-between gap-3">
+      <span className="shrink-0 text-ink-60">{label}</span>
+      <span className={cn("min-w-0 text-right", toneCls)}>{value}</span>
     </div>
   );
 }

@@ -1,20 +1,19 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useOrder, useDesigner, useDesigners } from "@/lib/use-data";
 import { useSessionStore } from "@/store/session-store";
+import { usePlatformPricingStore } from "@/store/platform-pricing-store";
 import {
-  signOrderRequest,
   releaseStageRequest,
   requestStageRevisionRequest,
   confirmStageDeliverablesRequest,
-  confirmFinalSettlementRequest,
   submitOrderReviewRequest,
+  ensureOrderReviewShareRequest,
   updateMatchingOrderRequest,
   confirmOrderQuoteRequest,
-  confirmScanQuoteRequest,
 } from "@/lib/api-client";
 import {
   MatchingOrderEditDialog,
@@ -23,22 +22,20 @@ import {
 import { invalidateApiPath } from "@/lib/use-data";
 import { StagePaymentDialog } from "@/components/domain/stage-payment-dialog";
 import { OrderReviewDialog } from "@/components/domain/order-review-dialog";
+import { ForwardDeliverablesConfirmDialog } from "@/components/domain/forward-deliverables-confirm-dialog";
 import { DisputeFilingDialog } from "@/components/domain/dispute-filing-dialog";
 import { OrderQuotePanel } from "@/components/domain/order-quote-panel";
 import { ClientLevelQuoteMatchPanel } from "@/components/domain/client-level-quote-match-panel";
 import {
-  canPayOrderStages,
   isContractFullySigned,
   isOrderCancelled,
   isOrderDeletable,
-  isPendingFinalSettlement,
   needsClientReview,
   needsClientSign,
   orderExpectedDateLabel,
-  resolveDisplayOrderStatus,
+  orderFulfillmentFinished,
 } from "@/lib/order-lifecycle";
 import {
-  allOrderStagesPaid,
   formatClientReviewWindow,
   isClientReviewClosed,
 } from "@/lib/client-review";
@@ -63,6 +60,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DesignerName } from "@/components/domain/designer-name";
+import { maskDesignerPublicName, resolveVisiblePhone } from "@/lib/designer-contact-privacy";
 import { DesignerLevelBadge } from "@/components/domain/level-badges";
 import { DEFAULT_DESIGNER_LEVEL } from "@/lib/level-management";
 import { ProjectIdCopy } from "@/components/domain/project-id-copy";
@@ -76,12 +74,11 @@ import { getPayableStageDeadline, getStagePaymentDeadline } from "@/lib/order-pa
 import { StageTimeline } from "@/components/domain/stage-timeline";
 import { OrderScheduleBillingPanel } from "@/components/domain/order-schedule-billing-panel";
 import { OrderDetailSwitchCard } from "@/components/domain/order-detail-switch-card";
+import { OrderElectronicContractCard } from "@/components/domain/order-electronic-contract-card";
 import { isTimeBilledOrder } from "@/lib/time-billing";
 import {
   isScanAwaitingClientQuoteConfirm,
   isScanAwaitingDesignerQuote,
-  isScanSourceOrder,
-  shouldHideScanPaymentTimeline,
 } from "@/lib/scan-order";
 import { ScanQuotePanel } from "@/components/domain/scan-quote-panel";
 import { OrderTrackAssignmentsPanel } from "@/components/domain/order-track-assignments";
@@ -89,15 +86,19 @@ import {
   OrderValueAddedBadges,
   OrderValueAddedServicesPanel,
 } from "@/components/domain/order-value-added-services";
-import { ORDER_STATUS_META, SUBJECT_TYPE_META } from "@/lib/constants";
-import { isDirectedOrderSource } from "@/lib/unified-project-list";
+import { SUBJECT_TYPE_META } from "@/lib/constants";
+import {
+  clientOrderListNav,
+  isBountySourcedOrder,
+} from "@/lib/unified-project-list";
+import { bountyTrackFromOrder } from "@/lib/order-assign-tracks";
 import type { Order } from "@/lib/types";
+import { resolveDeliverablePhase } from "@/lib/deliverable-phase";
 import {
   ArrowLeft,
   Calendar,
   CheckCircle2,
   Clock,
-  FileSignature,
   Hash,
   Info,
   MapPin,
@@ -106,6 +107,7 @@ import {
   ShieldAlert,
   Sparkles,
   Star,
+  Share2,
 } from "lucide-react";
 import { formatCurrency, formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 
@@ -116,17 +118,45 @@ export default function ClientOrderDetailPage({
 }) {
   return (
     <Suspense fallback={<div className="py-20 text-center text-ink-60">加载订单...</div>}>
-      <ClientOrderDetailInner id={params.id} />
+      <ClientOrderDetailGate id={params.id} />
     </Suspense>
   );
 }
 
-function ClientOrderDetailInner({ id }: { id: string }) {
+function ClientOrderDetailGate({ id }: { id: string }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { data: order, loading } = useOrder(id);
+
+  useEffect(() => {
+    if (order && isBountySourcedOrder(order) && order.bountyId) {
+      const qs = searchParams.toString();
+      router.replace(
+        `/client/bounties/${order.bountyId}${qs ? `?${qs}` : ""}`,
+      );
+    }
+  }, [order, router, searchParams]);
+
+  if (loading) {
+    return (
+      <div className="py-20 text-center text-ink-60">正在加载订单详情...</div>
+    );
+  }
+  if (order && isBountySourcedOrder(order) && order.bountyId) {
+    return (
+      <div className="py-20 text-center text-ink-60">正在前往悬赏项目...</div>
+    );
+  }
+  return <ClientOrderDetailInner id={id} />;
+}
+
+export function ClientOrderDetailInner({ id }: { id: string }) {
   const searchParams = useSearchParams();
   const { data: order, loading, refresh } = useOrder(id);
   const { data: designer } = useDesigner(order?.designerId);
   const { data: designers } = useDesigners();
   const push = useSessionStore((s) => s.pushNotification);
+  const commerce = usePlatformPricingStore((s) => s.config.commerce);
   const [busy, setBusy] = useState(false);
   const [payTarget, setPayTarget] = useState<{
     stageId: string;
@@ -191,7 +221,7 @@ function ClientOrderDetailInner({ id }: { id: string }) {
         title: "项目信息已更新",
         description:
           order.levelQuotes?.length || order.quote
-            ? "已重新生成等级报价卡。请客服再次确认后，即可选卡匹配设计师。"
+            ? "已按最新委托信息重新测算。请客服确认后，将显示等级报价卡并可匹配设计师。"
             : "请按最新信息重新匹配设计师。",
         variant: "success",
       });
@@ -220,15 +250,12 @@ function ClientOrderDetailInner({ id }: { id: string }) {
     );
   }
 
-  const meta = ORDER_STATUS_META[resolveDisplayOrderStatus(order)];
   const cancelled = isOrderCancelled(order);
+  const contractSigned = isContractFullySigned(order);
   const paymentDeadline = getPayableStageDeadline(order);
-  const ordersListHref = isDirectedOrderSource(order)
-    ? "/client/directed-orders"
-    : "/client/orders";
-  const ordersListLabel = isDirectedOrderSource(order)
-    ? "返回定向下单"
-    : "返回平台订单";
+  const statusCopy = describeClientOrderStatus(order);
+  const { href: ordersListHref, label: ordersListLabel } =
+    clientOrderListNav(order);
 
   return (
     <div className="space-y-6">
@@ -264,7 +291,7 @@ function ClientOrderDetailInner({ id }: { id: string }) {
               isTimeBilledOrder(order) ? "工作日历 & 付款" : "付款进度 & 阶段成果"
             }
             header={
-              !cancelled && allOrderStagesPaid(order) ? (
+              !cancelled && orderFulfillmentFinished(order) ? (
                 <ClientProjectReviewCard
                   order={order}
                   onReview={() => setReviewOpen(true)}
@@ -280,9 +307,6 @@ function ClientOrderDetailInner({ id }: { id: string }) {
                       <OrderStatusBadge order={order} />
                       {isAwaitingClientPaymentOrder(order) ? (
                         <AwaitingClientPaymentBadge perspective="client" />
-                      ) : null}
-                      {needsClientReview(order) ? (
-                        <Badge variant="brand">待评价</Badge>
                       ) : null}
                       {isClientReviewClosed(order) ? (
                         <Badge variant="muted">评论已关闭</Badge>
@@ -315,6 +339,8 @@ function ClientOrderDetailInner({ id }: { id: string }) {
                 <OrderEntrustDescription
                   description={order.description}
                   quoteLines={quoteLinesFromOrder(order)}
+                  primaryTrack={bountyTrackFromOrder(order)}
+                  revealContactPhone
                 />
 
                 <OrderAttachmentsList attachments={order.attachments} />
@@ -381,22 +407,42 @@ function ClientOrderDetailInner({ id }: { id: string }) {
                       "设计师将优先处理",
                     )
                   }
-                  onConfirmStage={(stageId) =>
+                  onConfirmStage={(stageId) => {
+                    const stage = order.stages.find((s) => s.id === stageId);
+                    const phase = stage
+                      ? resolveDeliverablePhase(stage, order.status)
+                      : "final";
                     runAction(
                       () => confirmStageDeliverablesRequest(order.id, stageId),
-                      "已确认本阶段设计成果",
-                    )
-                  }
+                      phase === "preliminary"
+                        ? "已确认初步成果"
+                        : "已确认最终成果",
+                      phase === "preliminary"
+                        ? "请等待设计师上传最终成果 / 确认单。"
+                        : undefined,
+                    );
+                  }}
                 />
-              ) : shouldHideScanPaymentTimeline(order) ? (
-                <p className="text-sm leading-relaxed text-ink-60">
-                  付款阶段与条件已在下单时按平台标准说明。设计师确认费用后将在此展示各阶段金额与进度。
-                </p>
               ) : (
                 <>
                   <p className="mb-5 text-sm text-ink-60">
-                    设计师上传成果文件后,你可在线免费预览。预览满意后付款解锁下载。
+                    {isScanAwaitingDesignerQuote(order)
+                      ? order.scanQuoteProposedAt
+                        ? "已将修改后的费用、付款阶段与付款条件发给设计师，等待对方确认。"
+                        : "付款阶段已由您在下单时填写。设计师确认费用后，各阶段金额与进度将在此更新。"
+                      : isScanAwaitingClientQuoteConfirm(order)
+                        ? "请核对总费用、付款阶段与付款条件。未改动可直接确认；如有修改将发回设计师再次确认。"
+                        : "设计师上传成果文件后,你可在线免费预览。预览满意后付款解锁下载。"}
                   </p>
+                  {isScanAwaitingClientQuoteConfirm(order) ? (
+                    <ScanQuotePanel
+                      order={order}
+                      perspective="client"
+                      onUpdated={refresh}
+                      busy={busy}
+                      setBusy={setBusy}
+                    />
+                  ) : (
                   <StageTimeline
                     order={order}
                     perspective="client"
@@ -415,6 +461,19 @@ function ClientOrderDetailInner({ id }: { id: string }) {
                         `${stage.name}已确认验收，款项已解冻`,
                       )
                     }
+                    onConfirmDeliverables={(stage) => {
+                      const phase = resolveDeliverablePhase(stage, order.status);
+                      runAction(
+                        () =>
+                          confirmStageDeliverablesRequest(order.id, stage.id),
+                        phase === "preliminary"
+                          ? "已确认初步成果"
+                          : "已确认最终成果",
+                        phase === "preliminary"
+                          ? "请等待设计师上传最终成果 / 确认单。"
+                          : undefined,
+                      );
+                    }}
                     onRevise={(stage) =>
                       runAction(
                         () => requestStageRevisionRequest(order.id, stage.id),
@@ -422,10 +481,13 @@ function ClientOrderDetailInner({ id }: { id: string }) {
                       )
                     }
                   />
+                  )}
                 </>
               )
             }
           />
+
+          <OrderElectronicContractCard order={order} party="client" />
 
           {!cancelled &&
           (order.status === "pending_quote" ||
@@ -441,6 +503,7 @@ function ClientOrderDetailInner({ id }: { id: string }) {
           ) : !order.levelQuotes?.length && order.quote ? (
             <OrderQuotePanel
               order={order}
+              hideUnconfirmedCards
               confirming={busy}
               onConfirm={
                 !cancelled && order.status === "pending_quote"
@@ -507,13 +570,21 @@ function ClientOrderDetailInner({ id }: { id: string }) {
                   className="flex items-start gap-3 rounded-xl outline-none transition-colors hover:bg-ink-20/30 focus-visible:ring-2 focus-visible:ring-ink/20"
                 >
                   <Avatar className="h-12 w-12">
-                    <AvatarImage src={designer.avatar} alt={designer.name} />
+                    <AvatarImage
+                      src={designer.avatar}
+                      alt={
+                        contractSigned
+                          ? designer.name
+                          : maskDesignerPublicName(designer.name)
+                      }
+                    />
                     <AvatarFallback>{designer.name.slice(0, 1)}</AvatarFallback>
                   </Avatar>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-ink">
                       <DesignerName
                         designer={designer}
+                        revealFullName={contractSigned}
                         className="text-sm font-medium"
                       />
                       {(designer.reviewStatus ?? "approved") === "approved" ? (
@@ -534,13 +605,20 @@ function ClientOrderDetailInner({ id }: { id: string }) {
                     <Phone className="h-3.5 w-3.5 shrink-0 text-ink-40" />
                     <dt className="shrink-0">联系电话</dt>
                     <dd className="font-medium text-ink">
-                      {designer.phone ? (
-                        <a href={`tel:${designer.phone}`} className="hover:text-brand">
-                          {designer.phone}
-                        </a>
-                      ) : (
-                        "—"
-                      )}
+                      {(() => {
+                        const visible = resolveVisiblePhone(
+                          designer.phone,
+                          contractSigned,
+                        );
+                        if (!visible) return "—";
+                        return visible.href ? (
+                          <a href={visible.href} className="hover:text-brand">
+                            {visible.display}
+                          </a>
+                        ) : (
+                          visible.display
+                        );
+                      })()}
                     </dd>
                   </div>
                   <div className="flex items-center gap-2">
@@ -593,255 +671,25 @@ function ClientOrderDetailInner({ id }: { id: string }) {
               当前状态说明
             </div>
             <div className="mt-3 flex items-start gap-2 text-xs text-ink-60">
-              <Info className="mt-0.5 h-3.5 w-3.5 text-ink-40" />
-              {meta.label} ·{" "}
-              {isAwaitingClientPaymentOrder(order)
-                ? order.stages.findIndex((s) => s.status === "pending") === 0
-                  ? "双方已签约，请支付预付款启动项目。"
-                  : "成果已确认，请支付本阶段款项。"
-                : order.status === "in_progress" &&
-                  "设计师正在推进项目,等待阶段成果上传。"}
-              {order.status === "pending_review" &&
-                "设计师已上传阶段成果，请预览并确认。"}
-              {order.status === "in_revision" &&
-                "设计师已收到返修需求,正在优化中。"}
-              {order.status === "completed" &&
-                "项目已结案,所有资金已结算并解冻。"}
-              {order.status === "pending_contract" &&
-                !isAwaitingClientPaymentOrder(order) &&
-                (isContractFullySigned(order)
-                  ? "双方已签约，请支付预付款启动项目。"
-                  : "电子合同已生成，等待双方签署。")}
-              {order.status === "pending_schedule" &&
-                (isScanAwaitingDesignerQuote(order)
-                  ? "需求已提交，等待设计师填写费用与付款阶段。"
-                  : isScanAwaitingClientQuoteConfirm(order)
-                    ? "设计师已提交费用方案，请确认后进入合同签署。"
-                    : "委托人已提交档期申请,请确认后进入合同签署。")}
-              {order.status === "pending_quote" &&
-                (needsCsQuoteConfirm(order)
-                  ? "报价卡仅供参考。客服根据您的需求二次确认后，即可选择等级报价卡并匹配设计师。"
-                  : "客服已更新报价。请查看等级报价卡后点击「匹配设计师」。")}
-              {order.status === "matching" &&
-                (order.clientMatch?.pools?.length ||
-                order.clientMatch?.trackPools?.length
-                  ? "请从备选设计师中确认人选；确认后将向对方发送接单邀请。项目信息已锁定，不可再修改。"
-                  : "已进入匹配，项目信息不可再修改。请确认备选设计师。")}
-              {order.status === "pending_designer_accept" &&
-                "已向设计师发送接单邀请；对方同意后进入签约，拒绝则系统自动改派。"}
-              {order.status === "cancelled" &&
-                "本订单已取消，仅可查看，不可操作。"}
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-40" />
+              {statusCopy.detail
+                ? `${statusCopy.label} · ${statusCopy.detail}`
+                : statusCopy.label}
             </div>
-          </Card>
-
-          {!cancelled && order.status === "pending_quote" &&
-          order.quote &&
-          !order.levelQuotes?.length ? (
-            <Card className="space-y-3 p-5">
-              <div className="text-xs uppercase tracking-wider text-ink-40">
-                待办操作
-              </div>
-              <Button
-                variant="brand"
-                size="sm"
-                className="w-full"
-                disabled={busy}
-                onClick={() =>
-                  runAction(
-                    () => confirmOrderQuoteRequest(order.id),
-                    "报价已确认，已通知管理员分配设计师",
-                  )
-                }
-              >
-                确认报价并提交匹配
-              </Button>
-            </Card>
-          ) : null}
-
-          {!cancelled && order.status === "pending_schedule" && isScanSourceOrder(order) ? (
-            <ScanQuotePanel
-              order={order}
-              perspective="client"
-              onUpdated={refresh}
-              busy={busy}
-              setBusy={setBusy}
-            />
-          ) : null}
-
-          {!cancelled && isScanAwaitingClientQuoteConfirm(order) ? (
-            <Card className="space-y-3 p-5">
-              <div className="text-xs uppercase tracking-wider text-ink-40">
-                待办操作
-              </div>
-              <Button
-                variant="brand"
-                size="sm"
-                className="w-full"
-                disabled={busy}
-                onClick={() =>
-                  runAction(
-                    () => confirmScanQuoteRequest(order.id),
-                    "已确认费用与付款阶段",
-                    "请双方签署电子合同并支付预付款。",
-                  )
-                }
-              >
-                确认费用与付款阶段
-              </Button>
-            </Card>
-          ) : null}
-
-          {!cancelled &&
-            (needsClientSign(order) ||
-            isPendingFinalSettlement(order) ||
-            (canPayOrderStages(order) &&
-              (!isTimeBilledOrder(order) &&
-                order.stages.some(
-                  (s) => s.status === "pending" || s.status === "frozen",
-                )) ||
-              (isTimeBilledOrder(order) &&
-                order.stages.some((s) => s.status === "pending")))) && (
-            <Card className="space-y-3 p-5">
-              <div className="text-xs uppercase tracking-wider text-ink-40">
-                待办操作
-              </div>
-              {needsClientSign(order) && (
-                <Button
-                  variant="brand"
-                  size="sm"
-                  className="w-full"
-                  disabled={busy}
-                  onClick={() =>
-                    runAction(
-                      () => signOrderRequest(order.id),
-                      "合同已签署，请等待设计师签约后支付预付款",
-                    )
-                  }
-                >
-                  签署电子合同
-                </Button>
-              )}
-              {isPendingFinalSettlement(order) && (
-                <Button
-                  variant="brand"
-                  size="sm"
-                  className="w-full"
-                  disabled={busy}
-                  onClick={() =>
-                    runAction(
-                      () => confirmFinalSettlementRequest(order.id),
-                      "已确认最终服务完成，项目已结案",
-                    )
-                  }
-                >
-                  最终服务完成
-                </Button>
-              )}
-              {canPayOrderStages(order) && !isTimeBilledOrder(order) &&
-                order.stages.map((s) => {
-                  if (s.status === "pending") {
-                    return (
-                      <Button
-                        key={s.id}
-                        variant="brand"
-                        size="sm"
-                        className="w-full"
-                        disabled={busy}
-                        onClick={() =>
-                          setPayTarget({
-                            stageId: s.id,
-                            name: s.name,
-                            amount: s.amount,
-                          })
-                        }
-                      >
-                        支付 {s.name}（{formatCurrency(s.amount)}）
-                      </Button>
-                    );
-                  }
-                  if (s.status === "frozen") {
-                    return (
-                      <Button
-                        key={s.id}
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        disabled={busy}
-                        onClick={() =>
-                          runAction(
-                            () => releaseStageRequest(order.id, s.id),
-                            `${s.name}已确认验收，款项已解冻`,
-                          )
-                        }
-                      >
-                        确认验收 {s.name}
-                      </Button>
-                    );
-                  }
-                  return null;
-                })}
-              {canPayOrderStages(order) && isTimeBilledOrder(order) &&
-                order.stages
-                  .filter((s) => s.status === "pending")
-                  .map((s) => (
-                    <Button
-                      key={s.id}
-                      variant="brand"
-                      size="sm"
-                      className="w-full"
-                      disabled={busy}
-                      onClick={() =>
-                        setPayTarget({
-                          stageId: s.id,
-                          name: s.name,
-                          amount: s.amount,
-                        })
-                      }
-                    >
-                      支付 {s.name}（{formatCurrency(s.amount)}）
-                    </Button>
-                  ))}
-            </Card>
-          )}
-
-          <Card className="p-5">
-            <div className="text-xs uppercase tracking-wider text-ink-40">
-              电子合同
-            </div>
-            <div className="mt-3 flex items-start gap-3 rounded-xl border border-ink-20 p-3">
-              <FileSignature className="mt-0.5 h-4 w-4 text-brand" />
-              <div>
-                <div className="text-sm font-medium text-ink">
-                  {order.contractId || "尚未生成"}
-                </div>
-                <div className="text-xs text-ink-60">
-                  {isContractFullySigned(order)
-                    ? "已签署 · 永久存档"
-                    : order.contractId
-                      ? "已生成 · 待签署完成"
-                      : "尚未生成"}
-                </div>
-              </div>
-            </div>
-            <Button asChild variant="outline" size="sm" className="mt-3 w-full">
-              <Link href={`/contracts/${order.contractId || "preview"}`}>
-                在线查阅合同
-              </Link>
-            </Button>
           </Card>
 
           <Card className="space-y-2 p-5 text-xs text-ink-60">
             <div className="flex items-start gap-2">
               <Sparkles className="mt-0.5 h-3.5 w-3.5 text-brand" />
-              每笔款项进入 30 天托管期,验收无误自动解冻可提现。
+              每笔款项进入 {commerce.escrowDays} 天托管期，验收无误自动解冻可提现。
             </div>
             <div className="flex items-start gap-2">
               <Sparkles className="mt-0.5 h-3.5 w-3.5 text-brand" />
-              超过 30 天委托人无异议,系统自动确认成果无误。
+              设计师提交最终成果后 {commerce.deliverableConfirmDays} 天内未确认，系统自动确认并开始验收期；确认后 {commerce.afterSalesDays} 天无异议自动解冻。返修后从设计师重新提交起重新计时。
             </div>
             <div className="flex items-start gap-2">
               <Sparkles className="mt-0.5 h-3.5 w-3.5 text-brand" />
-              最后一笔费用支付后 30 天内可评价设计师，逾期评论关闭。
+              最后一笔费用支付后 {commerce.clientReviewDays} 天内可评价设计师，逾期评论关闭。
             </div>
           </Card>
         </aside>
@@ -865,9 +713,20 @@ function ClientOrderDetailInner({ id }: { id: string }) {
         designerName={designer?.name ?? "设计师"}
         deadlineHint={formatClientReviewWindow(order)}
         onSubmit={async (payload) => {
-          await submitOrderReviewRequest(order.id, payload);
-          push({ title: "评价已提交，感谢你的反馈", variant: "success" });
-          refresh();
+          try {
+            await submitOrderReviewRequest(order.id, payload);
+            push({ title: "评价已提交，感谢你的反馈", variant: "success" });
+            refresh();
+          } catch (e) {
+            const message = e instanceof Error ? e.message : "提交失败";
+            if (message.includes("已完成评价")) {
+              push({ title: "评价已提交，感谢你的反馈", variant: "success" });
+              refresh();
+              return;
+            }
+            push({ title: message, variant: "destructive" });
+            throw e;
+          }
         }}
       />
       ) : null}
@@ -924,7 +783,33 @@ function ClientProjectReviewCard({
   order: Order;
   onReview: () => void;
 }) {
-  if (isOrderCancelled(order) || !allOrderStagesPaid(order)) return null;
+  const canReview = needsClientReview(order);
+  const [share, setShare] = useState<{
+    code: string;
+    shareId: string;
+    url: string;
+  } | null>(null);
+  const [forwardOpen, setForwardOpen] = useState(false);
+
+  useEffect(() => {
+    if (!canReview) {
+      setShare(null);
+      return;
+    }
+    let active = true;
+    ensureOrderReviewShareRequest(order.id)
+      .then((next) => {
+        if (active) setShare(next);
+      })
+      .catch(() => {
+        if (active) setShare(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [canReview, order.id]);
+
+  if (isOrderCancelled(order) || !orderFulfillmentFinished(order)) return null;
   return (
     <Card className="space-y-3 border-amber-200 bg-amber-50/50 p-5">
       <div className="text-xs uppercase tracking-wider text-ink">
@@ -935,15 +820,157 @@ function ClientProjectReviewCard({
         {order.clientReviewed
           ? "已提交评分和评论，感谢你的反馈。"
           : formatClientReviewWindow(order) ??
-            "最后一笔费用已支付，可对设计师评分并填写评论。"}
+            "最终成果已确认，可对设计师评分并填写评论。"}
       </div>
-      {needsClientReview(order) ? (
-        <Button variant="brand" size="sm" className="w-full" onClick={onReview}>
-          去评价设计师
-        </Button>
+      {canReview ? (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {share?.code ? (
+            <div className="mr-auto rounded-lg border border-ink-20 bg-white px-2.5 py-1">
+              <div className="text-[10px] leading-none text-ink-40">验证码</div>
+              <div className="mt-0.5 font-mono text-sm font-semibold tracking-[0.28em] text-ink">
+                {share.code}
+              </div>
+            </div>
+          ) : null}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!share?.url}
+            onClick={() => setForwardOpen(true)}
+          >
+            <Share2 className="h-3.5 w-3.5" />
+            转发
+          </Button>
+          <Button variant="brand" size="sm" onClick={onReview}>
+            去评价设计师
+          </Button>
+        </div>
+      ) : null}
+      {share ? (
+        <ForwardDeliverablesConfirmDialog
+          open={forwardOpen}
+          onOpenChange={setForwardOpen}
+          url={share.url}
+          code={share.code}
+          title={`${order.code} · 项目评价`}
+          confirmLabel="评价"
+        />
       ) : null}
     </Card>
   );
+}
+
+function describeClientOrderStatus(order: Order): { label: string; detail: string } {
+  if (order.status === "cancelled") {
+    return {
+      label: "已取消",
+      detail: "本订单已取消，仅可查看，不可操作。",
+    };
+  }
+  if (needsClientReview(order)) {
+    return {
+      label: "待评价",
+      detail: "项目已经完成，等待评价。",
+    };
+  }
+  if (isClientReviewClosed(order)) {
+    return {
+      label: "已完成",
+      detail: "项目已经完成，评价窗口已关闭。",
+    };
+  }
+  if (order.clientReviewed) {
+    return {
+      label: "已完成",
+      detail: "项目已结案，所有资金已结算并解冻。",
+    };
+  }
+
+  if (isAwaitingClientPaymentOrder(order)) {
+    return {
+      label: "待支付",
+      detail:
+        order.stages.findIndex((s) => s.status === "pending") === 0
+          ? "双方已签约，请支付预付款启动项目。"
+          : "成果已确认，请支付本阶段款项。",
+    };
+  }
+
+  switch (order.status) {
+    case "pending_review":
+      return {
+        label: "待成果确认",
+        detail: "设计师已上传阶段成果，请预览并确认。",
+      };
+    case "in_revision":
+      return {
+        label: "返修修改中",
+        detail: "设计师已收到返修需求，正在优化中。",
+      };
+    case "in_progress":
+      return {
+        label: "进行中",
+        detail: "设计师正在推进项目，等待阶段成果上传。",
+      };
+    case "completed":
+      return {
+        label: "待评价",
+        detail: "项目已经完成，等待评价。",
+      };
+    case "pending_contract":
+      return {
+        label: "待签约",
+        detail: isContractFullySigned(order)
+          ? "双方已签约，请支付预付款启动项目。"
+          : needsClientSign(order)
+            ? order.designerSignedContract
+              ? "设计师已经签署，请尽快完成签署。双方签完后即可支付预付款。"
+              : "电子合同已生成，请先签署。双方签完后即可支付预付款。"
+            : "您已签署合同，等待设计师完成签署。",
+      };
+    case "pending_schedule":
+      return {
+        label: isScanAwaitingDesignerQuote(order)
+          ? order.scanQuoteProposedAt
+            ? "已发回设计师确认费用"
+            : "定向需求已经提交，等待设计师确认总费用和付款阶段"
+          : "待确认匹配",
+        detail: isScanAwaitingDesignerQuote(order)
+          ? order.scanQuoteProposedAt
+            ? "设计师确认后进入签约；如对方继续修改，将通知您再次核对。"
+            : ""
+          : isScanAwaitingClientQuoteConfirm(order)
+            ? "请核对费用、付款阶段与付款条件。未改动可直接确认；如有修改将发回设计师确认。"
+            : "委托人已提交档期申请，请确认后进入合同签署。",
+      };
+    case "pending_quote":
+      return {
+        label: "待确认报价",
+        detail: needsCsQuoteConfirm(order)
+          ? "已收到项目委托信息。客服确认需求后，将显示等级报价卡，即可选卡匹配设计师。"
+          : "客服已更新报价。请查看等级报价卡后点击「匹配设计师」。",
+      };
+    case "matching":
+      return {
+        label: "待匹配设计师",
+        detail:
+          order.clientMatch?.pools?.length ||
+          order.clientMatch?.trackPools?.length
+            ? "请从备选设计师中确认人选；确认后将向对方发送接单邀请。项目信息已锁定，不可再修改。"
+            : "已进入匹配，项目信息不可再修改。请确认备选设计师。",
+      };
+    case "pending_designer_accept":
+      return {
+        label: "待设计师确认委派",
+        detail:
+          "已向设计师发送接单邀请；对方同意后进入签约，拒绝则系统自动改派。",
+      };
+    default:
+      return {
+        label: "进行中",
+        detail: "请根据当前订单进度继续处理。",
+      };
+  }
 }
 
 function Field({

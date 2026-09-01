@@ -402,19 +402,21 @@ export type OrderStatus =
   | "terminated"
   | "cancelled";
 
-/** 常规委托按天/按月：系统生成的报价单快照 */
+/** 常规委托按面积 / 按天 / 按月：系统生成的报价单快照 */
 export interface OrderQuoteLine {
   track: string;
   trackLabel: string;
   l3?: string;
   l3Label?: string;
   quantity: number;
-  unit: "day" | "month";
+  unit: "day" | "month" | "sqm" | "sheet";
   difficulty: number;
   difficultyLabel?: string;
   basicFee: number;
   platformFee: number;
   subtotal: number;
+  /** 景观结构等：委托人选择待系统评估，数量由管理员后续填写 */
+  quantityPending?: boolean;
 }
 
 export interface OrderQuote {
@@ -436,6 +438,10 @@ export interface OrderQuote {
     serviceMode: "remote" | "onsite";
     withDrawing: boolean;
     note: string;
+    /** 按面积：新建 / 改扩建 */
+    buildType?: "new" | "renovation";
+    /** 按面积：测算用景观面积（㎡） */
+    projectAreaSqm?: number;
   };
 }
 
@@ -490,13 +496,21 @@ export interface PaymentStage {
   status: "pending" | "paid" | "frozen" | "released";
   paidAt?: string;
   releasedAt?: string;
-  /** 成果确认截止（超时自动确认，默认付款后 10 天） */
+  /** 验收期解冻截止（确认最终成果后起算） */
   acceptanceDeadlineAt?: string;
   /** 委托人应付截止日（超时未付则计入监管「超时订单」） */
   dueAt?: string;
   deliverables?: DeliverableFile[];
   /** 委托人确认本阶段成果的时间 */
   deliverablesConfirmedAt?: string;
+  /** 委托人确认初步成果的时间 */
+  preliminaryConfirmedAt?: string;
+  /** 设计师跳过初步成果、直接上传最终成果 */
+  preliminarySkippedAt?: string;
+  /** 转发成果用的 4 位验证码 */
+  deliverablesConfirmCode?: string;
+  /** 转发成果链接的公开 id */
+  deliverablesConfirmShareId?: string;
   /** 付款条件说明（扫码报价等场景） */
   note?: string;
   /** 更换设计师后，管理员更新的本阶段各设计师支付比例拆分 */
@@ -552,6 +566,8 @@ export interface DeliverableFile {
   locked: boolean;
   /** 上传该成果的设计师 */
   designerId?: string;
+  /** 初步成果 / 最终成果 / 返修成果；缺省视为最终（兼容旧数据） */
+  kind?: "preliminary" | "final" | "revision";
 }
 
 export interface RevisionRequest {
@@ -592,6 +608,8 @@ export interface Order {
   projectAreaSqm?: number;
   totalAmount: number;
   feeRate: number;
+  /** 发票税率系数（定向下单 / 扫码用于 5%+税点） */
+  taxCoefficient?: number;
   createdAt: string;
   expectedDeliveryAt: string;
   contractId: string;
@@ -599,7 +617,7 @@ export interface Order {
   revisions: RevisionRequest[];
   messages: OrderMessage[];
   description: string;
-  /** 按天/按月常规委托的系统报价单（兼容：默认中级卡） */
+  /** 常规委托系统报价单（按面积 / 按天 / 按月；兼容：默认中级卡） */
   quote?: OrderQuote;
   /** 常规委托多档等级报价卡（见习 / 中级 / 高级 / 特级） */
   levelQuotes?: OrderQuote[];
@@ -638,6 +656,10 @@ export interface Order {
   clientSignedContract?: boolean;
   /** 设计师已签署电子合同 */
   designerSignedContract?: boolean;
+  /** 委托人手写签名（data URL） */
+  clientContractSignature?: string;
+  /** 设计师手写签名（data URL） */
+  designerContractSignature?: string;
   /** 双方签约完成时间 */
   contractSignedAt?: string;
   /** 全部阶段验收后等待最终结案确认 */
@@ -652,10 +674,24 @@ export interface Order {
   reviewDeadlineAt?: string;
   /** 评价期已结束且委托人未评价（评论关闭） */
   reviewExpired?: boolean;
+  /** 转发评价链接的公开 id */
+  reviewShareId?: string;
+  /** 转发评价用的 4 位验证码 */
+  reviewShareCode?: string;
   /** 关联悬赏 id（悬赏委托来源） */
   bountyId?: string;
-  /** 扫码下单：设计师已提交费用与付款阶段，待委托人确认 */
+  /** 一级 / 二级 / 三级专业需求（悬赏中标会从悬赏带入） */
+  primaryTrack?: BountyTrack;
+  /** 扫码下单：最近一次提交费用方案的时间（双方来回确认期间会更新） */
   scanQuoteProposedAt?: string;
+  /** 扫码 / 定向委托：最近一次修改或提交费用条款的一方，用于判断下一位确认人 */
+  scanQuoteLastActor?: "client" | "designer";
+  /** 设计师自己下单：待委托人通过分享链接确认 */
+  selfOrderPendingClaim?: boolean;
+  /** 设计师自己下单转发确认链接 */
+  selfOrderShareId?: string;
+  /** 设计师自己下单转发确认用的 4 位验证码 */
+  selfOrderShareCode?: string;
 }
 
 /** 第三方审图师 · 对应某一三级专业 */
@@ -797,6 +833,17 @@ export interface BountyLocation {
   label: string;
 }
 
+/** 悬赏发票：不开发票 / 1%普票 / 1%专票 / 3%专票 */
+export type BountyInvoiceType = "none" | "ordinary_1" | "special_1" | "special_3";
+
+/** 悬赏付款阶段（委托人发布时设定） */
+export interface BountyPaymentStage {
+  name: string;
+  /** 占项目总额比例，0–100 */
+  ratio: number;
+  note?: string;
+}
+
 /** 悬赏项目附件（url 为本地上传后的 data URL 或可下载地址） */
 export interface BountyAttachment {
   name: string;
@@ -804,10 +851,15 @@ export interface BountyAttachment {
   size?: number;
 }
 
+/** 悬赏大厅项目名称：公开全文 / 脱敏（首字 + 专业） */
+export type BountyTitleVisibility = "public" | "masked";
+
 export interface Bounty {
   id: string;
   code: string;
   title: string;
+  /** 大厅项目名称展示；缺省视为脱敏，兼容旧数据 */
+  titleVisibility?: BountyTitleVisibility;
   specialty: Specialty;
   /** 一级专业 + 二/三级专业（后两者可多选） */
   primaryTrack: BountyTrack;
@@ -818,8 +870,16 @@ export interface Bounty {
   description: string;
   reward: number;
   rewardModel: "fixed" | "negotiable";
-  /** 成果提交截止时间 */
+  /** 发票类型：不开发票 / 1%普票 / 1%专票 / 3%专票 */
+  invoiceType?: BountyInvoiceType;
+  /** 与发票对应的税率系数，中标生成订单时写入 */
+  taxCoefficient?: number;
+  /** 委托人设定的付款阶段（比例合计 100%；缺省视为一笔全款） */
+  paymentStages?: BountyPaymentStage[];
+  /** 成果提交截止时间；空 = 协商确定；有值 = 整点 ISO（旧数据可为 YYYY-MM-DD） */
   deadline: string;
+  /** 悬赏报名有效期；null / 缺省 = 不限；有值 = 整点 ISO 时间 */
+  validUntil?: string | null;
   publishedAt: string;
   publisherId: string;
   status: "open" | "paused" | "in_review" | "awarded" | "completed" | "closed";
@@ -828,7 +888,7 @@ export interface Bounty {
   applicants: BountyApplicant[];
   /** 公开场景隐藏报名明细时保留的报名人数 */
   applicantCount?: number;
-  /** 委托人倾向的设计师编号（选填，可多个） */
+  /** 委托人倾向的设计师编号。悬赏：发布后向其发送报名邀请（非匹配） */
   preferredDesignerCodes?: string[];
   /** 可接单设计主体筛选（选填） */
   subjectFilters?: BountySubjectFilters;

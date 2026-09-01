@@ -12,7 +12,8 @@ import type {
   WorkloadStatus,
 } from "@/lib/types";
 import { resolveDisplayOrderStatus } from "@/lib/order-lifecycle";
-import { isAwaitingClientPaymentOrder } from "@/lib/order-supervision";
+import { needsClientReview } from "@/lib/client-review";
+import { isAwaitingClientPaymentOrder, needsCsQuoteConfirm } from "@/lib/order-supervision";
 import { scanQuoteStatusLabel } from "@/lib/scan-order";
 import { cn } from "@/lib/utils";
 
@@ -99,11 +100,22 @@ export function OrderStatusBadge({
     | "status"
     | "clientSignedContract"
     | "designerSignedContract"
+    | "clientReviewed"
+    | "reviewExpired"
+    | "reviewDeadlineAt"
+    | "settlementConfirmedAt"
     | "stages"
     | "orderSource"
     | "scanQuoteProposedAt"
+    | "scanQuoteLastActor"
+    | "selfOrderPendingClaim"
+    | "clientId"
+    | "levelQuotes"
+    | "quote"
+    | "csQuoteConfirmedAt"
   >;
 }) {
+  const awaitingReview = !!order && needsClientReview(order as Order);
   const resolved = order
     ? resolveDisplayOrderStatus(order)
     : (status as OrderStatus);
@@ -115,16 +127,35 @@ export function OrderStatusBadge({
     isAwaitingClientPaymentOrder(order as Order);
   const deemphasizeInProgress =
     paymentAlsoShown && resolved === "in_progress";
-  const variant = deemphasizeInProgress
+  const variant = awaitingReview
     ? "amber"
-    : ORDER_VARIANT_MAP[resolved];
+    : deemphasizeInProgress
+      ? "amber"
+      : ORDER_VARIANT_MAP[resolved];
+  const statusText =
+    label ??
+    (awaitingReview
+      ? "待评价"
+      : scanLabel ??
+        (order && needsCsQuoteConfirm(order)
+          ? "待客服确认报价"
+          : ORDER_STATUS_META[resolved].label));
+  const showAwaitingMatch =
+    !!order &&
+    needsCsQuoteConfirm(order) &&
+    statusText !== "待匹配";
   return (
-    <Badge
-      variant={variant as any}
-      className={deemphasizeInProgress ? "bg-amber-100 text-ink" : undefined}
-    >
-      {label ?? scanLabel ?? ORDER_STATUS_META[resolved].label}
-    </Badge>
+    <>
+      <Badge
+        variant={variant as any}
+        className={deemphasizeInProgress ? "bg-amber-100 text-ink" : undefined}
+      >
+        {statusText}
+      </Badge>
+      {showAwaitingMatch ? (
+        <Badge variant="muted">待匹配</Badge>
+      ) : null}
+    </>
   );
 }
 

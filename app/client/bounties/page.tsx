@@ -18,7 +18,7 @@ export default function ClientBountiesPage() {
             我的悬赏
           </h2>
           <p className="mt-1 text-sm text-ink-60">
-            管理你发布的悬赏项目，查看报名设计师并选择合作方，可按状态与专业筛选。
+            管理你发布的全部悬赏项目。未中标前可选设计师；中标后在本页继续签约、付款与验收。
           </p>
         </div>
         <Button asChild variant="brand">

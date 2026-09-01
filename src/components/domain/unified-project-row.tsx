@@ -69,7 +69,18 @@ export function UnifiedProjectRow({
             {item.totalAmount > 0 ? (
               <span className="inline-flex items-center gap-1.5">
                 <Coins className="h-3.5 w-3.5" />
-                {formatCurrency(item.totalAmount)}
+                <span>
+                  {formatCurrency(item.totalAmount)}
+                  {item.takeHomeAmount != null &&
+                  item.takeHomeAmount !== item.totalAmount ? (
+                    <span className="ml-1 inline-flex flex-col text-rose-600">
+                      <span className="whitespace-nowrap">实际到手金额</span>
+                      <span className="whitespace-nowrap">
+                        {formatCurrency(item.takeHomeAmount)}
+                      </span>
+                    </span>
+                  ) : null}
+                </span>
               </span>
             ) : (
               <span className="text-ink-40">面议 / 待确认</span>
@@ -77,12 +88,34 @@ export function UnifiedProjectRow({
             <span>创建 {formatDate(item.createdAt)}</span>
           </div>
         </div>
-        <Link
-          href={item.href}
-          className="inline-flex items-center gap-1 text-xs font-medium text-brand hover:gap-2 transition-all"
-        >
-          查看详情 <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
+        {perspective === "designer" && item.kind === "bounty" ? (
+          item.alreadyApplied ? (
+            <span className="rounded-full border border-ink-20 px-3 py-1.5 text-xs text-ink-60">
+              已报名
+            </span>
+          ) : item.status === "open" ? (
+            <Link
+              href={item.href}
+              className="inline-flex items-center gap-1 rounded-full bg-ink px-3 py-1.5 text-xs font-medium text-white hover:bg-ink/90"
+            >
+              立即报名 <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          ) : (
+            <Link
+              href={item.href}
+              className="inline-flex items-center gap-1 text-xs font-medium text-brand hover:gap-2 transition-all"
+            >
+              查看详情 <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          )
+        ) : (
+          <Link
+            href={item.href}
+            className="inline-flex items-center gap-1 text-xs font-medium text-brand hover:gap-2 transition-all"
+          >
+            查看详情 <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        )}
       </div>
     </Card>
   );

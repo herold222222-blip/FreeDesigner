@@ -13,8 +13,10 @@ import {
   PaymentDeadlineNote,
 } from "@/components/domain/payment-deadline-note";
 import { getPendingReviewStage } from "@/lib/client-order-focus";
+import { clientConfirmLabel, resolveDeliverablePhase } from "@/lib/deliverable-phase";
 import { DESIGNER_ORDER_STATUS_LABEL } from "@/lib/designer-order-status-filter";
-import { resolveDisplayOrderStatus } from "@/lib/order-lifecycle";
+import { isContractFullySigned, resolveDisplayOrderStatus } from "@/lib/order-lifecycle";
+import { maskDesignerPublicName } from "@/lib/designer-contact-privacy";
 import { getOrderPaymentProgress, needsClientReview, isAwaitingClientReviewOrder } from "@/lib/client-review";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -60,6 +62,7 @@ import { OrderDeleteButton } from "@/components/domain/order-delete-button";
 import {
   clientCanEditEntrust,
   isAwaitingClientPaymentOrder,
+  needsCsQuoteConfirm,
 } from "@/lib/order-supervision";
 
 interface Props {
@@ -108,8 +111,13 @@ export function OrderRow({
     perspective === "client" && clientCanEditEntrust(order);
   const canAdminCancel =
     perspective === "admin" && ADMIN_CANCELLABLE.has(order.status);
-  const needsQuoteConfirm =
-    perspective === "client" && order.status === "pending_quote" && !!order.quote;
+  const awaitingCsQuote =
+    perspective === "client" && needsCsQuoteConfirm(order);
+  const needsClientQuoteAction =
+    perspective === "client" &&
+    order.status === "pending_quote" &&
+    !!order.quote &&
+    !awaitingCsQuote;
 
   const handleSaveMatching = async (payload: MatchingOrderEditPayload) => {
     if (saving) return;
@@ -176,7 +184,7 @@ export function OrderRow({
     <Card
       className={cn(
         "p-5 transition-all hover:border-ink hover:shadow-md",
-        needsQuoteConfirm &&
+        (awaitingCsQuote || needsClientQuoteAction) &&
           "border-amber-300 bg-gradient-to-br from-amber-50 to-orange-50/80 ring-1 ring-amber-200/60 hover:border-amber-400",
         paymentHighlight &&
           payable &&
@@ -241,11 +249,17 @@ export function OrderRow({
           <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-ink-60">
             <span className="inline-flex items-center gap-1.5">
               <User2 className="h-3.5 w-3.5" />
-              {counterparty?.name ?? "—"}
+              {perspective === "client" && counterparty
+                ? isContractFullySigned(order)
+                  ? counterparty.name
+                  : maskDesignerPublicName(counterparty.name)
+                : (counterparty?.name ?? "—")}
             </span>
             <span className="inline-flex items-center gap-1.5">
               <Coins className="h-3.5 w-3.5" />
-              {formatCurrency(order.totalAmount)} ·
+              {awaitingCsQuote
+                ? "报价待客服确认 · "
+                : `${formatCurrency(order.totalAmount)} · `}
               {order.billingMode === "area"
                 ? "常规面积报价"
                 : order.billingMode === "daily"
@@ -274,9 +288,22 @@ export function OrderRow({
           </div>
         </div>
         <div className="flex w-48 flex-col items-end gap-2">
-          {needsQuoteConfirm ? (
+          {awaitingCsQuote ? (
             <div className="w-full rounded-xl border border-amber-200/80 bg-white/80 p-3 text-right">
-              <div className="text-[10px] text-amber-800">待确认报价</div>
+              <div className="text-[10px] text-amber-800">待客服确认</div>
+              <p className="mt-2 text-left text-[11px] leading-relaxed text-ink-60">
+                客服确认委托需求后，将显示等级报价卡并可匹配设计师。
+              </p>
+              <Link
+                href={href}
+                className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg border border-ink-20 bg-white px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:border-ink/40"
+              >
+                查看详情 <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+          ) : needsClientQuoteAction ? (
+            <div className="w-full rounded-xl border border-amber-200/80 bg-white/80 p-3 text-right">
+              <div className="text-[10px] text-amber-800">待选卡匹配</div>
               <div className="mt-1 text-lg font-bold tabular-nums text-brand">
                 {formatCurrency(order.quote!.total)}
               </div>
@@ -284,7 +311,8 @@ export function OrderRow({
                 href={href}
                 className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand/90"
               >
-                确认报价 <ArrowRight className="h-3.5 w-3.5" />
+                {order.levelQuotes?.length ? "匹配设计师" : "确认报价"}{" "}
+                <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
           ) : reviewHighlight && reviewStage ? (
@@ -302,7 +330,10 @@ export function OrderRow({
                 href={href}
                 className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-blue-700"
               >
-                确认成果 <ArrowRight className="h-3.5 w-3.5" />
+                {clientConfirmLabel(
+                  resolveDeliverablePhase(reviewStage, order.status),
+                )}{" "}
+                <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
           ) : paymentHighlight && payable ? (

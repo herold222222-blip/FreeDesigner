@@ -20,7 +20,7 @@ import {
 
 const BASE_NAV = [
   { href: "/client", label: "工作台", icon: LayoutDashboard, exact: true },
-  { href: "/client/orders", label: "平台订单", icon: PackageSearch },
+  { href: "/client/orders", label: "常规订单", icon: PackageSearch },
   { href: "/client/directed-orders", label: "定向下单", icon: Crosshair },
   { href: "/client/bounties", label: "我的悬赏", icon: Megaphone },
   { href: "/client/wallet", label: "钱包 · 支付", icon: Wallet },

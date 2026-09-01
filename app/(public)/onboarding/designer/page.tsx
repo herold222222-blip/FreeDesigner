@@ -1534,7 +1534,7 @@ function DesignerOnboardingInner() {
                     <ul className="mt-1.5 list-disc space-y-1 pl-5 text-xs">
                       <li>系统自动核验姓名 / 身份证 / 手机号实名</li>
                       <li>人工抽查专业资质；作品案例在审核通过后补充上传</li>
-                      <li>审核通过后账号正式上线,在线状态默认开启</li>
+                      <li>审核通过后账号正式上线；登录后自动在线，下线后仍保持 2 小时</li>
                       <li>审核结果将通过短信和站内消息通知</li>
                     </ul>
                   </div>

@@ -11,8 +11,8 @@ export function PublicFooter() {
   const showPublish = role === "guest" || canPublishEntrust(role);
 
   return (
-    <footer className="mt-24 border-t border-ink-20 bg-ink-20/20">
-      <div className="container-page grid gap-10 py-14 md:grid-cols-4">
+    <footer className="mt-12 border-t border-ink-20 bg-ink-20/20 sm:mt-24">
+      <div className="container-page grid gap-8 py-10 md:grid-cols-4 md:gap-10 md:py-14">
         <div className="space-y-3 md:col-span-2">
           <div className="flex items-center gap-2">
             <BrandLogo size={36} />

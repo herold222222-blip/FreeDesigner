@@ -37,6 +37,26 @@ export const CLIENT_PLATFORM_STATUS_TABS: {
   { value: "cancelled", label: "已取消" },
 ];
 
+/** 委托人定向下单：无平台匹配，待确认对应常规的「匹配中」 */
+export const CLIENT_DIRECTED_STATUS_TABS: {
+  value: ClientOrderStatusFilter;
+  label: string;
+}[] = CLIENT_PLATFORM_STATUS_TABS.filter(
+  (t) => t.value !== "awaiting_match",
+).map((t) => (t.value === "matching" ? { ...t, label: "待确认匹配" } : t));
+
+export const CLIENT_DIRECTED_TAB_PRIORITY: ClientOrderStatusFilter[] = [
+  "pending_payment",
+  "pending_review",
+  "pending_client_review",
+  "pending_client_sign",
+  "pending_designer_sign",
+  "in_revision",
+  "matching",
+  "in_progress",
+  "all",
+];
+
 export { CLIENT_DEFAULT_TAB_PRIORITY };
 
 function orderMatchesClientStatus(

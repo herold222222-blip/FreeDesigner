@@ -4,16 +4,18 @@
  * 公式（按面积）：
  *   出图费 = 设计费基数 × 项目区域系数 × 项目类型系数 × 设计师等级系数
  *           × 设计师区域系数 × 客户等级系数 × 三级专业难度系数 × 园建协调附加系数 × 建造系数
- *   审图费 = 出图费 × 8%
- *   项目管理费 = 出图费 × 20%
- *   平台管理费 = 出图费 × 10% + 商务费（商务费 = 出图费 × 3% / 97%）
+ *   审图费 = 勾选第三方审图时：出图费 × 8%（否则 0）
+ *   项目管理费 = 勾选项目管理时：出图费 × 20%（否则 0）
+ *   平台管理费 = 出图费 × 10% + 商务费
+ *   商务费 = (出图费 + 出图费×10%) × 3% / 97%（约占税前总额 3%）
  *   总设计费 = (出图费 + 审图费 + 项目管理费 + 平台管理费) × 税率系数
  *
  * 公式（按时间）：
  *   基础服务费 = 设计费基数 × 项目区域系数 × 项目类型系数 × 设计师等级系数
  *               × 设计师区域系数 × 服务范围系数 × 三级专业难度系数 × 客户等级系数
  *   远程服务：设计师区域系数统一 1.0；客户等级按委托人实际等级
- *   平台管理费 = 基础服务费 × 10% + 商务费（商务费 = 服务费 × 3% / 97%）
+ *   平台管理费 = 基础服务费 × 10% + 商务费
+ *   商务费 = (基础服务费 + 基础服务费×10%) × 3% / 97%
  *   总服务费 = (基础服务费 + 平台管理费) × 税率系数
  */
 
@@ -33,19 +35,23 @@ export interface AreaBasedFeeInput {
   /** 项目类型（用于查项目类型系数） */
   projectType: string;
   /** 设计师等级 */
-  designerLevel: DesignerLevel;
+  designerLevel: DesignerLevel | "";
   /** 设计师所在地梯队 */
-  designerRegion: RegionTier;
+  designerRegion: RegionTier | "";
   /** 客户等级 */
-  clientLevel: ClientLevel;
+  clientLevel: ClientLevel | "";
   /** 选择了哪些三级专业（选项 key 与 LandscapeBasePricing 字段一致） */
   selectedTracks: ("hardscape" | "softscape" | "drainage" | "electrical")[];
   /** 三级专业难度系数：园建/绿化为高1.2~极低0.6；给排水为人工取水1或自动喷灌1.3；电气固定1 */
   difficulty: Record<string, number>;
   /** 是否新建（new）或改扩建（renovation） */
-  buildType: "new" | "renovation";
+  buildType: "new" | "renovation" | "";
   /** 税率系数 */
   taxCoefficient: number;
+  /** 是否加购第三方审图（出图费 × 8%） */
+  withAuditService?: boolean;
+  /** 是否加购项目管理员（出图费 × 20%） */
+  withProjectManagement?: boolean;
 }
 
 export interface AreaBasedFeeBreakdown {
@@ -75,6 +81,22 @@ export interface AreaBasedFeeBreakdown {
     coordinator: number; // 园建协调
     build: number;
     tax: number;
+    platformManagement: number;
+    businessFee: number;
+  };
+}
+
+/** 管理费按基数计提；商务费按「基数 + 管理费」计提，使商务费约占税前（基数+管理费+商务费）的标定比例 */
+export function calcPlatformAndBusinessFee(
+  baseFee: number,
+  config: Pick<PlatformPricingConfig, "platformManagementRate" | "businessFeeRate">,
+) {
+  const managementFee = Math.round(baseFee * config.platformManagementRate);
+  const businessFee = Math.round((baseFee + managementFee) * config.businessFeeRate);
+  return {
+    managementFee,
+    businessFee,
+    platformFee: managementFee + businessFee,
   };
 }
 
@@ -100,9 +122,18 @@ export function calculateAreaBasedFee(
   config: PlatformPricingConfig = DEFAULT_PLATFORM_PRICING_CONFIG,
 ): AreaBasedFeeBreakdown {
   const projectTypeCoeff = config.landscapeProjectTypeCoefficient[input.projectType] ?? 1.0;
-  const designerLevelCoeff = config.designerLevelCoefficient[input.designerLevel];
-  const designerRegionCoeff = config.regionTierCoefficient[input.designerRegion];
-  const clientLevelCoeff = config.clientLevelCoefficient[input.clientLevel];
+  const designerLevelCoeff =
+    (input.designerLevel
+      ? config.designerLevelCoefficient[input.designerLevel]
+      : undefined) ?? 1.0;
+  const designerRegionCoeff =
+    (input.designerRegion
+      ? config.regionTierCoefficient[input.designerRegion]
+      : undefined) ?? 1.0;
+  const clientLevelCoeff =
+    (input.clientLevel
+      ? config.clientLevelCoefficient[input.clientLevel]
+      : undefined) ?? 1.0;
   const buildCoeff = input.buildType === "renovation" ? config.renovationCoefficient : 1.0;
   const includesGarden = input.selectedTracks.includes("hardscape");
   const hasOtherTrack = input.selectedTracks.some((t) => t !== "hardscape");
@@ -128,10 +159,13 @@ export function calculateAreaBasedFee(
   }
 
   const drawingFee = Object.values(byTrack).reduce((s, n) => s + n, 0);
-  const auditFee = Math.round(drawingFee * config.auditServiceRate);
-  const projectManagementFee = Math.round(drawingFee * config.projectManagementRate);
-  const businessFee = Math.round(drawingFee * config.businessFeeRate);
-  const platformFee = Math.round(drawingFee * config.platformManagementRate) + businessFee;
+  const auditFee = input.withAuditService
+    ? Math.round(drawingFee * config.auditServiceRate)
+    : 0;
+  const projectManagementFee = input.withProjectManagement
+    ? Math.round(drawingFee * config.projectManagementRate)
+    : 0;
+  const { businessFee, platformFee } = calcPlatformAndBusinessFee(drawingFee, config);
 
   const subtotal = drawingFee + auditFee + projectManagementFee + platformFee;
   const total = Math.round(subtotal * input.taxCoefficient);
@@ -154,6 +188,8 @@ export function calculateAreaBasedFee(
       coordinator: coordinatorCoeff,
       build: buildCoeff,
       tax: input.taxCoefficient,
+      platformManagement: config.platformManagementRate,
+      businessFee: config.businessFeeRate,
     },
   };
 }
@@ -161,10 +197,10 @@ export function calculateAreaBasedFee(
 /** 常规委托按工时远程：设计师地区所有梯队统一按 1.0；驻场仍按所在梯队 */
 export function timeDesignerRegionCoefficient(
   mode: "remote" | "onsite",
-  designerRegion: RegionTier,
+  designerRegion: RegionTier | "",
   config: PlatformPricingConfig = DEFAULT_PLATFORM_PRICING_CONFIG,
 ): number {
-  if (mode === "remote") return 1;
+  if (mode === "remote" || !designerRegion) return 1;
   return config.regionTierCoefficient[designerRegion] ?? 1;
 }
 
@@ -182,11 +218,11 @@ export interface TimeBasedFeeInput {
   /** 选择的专业 */
   track: "hardscape" | "softscape" | "drainage" | "electrical" | "structure";
   /** 设计师等级 */
-  designerLevel: DesignerLevel;
+  designerLevel: DesignerLevel | "";
   /** 设计师所在地梯队 */
-  designerRegion: RegionTier;
+  designerRegion: RegionTier | "";
   /** 客户等级 */
-  clientLevel: ClientLevel;
+  clientLevel: ClientLevel | "";
   /** 是否含绘图（onsite 时影响服务范围系数） */
   withDrawing: boolean;
   /** 三级专业难度系数 */
@@ -211,11 +247,11 @@ export interface TimeBasedFeeBreakdown {
 export interface SchemeAreaBasedFeeInput {
   area: number;
   projectType: string;
-  designerLevel: DesignerLevel;
-  designerRegion: RegionTier;
-  clientLevel: ClientLevel;
+  designerLevel: DesignerLevel | "";
+  designerRegion: RegionTier | "";
+  clientLevel: ClientLevel | "";
   schemeDifficulty: LandscapeSchemeDifficultyKey;
-  buildType: "new" | "renovation";
+  buildType: "new" | "renovation" | "";
   taxCoefficient: number;
 }
 
@@ -236,6 +272,8 @@ export interface SchemeAreaBasedFeeBreakdown {
     schemeDifficulty: number;
     build: number;
     tax: number;
+    platformManagement: number;
+    businessFee: number;
   };
 }
 
@@ -256,9 +294,18 @@ export function calculateSchemeAreaBasedFee(
 ): SchemeAreaBasedFeeBreakdown {
   const { tier, baseFee } = getLandscapeSchemeBaseFee(input.area, config);
   const projectTypeCoeff = config.landscapeProjectTypeCoefficient[input.projectType] ?? 1.0;
-  const designerLevelCoeff = config.designerLevelCoefficient[input.designerLevel];
-  const designerRegionCoeff = config.regionTierCoefficient[input.designerRegion];
-  const clientLevelCoeff = config.clientLevelCoefficient[input.clientLevel];
+  const designerLevelCoeff =
+    (input.designerLevel
+      ? config.designerLevelCoefficient[input.designerLevel]
+      : undefined) ?? 1.0;
+  const designerRegionCoeff =
+    (input.designerRegion
+      ? config.regionTierCoefficient[input.designerRegion]
+      : undefined) ?? 1.0;
+  const clientLevelCoeff =
+    (input.clientLevel
+      ? config.clientLevelCoefficient[input.clientLevel]
+      : undefined) ?? 1.0;
   const schemeDifficultyCoeff = getSchemeDifficultyCoefficient(input.schemeDifficulty, config);
   const buildCoeff = input.buildType === "renovation" ? config.renovationCoefficient : 1.0;
 
@@ -272,8 +319,7 @@ export function calculateSchemeAreaBasedFee(
     buildCoeff;
 
   const drawingFee = Math.round(baseFee * multiplier);
-  const businessFee = Math.round(drawingFee * config.businessFeeRate);
-  const platformFee = Math.round(drawingFee * config.platformManagementRate) + businessFee;
+  const { businessFee, platformFee } = calcPlatformAndBusinessFee(drawingFee, config);
   const subtotal = drawingFee + platformFee;
   const total = Math.round(subtotal * input.taxCoefficient);
 
@@ -294,6 +340,8 @@ export function calculateSchemeAreaBasedFee(
       schemeDifficulty: schemeDifficultyCoeff,
       build: buildCoeff,
       tax: input.taxCoefficient,
+      platformManagement: config.platformManagementRate,
+      businessFee: config.businessFeeRate,
     },
   };
 }
@@ -305,13 +353,19 @@ export function calculateTimeBasedFee(
   const rateTable =
     input.unit === "day" ? config.landscapeDailyRate : config.landscapeMonthlyRate;
   const perUnitBase = rateTable[input.mode][input.track];
-  const designerLevelCoeff = config.designerLevelCoefficient[input.designerLevel];
+  const designerLevelCoeff =
+    (input.designerLevel
+      ? config.designerLevelCoefficient[input.designerLevel]
+      : undefined) ?? 1.0;
   const designerRegionCoeff = timeDesignerRegionCoefficient(
     input.mode,
     input.designerRegion,
     config,
   );
-  const clientLevelCoeff = config.clientLevelCoefficient[input.clientLevel];
+  const clientLevelCoeff =
+    (input.clientLevel
+      ? config.clientLevelCoefficient[input.clientLevel]
+      : undefined) ?? 1.0;
   // 服务范围系数：远程 100% / 驻场不含图 100% / 驻场含图 110%
   const serviceRangeCoeff =
     input.mode === "remote"
@@ -331,8 +385,7 @@ export function calculateTimeBasedFee(
       input.difficulty *
       clientLevelCoeff,
   );
-  const businessFee = Math.round(basicFee * config.businessFeeRate);
-  const platformFee = Math.round(basicFee * config.platformManagementRate) + businessFee;
+  const { businessFee, platformFee } = calcPlatformAndBusinessFee(basicFee, config);
   const subtotal = basicFee + platformFee;
   const total = Math.round(subtotal * input.taxCoefficient);
   return {

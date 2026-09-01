@@ -1,8 +1,13 @@
 import type { Order, PaymentStage } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
+import { DEFAULT_PLATFORM_COMMERCE } from "@/lib/platform-commerce";
+import {
+  getLastDeliverablesConfirmedAt,
+  isLastDeliverablesConfirmed,
+} from "@/lib/order-payment-stages";
 
-/** 最后一笔费用支付后，委托人可评价的天数 */
-export const CLIENT_REVIEW_DAYS = 30;
+/** 最后一笔费用支付后，委托人可评价的天数（与参数中心商务设置一致） */
+export const CLIENT_REVIEW_DAYS = DEFAULT_PLATFORM_COMMERCE.clientReviewDays;
 
 function addDaysIso(from: string, days: number): string {
   return new Date(
@@ -52,10 +57,14 @@ export function getLastStagePaidAt(order: Pick<Order, "stages">): string | null 
   return latest;
 }
 
-/** 评价截止时间：最后一笔支付起 30 天 */
+/** 评价截止时间：确认最终成果（且费用已付清）起 30 天 */
 export function resolveReviewDeadlineAt(order: Order): string | null {
   if (!allOrderStagesPaid(order)) return null;
-  const start = getLastStagePaidAt(order) || order.settlementConfirmedAt;
+  if (!isLastDeliverablesConfirmed(order)) return null;
+  const start =
+    getLastDeliverablesConfirmedAt(order) ||
+    getLastStagePaidAt(order) ||
+    order.settlementConfirmedAt;
   if (start) return addDaysIso(start, CLIENT_REVIEW_DAYS);
   return order.reviewDeadlineAt ?? null;
 }
@@ -70,11 +79,12 @@ export function isClientReviewClosed(order: Order): boolean {
   return new Date(deadline).getTime() <= Date.now();
 }
 
-/** 最后一笔费用已支付，且评价窗口仍有效 */
+/** 费用已付清且最终成果已确认，评价窗口仍有效 */
 export function needsClientReview(order: Order): boolean {
   if (order.status === "cancelled") return false;
   if (order.clientReviewed) return false;
   if (!allOrderStagesPaid(order)) return false;
+  if (!isLastDeliverablesConfirmed(order)) return false;
   if (order.reviewExpired) return false;
   const deadline = resolveReviewDeadlineAt(order);
   if (deadline && new Date(deadline).getTime() <= Date.now()) return false;
@@ -99,7 +109,7 @@ export function formatClientReviewWindow(order: Order): string | null {
   if (!deadline) return null;
   if (order.clientReviewed) return "已提交评价";
   if (isClientReviewClosed(order)) {
-    return "评论已关闭（支付完成后超过 30 天）";
+    return "评论已关闭（确认最终成果后超过 30 天）";
   }
   const days = getClientReviewRemainingDays(order) ?? 0;
   const until = formatDate(deadline);
@@ -111,6 +121,7 @@ export function formatClientReviewWindow(order: Order): string | null {
 export function hydrateClientReviewWindow(order: Order): void {
   if (order.status === "cancelled" || order.clientReviewed) return;
   if (!allOrderStagesPaid(order)) return;
+  if (!isLastDeliverablesConfirmed(order)) return;
   const deadline = resolveReviewDeadlineAt(order);
   if (!deadline) return;
   order.reviewDeadlineAt = deadline;

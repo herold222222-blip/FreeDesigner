@@ -19,7 +19,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { DeliverableFileList } from "@/components/domain/deliverable-file-list";
 import { PaymentSplitsList } from "@/components/domain/stage-payment-splits";
-import { isOrderCancelled } from "@/lib/order-lifecycle";
+import { isOrderCancelled, isContractFullySigned } from "@/lib/order-lifecycle";
+import { resolveProjectDesignerName } from "@/lib/designer-contact-privacy";
 import { isTrackAssignmentServiceFinished } from "@/lib/order-track-status";
 import {
   Dialog,
@@ -128,6 +129,8 @@ export function OrderTrackAssignmentsPanel({
 }) {
   const { data: allDesigners } = useDesigners();
   const waitingAccept = order.status === "pending_designer_accept";
+  const revealFullName =
+    mode === "admin" || isContractFullySigned(order);
   const assignments = order.trackAssignments ?? [];
   const replacements = order.designerReplacements ?? [];
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -252,6 +255,7 @@ export function OrderTrackAssignmentsPanel({
                         <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
                           <DesignerName
                             designer={designer}
+                            revealFullName={revealFullName}
                             className="text-base font-semibold"
                           />
                           {designer.code ? (
@@ -347,6 +351,7 @@ export function OrderTrackAssignmentsPanel({
         onOpenChange={setHistoryOpen}
         replacements={replacements}
         getDesigner={getDesigner}
+        revealFullName={revealFullName}
       />
     </Card>
   );
@@ -357,11 +362,13 @@ function DesignerReplacementHistoryDialog({
   onOpenChange,
   replacements,
   getDesigner,
+  revealFullName = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   replacements: OrderDesignerReplacement[];
   getDesigner: (id: string) => Designer | undefined;
+  revealFullName?: boolean;
 }) {
   const sorted = [...replacements].sort(
     (a, b) => new Date(b.replacedAt).getTime() - new Date(a.replacedAt).getTime(),
@@ -382,6 +389,12 @@ function DesignerReplacementHistoryDialog({
             const labels = resolveTrackLabels(record.l1, record.l2, record.l3);
             const prev = getDesigner(record.previousDesignerId);
             const curr = getDesigner(record.currentDesignerId);
+            const prevName = prev
+              ? resolveProjectDesignerName(prev.name, revealFullName)
+              : "原设计师";
+            const currName = curr
+              ? resolveProjectDesignerName(curr.name, revealFullName)
+              : "现任设计师";
             const adj = record.paymentAdjustment;
 
             return (
@@ -404,12 +417,12 @@ function DesignerReplacementHistoryDialog({
                       className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-ink-20 bg-white p-2 opacity-75 transition-opacity hover:opacity-100"
                     >
                       <Avatar className="h-9 w-9">
-                        <AvatarImage src={prev.avatar} alt={prev.name} />
-                        <AvatarFallback>{prev.name.slice(0, 1)}</AvatarFallback>
+                        <AvatarImage src={prev.avatar} alt={prevName} />
+                        <AvatarFallback>{prevName.slice(0, 1)}</AvatarFallback>
                       </Avatar>
                       <div className="min-w-0">
                         <div className="truncate text-xs font-medium text-ink line-through decoration-ink-40">
-                          {prev.name}
+                          {prevName}
                         </div>
                         <div className="text-[10px] text-ink-40">原设计师</div>
                       </div>
@@ -426,12 +439,12 @@ function DesignerReplacementHistoryDialog({
                       className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-brand/30 bg-brand/5 p-2 transition-colors hover:bg-brand/10"
                     >
                       <Avatar className="h-9 w-9">
-                        <AvatarImage src={curr.avatar} alt={curr.name} />
-                        <AvatarFallback>{curr.name.slice(0, 1)}</AvatarFallback>
+                        <AvatarImage src={curr.avatar} alt={currName} />
+                        <AvatarFallback>{currName.slice(0, 1)}</AvatarFallback>
                       </Avatar>
                       <div className="min-w-0">
                         <div className="truncate text-xs font-semibold text-ink">
-                          {curr.name}
+                          {currName}
                         </div>
                         <div className="text-[10px] text-brand">现任设计师</div>
                       </div>
@@ -517,6 +530,7 @@ function DesignerReplacementHistoryDialog({
                       splits={adj.splits}
                       stageRatio={adj.originalOrderRatio}
                       getDesigner={getDesigner}
+                      revealFullName={revealFullName}
                     />
                     <div className="mt-2 text-right text-[11px] tabular-nums text-amber-900/80">
                       拆分合计{" "}
@@ -563,6 +577,9 @@ function DesignerAvatarMenu({
   const push = useSessionStore((s) => s.pushNotification);
   const isAdmin = mode === "admin";
   const locked = order ? isOrderCancelled(order) : false;
+  const revealFullName =
+    isAdmin || (order ? isContractFullySigned(order) : false);
+  const visibleName = resolveProjectDesignerName(designer.name, revealFullName);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -596,7 +613,7 @@ function DesignerAvatarMenu({
     setReason("");
     push({
       title: "已提交更换设计师申请",
-      description: `平台将在 1 个工作日内审核「${designer.name}」的更换请求并重新匹配。`,
+        description: `平台将在 1 个工作日内审核「${visibleName}」的更换请求并重新匹配。`,
       variant: "success",
     });
   };
@@ -623,19 +640,19 @@ function DesignerAvatarMenu({
       <div ref={wrapRef} className="relative shrink-0">
         {locked ? (
           <Avatar className="h-12 w-12">
-            <AvatarImage src={designer.avatar} alt={designer.name} />
-            <AvatarFallback>{designer.name.slice(0, 1)}</AvatarFallback>
+            <AvatarImage src={designer.avatar} alt={visibleName} />
+            <AvatarFallback>{visibleName.slice(0, 1)}</AvatarFallback>
           </Avatar>
         ) : (
           <button
             type="button"
             onClick={() => setOpen((o) => !o)}
             className="rounded-full ring-offset-2 transition-shadow hover:ring-2 hover:ring-brand/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-            title={`${designer.name} · 点击查看操作`}
+            title={`${visibleName} · 点击查看操作`}
           >
             <Avatar className="h-12 w-12 cursor-pointer">
-              <AvatarImage src={designer.avatar} alt={designer.name} />
-              <AvatarFallback>{designer.name.slice(0, 1)}</AvatarFallback>
+              <AvatarImage src={designer.avatar} alt={visibleName} />
+              <AvatarFallback>{visibleName.slice(0, 1)}</AvatarFallback>
             </Avatar>
           </button>
         )}
@@ -700,7 +717,7 @@ function DesignerAvatarMenu({
             <DialogDescription>
               {isAdmin
                 ? `将「${designer.name}」更换为其他设计师。原设计师成果将保留为历史记录，请确认阶段支付比例拆分。`
-                : `将向平台提交更换「${designer.name}」的申请。审核通过后系统将重新匹配同级别设计师，原阶段成果仍保留在订单中。`}
+                : `将向平台提交更换「${visibleName}」的申请。审核通过后系统将重新匹配同级别设计师，原阶段成果仍保留在订单中。`}
             </DialogDescription>
           </DialogHeader>
           {isAdmin ? (
@@ -762,7 +779,7 @@ function DesignerAvatarMenu({
           <DialogHeader>
             <DialogTitle>投诉设计师</DialogTitle>
             <DialogDescription>
-              投诉对象：{designer.name}。平台将介入调查，必要时冻结该阶段托管资金。
+              投诉对象：{visibleName}。平台将介入调查，必要时冻结该阶段托管资金。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">

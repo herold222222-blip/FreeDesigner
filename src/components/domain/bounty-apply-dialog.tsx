@@ -59,12 +59,14 @@ export function BountyApplyDialog({
   const [proposal, setProposal] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [applied, setApplied] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setAppliedL3(eligibleL3s.length === 1 ? eligibleL3s[0] : "");
     setProposal("");
     setError("");
+    setApplied(false);
   }, [open, eligibleL3s]);
 
   const handleSubmit = async () => {
@@ -80,10 +82,17 @@ export function BountyApplyDialog({
         proposal: proposal.trim(),
         quotedAmount: bounty.reward,
       });
-      onOpenChange(false);
+      setApplied(true);
       onSuccess?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "报名失败，请稍后再试");
+      const message = e instanceof Error ? e.message : "报名失败，请稍后再试";
+      if (message.includes("已报名")) {
+        setApplied(true);
+        setError("");
+        onSuccess?.();
+      } else {
+        setError(message);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -147,25 +156,37 @@ export function BountyApplyDialog({
           </div>
         )}
 
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        {applied ? (
+          <p className="text-sm text-emerald-700">报名成功，等待发布方查看。</p>
+        ) : error ? (
+          <p className="text-sm text-destructive">{error}</p>
+        ) : null}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-          <Button
-            variant="brand"
-            disabled={
-              submitting ||
-              !designer ||
-              portfolioBlocked ||
-              eligibleL3s.length === 0
-            }
-            onClick={handleSubmit}
-            className={cn(submitting && "opacity-70")}
-          >
-            {submitting ? "提交中..." : "确认报名"}
-          </Button>
+          {applied ? (
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              关闭
+            </Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                取消
+              </Button>
+              <Button
+                variant="brand"
+                disabled={
+                  submitting ||
+                  !designer ||
+                  portfolioBlocked ||
+                  eligibleL3s.length === 0
+                }
+                onClick={handleSubmit}
+                className={cn(submitting && "opacity-70")}
+              >
+                {submitting ? "提交中..." : "确认报名"}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

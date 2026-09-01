@@ -96,14 +96,16 @@ export function PublicHeader() {
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-ink-20 bg-white/80 backdrop-blur-xl">
-      <div className="container-page flex h-16 items-center justify-between gap-6">
-        <Link href="/" className="flex items-center gap-2">
-          <BrandLogo size={36} />
-          <div className="flex flex-col leading-none">
-            <span className="text-base font-semibold tracking-tight text-ink">
+      <div className="container-page flex h-14 items-center justify-between gap-2 sm:h-16 sm:gap-4">
+        <Link href="/" className="flex min-w-0 items-center gap-2">
+          <BrandLogo size={32} />
+          <div className="flex min-w-0 flex-col leading-none">
+            <span className="text-sm font-semibold tracking-tight text-ink sm:text-base">
               乐自由
             </span>
-            <span className="text-[11px] text-ink-40">工程设计 · 服务对接平台</span>
+            <span className="hidden text-[11px] text-ink-40 sm:inline">
+              工程设计 · 服务对接平台
+            </span>
           </div>
         </Link>
 
@@ -122,10 +124,10 @@ export function PublicHeader() {
           ))}
         </nav>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-0.5 sm:gap-1.5">
           <LanguageSwitcher />
           {authReady && role !== "guest" ? (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 sm:gap-2">
               {displayProfile ? (
                 <HeaderUserMenu
                   role={role}
@@ -142,6 +144,20 @@ export function PublicHeader() {
           ) : null}
         </div>
       </div>
+      <nav className="container-page flex flex-wrap gap-1 pb-2 lg:hidden">
+        {navItems.map((n) => (
+          <MemberLink
+            key={n.href}
+            href={n.href}
+            className={cn(
+              "rounded-full px-3 py-1.5 text-xs font-medium text-ink-60 transition-colors hover:text-ink",
+              pathname?.startsWith(n.href) && "bg-ink-20/40 text-ink",
+            )}
+          >
+            {n.label}
+          </MemberLink>
+        ))}
+      </nav>
     </header>
   );
 }

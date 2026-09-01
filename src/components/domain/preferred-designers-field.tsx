@@ -24,11 +24,14 @@ import { cn } from "@/lib/utils";
 interface PreferredDesignersFieldProps {
   value: string;
   onChange: (raw: string) => void;
+  /** 常规委托：优先匹配推送；悬赏：仅向所列设计师发送报名邀请 */
+  purpose?: "match" | "invite";
 }
 
 export function PreferredDesignersField({
   value,
   onChange,
+  purpose = "match",
 }: PreferredDesignersFieldProps) {
   const { data: designers } = useDesigners();
   const favoriteIds = useFavoritesStore((s) => s.designerIds);
@@ -93,7 +96,9 @@ export function PreferredDesignersField({
         className="font-mono text-sm"
       />
       <p className="text-[11px] text-ink-40">
-        填写后平台会优先向对应设计师推送匹配；也可从「我的收藏」勾选导入编号。
+        {purpose === "invite"
+          ? "填写后将向这些设计师发送邀请，请其报名参与本悬赏。也可从「我的收藏」勾选导入编号。"
+          : "填写后平台会优先向对应设计师推送匹配；也可从「我的收藏」勾选导入编号。"}
       </p>
 
       {resolved.length > 0 ? (
@@ -205,7 +210,7 @@ function PreferredDesignerMiniCard({
           e.stopPropagation();
           onRemove();
         }}
-        aria-label={`移除 ${designer.name}`}
+        aria-label={`移除 ${displayName}`}
       >
         <X className="h-3.5 w-3.5" />
       </button>

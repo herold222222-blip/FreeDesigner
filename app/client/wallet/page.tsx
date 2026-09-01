@@ -11,6 +11,7 @@ import { isInvoiceEligibleTransaction } from "@/lib/invoice";
 import { isProjectId } from "@/lib/project-id";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import type { Order, WalletTransaction } from "@/lib/types";
+import { clientOrderDetailHref } from "@/lib/unified-project-list";
 import { useRoleStore } from "@/store/role-store";
 import {
   CircleDollarSign,
@@ -127,7 +128,11 @@ function resolveOrderInfo(
   const orderId = transaction.orderId ?? matched?.id;
   const orderTitle = transaction.orderTitle ?? matched?.title;
   const orderCode = transaction.orderCode ?? matched?.code;
-  const href = orderId ? `/client/orders/${orderId}` : undefined;
+  const href = matched
+    ? clientOrderDetailHref(matched)
+    : orderId
+      ? `/client/orders/${orderId}`
+      : undefined;
   return { orderId, orderTitle, orderCode, href };
 }
 

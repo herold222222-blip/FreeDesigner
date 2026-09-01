@@ -8,9 +8,20 @@ import {
   CLIENT_LEVEL_META,
   DESIGNER_LEVEL_META,
   REGION_TIER_META,
+  resolveTaxCoefficientLabel,
 } from "@/lib/constants";
 import { formatCurrency } from "@/lib/utils";
-import { getQuoteOrderTotal, getQuotePreTaxTotal } from "@/lib/regular-entrust-quote";
+import {
+  formatQuoteLineQuantity,
+  getQuoteOrderTotal,
+  getQuotePreTaxTotal,
+  isRegularAreaHardscape,
+  withAreaHardscapeRemark,
+} from "@/lib/regular-entrust-quote";
+import {
+  STRUCTURE_SHEET_UNIT_PRICE,
+  isStructureQuoteLine,
+} from "@/lib/structure-sheets";
 import { CheckCircle2, FileSpreadsheet, Sparkles } from "lucide-react";
 import { LevelQuoteCards } from "@/components/domain/level-quote-cards";
 import { needsCsQuoteConfirm } from "@/lib/order-supervision";
@@ -20,11 +31,14 @@ export function OrderQuotePanel({
   onConfirm,
   confirming,
   compact,
+  hideUnconfirmedCards = false,
 }: {
   order: Order;
   onConfirm?: () => void;
   confirming?: boolean;
   compact?: boolean;
+  /** 委托人端：客服确认前不展示等级报价卡 */
+  hideUnconfirmedCards?: boolean;
 }) {
   const levelQuotes = order.levelQuotes?.length
     ? order.levelQuotes
@@ -37,6 +51,35 @@ export function OrderQuotePanel({
   const pending = order.status === "pending_quote" && quote.status === "pending";
   const awaitingCs = needsCsQuoteConfirm(order);
   const showLevelCards = Boolean(order.levelQuotes?.length);
+  const lineTitle = (line: (typeof quote.lines)[number]) =>
+    withAreaHardscapeRemark(
+      line.l3Label ?? line.trackLabel,
+      isRegularAreaHardscape({
+        billingMode: order.billingMode,
+        track: line.track,
+        l3: line.l3,
+        unit: line.unit,
+      }),
+    );
+
+  if (showLevelCards && awaitingCs && hideUnconfirmedCards) {
+    return (
+      <Card className={compact ? "space-y-3 p-4" : "space-y-4 p-6"}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+              <Sparkles className="h-4 w-4 text-brand" />
+              等待客服确认
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-ink-60">
+              已收到项目委托信息。客服确认后将显示等级报价卡。
+            </p>
+          </div>
+          <Badge variant="amber">待客服确认</Badge>
+        </div>
+      </Card>
+    );
+  }
 
   if (showLevelCards) {
     const lines = quote.lines;
@@ -70,12 +113,12 @@ export function OrderQuotePanel({
               >
                 <div className="min-w-0">
                   <div className="font-medium text-ink">
-                    {line.l3Label ?? line.trackLabel}
+                    {lineTitle(line)}
                   </div>
                   <div className="mt-0.5 text-ink-60">
-                    {line.quantity} {line.unit === "day" ? "工日" : "个月"} · 难度
-                    {line.difficultyLabel ?? ""}{" "}
-                    {Math.round(line.difficulty * 100)}%
+                    {isStructureQuoteLine(line)
+                      ? `${formatQuoteLineQuantity(line)} · ${STRUCTURE_SHEET_UNIT_PRICE} 元/张`
+                      : `${formatQuoteLineQuantity(line)} · 难度${line.difficultyLabel ?? ""} ${Math.round(line.difficulty * 100)}%`}
                   </div>
                 </div>
               </div>
@@ -116,12 +159,12 @@ export function OrderQuotePanel({
           >
             <div className="min-w-0">
               <div className="font-medium text-ink">
-                {line.l3Label ?? line.trackLabel}
+                {lineTitle(line)}
               </div>
               <div className="mt-0.5 text-ink-60">
-                {line.quantity} {line.unit === "day" ? "工日" : "个月"} · 难度
-                {line.difficultyLabel ?? ""}{" "}
-                {Math.round(line.difficulty * 100)}%
+                {isStructureQuoteLine(line)
+                  ? `${formatQuoteLineQuantity(line)} · ${STRUCTURE_SHEET_UNIT_PRICE} 元/张`
+                  : `${formatQuoteLineQuantity(line)} · 难度${line.difficultyLabel ?? ""} ${Math.round(line.difficulty * 100)}%`}
               </div>
             </div>
             <div className="tabular-nums font-semibold text-ink">
@@ -148,8 +191,9 @@ export function OrderQuotePanel({
             {quote.assumptions.serviceMode === "remote"
               ? "远程地区系数 1.0"
               : REGION_TIER_META[quote.assumptions.designerRegion].label}{" "}
-            · {CLIENT_LEVEL_META[quote.assumptions.clientLevel].label} · 税率{" "}
-            {quote.taxCoefficient.toFixed(2)}
+            · {CLIENT_LEVEL_META[quote.assumptions.clientLevel].label} ·{" "}
+            {resolveTaxCoefficientLabel(quote.taxCoefficient)}（×
+            {quote.taxCoefficient.toFixed(2)}）
           </span>
         </div>
         <div className="flex items-end justify-between pt-2">
@@ -160,7 +204,7 @@ export function OrderQuotePanel({
         </div>
       </div>
 
-      {pending && onConfirm ? (
+      {pending && onConfirm && !awaitingCs ? (
         <Button
           variant="brand"
           className="w-full"
@@ -170,6 +214,10 @@ export function OrderQuotePanel({
           <CheckCircle2 className="h-4 w-4" />
           {confirming ? "确认中..." : "确认报价并提交匹配"}
         </Button>
+      ) : awaitingCs ? (
+        <p className="text-center text-xs leading-relaxed text-ink-60">
+          报价卡仅供参考。客服确认需求后，即可选择等级并匹配设计师。
+        </p>
       ) : null}
     </Card>
   );

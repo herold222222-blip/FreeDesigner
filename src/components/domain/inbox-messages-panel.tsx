@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  deleteAllInboxMessagesRequest,
+  deleteInboxMessageRequest,
   fetchInboxMessages,
   markAllInboxReadRequest,
   markInboxMessageReadRequest,
@@ -12,8 +14,16 @@ import { notifyInboxChanged } from "@/lib/use-inbox-unread";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { Bell, CheckCheck, Mail, MailOpen } from "lucide-react";
+import { AlertTriangle, Bell, CheckCheck, Mail, MailOpen, Trash2 } from "lucide-react";
 
 function formatTime(iso: string) {
   try {
@@ -33,6 +43,11 @@ export function InboxMessagesPanel() {
   const [messages, setMessages] = useState<InboxMessageDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [markingAll, setMarkingAll] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<
+    { type: "one"; id: string; title: string } | { type: "all" } | null
+  >(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -90,6 +105,42 @@ export function InboxMessagesPanel() {
     }
   };
 
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    if (pendingDelete.type === "one") {
+      const id = pendingDelete.id;
+      if (deletingId) return;
+      setDeletingId(id);
+      const prev = messages;
+      setMessages((list) => list.filter((m) => m.id !== id));
+      try {
+        await deleteInboxMessageRequest(id);
+        notifyInboxChanged();
+        setPendingDelete(null);
+      } catch {
+        setMessages(prev);
+      } finally {
+        setDeletingId(null);
+      }
+      return;
+    }
+    if (clearing || messages.length === 0) return;
+    setClearing(true);
+    const prev = messages;
+    setMessages([]);
+    try {
+      await deleteAllInboxMessagesRequest();
+      notifyInboxChanged();
+      setPendingDelete(null);
+    } catch {
+      setMessages(prev);
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  const deleteBusy = Boolean(deletingId) || clearing;
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -107,16 +158,28 @@ export function InboxMessagesPanel() {
             含支付、成果确认、返修、等级提升等系统通知，以及其他用户消息。未读数会在侧栏与顶部铃铛同步显示。
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={unread === 0 || markingAll}
-          onClick={markAll}
-        >
-          <CheckCheck className="h-4 w-4" />
-          {markingAll ? "处理中…" : "全部标为已读"}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={unread === 0 || markingAll}
+            onClick={markAll}
+          >
+            <CheckCheck className="h-4 w-4" />
+            {markingAll ? "处理中…" : "全部标为已读"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={messages.length === 0 || clearing}
+            onClick={() => setPendingDelete({ type: "all" })}
+          >
+            <Trash2 className="h-4 w-4" />
+            {clearing ? "删除中…" : "清空全部"}
+          </Button>
+        </div>
       </div>
 
       {loading ? (
@@ -193,8 +256,8 @@ export function InboxMessagesPanel() {
                     <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-80">
                       {m.body}
                     </p>
-                    {m.linkHref ? (
-                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      {m.linkHref ? (
                         <Button asChild size="sm" variant="outline">
                           <Link
                             href={m.linkHref}
@@ -205,8 +268,25 @@ export function InboxMessagesPanel() {
                             查看详情
                           </Link>
                         </Button>
-                      </div>
-                    ) : null}
+                      ) : null}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={deletingId === m.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPendingDelete({
+                            type: "one",
+                            id: m.id,
+                            title: m.title,
+                          });
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        {deletingId === m.id ? "删除中…" : "删除"}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </Card>
@@ -214,6 +294,54 @@ export function InboxMessagesPanel() {
           ))}
         </ul>
       )}
+
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(next) => {
+          if (deleteBusy) return;
+          if (!next) setPendingDelete(null);
+        }}
+      >
+        <DialogContent
+          className="max-w-md"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <DialogHeader>
+            <DialogTitle className="flex items-start gap-2.5">
+              <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+                <AlertTriangle className="h-4 w-4" />
+              </span>
+              <span className="pt-1">
+                {pendingDelete?.type === "all" ? "确认清空全部消息？" : "确认删除这条消息？"}
+              </span>
+            </DialogTitle>
+            <DialogDescription className="pl-[2.625rem] text-sm leading-relaxed text-ink-60">
+              {pendingDelete?.type === "all"
+                ? `即将删除全部 ${messages.length} 条消息。删除后不可恢复。`
+                : `即将删除「${pendingDelete?.title ?? "该消息"}」。删除后不可恢复。`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={deleteBusy}
+              onClick={() => setPendingDelete(null)}
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              variant="brand"
+              className="bg-rose-600 hover:bg-rose-700"
+              disabled={deleteBusy}
+              onClick={() => void confirmDelete()}
+            >
+              {deleteBusy ? "删除中…" : "确认删除"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

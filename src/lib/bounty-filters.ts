@@ -70,7 +70,7 @@ export interface BountyListFilters {
   provinceCode: string;
   cityCode: string;
   locationMode: "province" | "city";
-  status: "all" | "open" | "in_review";
+  status: "all" | "open" | "in_review" | "awarded";
 }
 
 export function filterBounties(list: Bounty[], filters: BountyListFilters): Bounty[] {
@@ -94,9 +94,17 @@ export function filterBounties(list: Bounty[], filters: BountyListFilters): Boun
       if (filters.cityCode === "all") return true;
       return b.location.cityCode === filters.cityCode;
     })
-    .filter((b) =>
-      filters.status === "all" ? true : b.status === filters.status,
-    );
+    .filter((b) => {
+      if (filters.status === "all") return true;
+      if (filters.status === "awarded") {
+        return (
+          b.status === "awarded" ||
+          b.status === "completed" ||
+          Boolean(b.awardedDesignerId)
+        );
+      }
+      return b.status === filters.status;
+    });
 }
 
 export function getL2Options(l1: Specialty | "all") {

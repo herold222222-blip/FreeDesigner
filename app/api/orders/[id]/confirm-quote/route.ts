@@ -5,7 +5,7 @@ import { confirmOrderQuote } from "@/lib/server/order-service";
 
 export const dynamic = "force-dynamic";
 
-/** 委托人确认按天/按月系统报价 */
+/** 委托人确认常规委托系统报价（按面积 / 按天 / 按月） */
 export async function POST(
   _req: NextRequest,
   { params }: { params: { id: string } },

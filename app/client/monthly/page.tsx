@@ -138,7 +138,7 @@ export default function MonthlyHirePage() {
                       <div className="space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="text-base font-semibold text-ink">
-                            <DesignerName designer={designer} />
+                            <DesignerName designer={designer} revealFullName />
                           </h3>
                           <SpecialtyBadge specialty={designer.specialty} />
                           {inWindow ? (
@@ -222,7 +222,7 @@ export default function MonthlyHirePage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <h3 className="text-base font-semibold text-ink">
-                            <DesignerName designer={designer} />
+                            <DesignerName designer={designer} revealFullName />
                           </h3>
                           <Badge variant="muted">已终止</Badge>
                         </div>

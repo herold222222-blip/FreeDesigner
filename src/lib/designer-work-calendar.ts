@@ -179,3 +179,83 @@ export function toggleCalendarPeriod(
 export function slotsFromEvents(events: WorkCalendarEvent[]): HalfDaySlot[] {
   return events.map((e) => ({ date: e.date, period: e.period }));
 }
+
+function toIsoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** 把未录入的日期按批量规则补齐，便于委托人日历点选忙闲 */
+export function expandCalendarDateRange(
+  calendar: CalendarSlot[],
+  settings: CalendarBatchSettings = DEFAULT_BATCH,
+  fromIso: string,
+  toIso: string,
+): CalendarSlot[] {
+  const byDate = new Map(calendar.map((s) => [s.date, s]));
+  const result: CalendarSlot[] = [];
+  const cur = new Date(`${fromIso}T00:00:00`);
+  const end = new Date(`${toIso}T00:00:00`);
+  if (Number.isNaN(cur.getTime()) || Number.isNaN(end.getTime()) || cur > end) {
+    return [...calendar];
+  }
+  while (cur <= end) {
+    const date = toIsoDate(cur);
+    const existing = byDate.get(date);
+    if (existing) {
+      result.push(existing);
+    } else {
+      const amAvailable = resolvePeriodAvailability(
+        calendar,
+        date,
+        "am",
+        settings,
+      );
+      const pmAvailable = resolvePeriodAvailability(
+        calendar,
+        date,
+        "pm",
+        settings,
+      );
+      result.push({
+        date,
+        amAvailable,
+        pmAvailable,
+        available: amAvailable || pmAvailable,
+      });
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+  return result;
+}
+
+/** 委托人点选用：补齐日期 + 扣掉工作日历已占用时段 */
+export function buildDesignerBookingCalendar(
+  input: {
+    calendar?: CalendarSlot[];
+    workCalendarEvents?: WorkCalendarEvent[];
+    calendarBatchSettings?: CalendarBatchSettings;
+  },
+  options?: { fromYear?: number; years?: number },
+): {
+  base: CalendarSlot[];
+  booking: CalendarSlot[];
+  events: WorkCalendarEvent[];
+} {
+  const now = new Date();
+  const fromYear = options?.fromYear ?? now.getFullYear() - 1;
+  const years = options?.years ?? 4;
+  const toYear = fromYear + Math.max(years, 1) - 1;
+  const settings = input.calendarBatchSettings ?? DEFAULT_BATCH;
+  const events = input.workCalendarEvents ?? [];
+  const base = expandCalendarDateRange(
+    input.calendar ?? [],
+    settings,
+    `${fromYear}-01-01`,
+    `${toYear}-12-31`,
+  );
+  return {
+    base,
+    booking: applyEventsToCalendar(base, events),
+    events,
+  };
+}

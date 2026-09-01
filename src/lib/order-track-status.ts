@@ -1,14 +1,8 @@
 import { allOrderStagesPaid } from "@/lib/client-review";
-import { isPrepaymentStage } from "@/lib/order-payment-stages";
+import { isLastDeliverablesConfirmed } from "@/lib/order-payment-stages";
 import type { Order, OrderTrackAssignment } from "@/lib/types";
 
-/** 最后一笔需成果确认的阶段已确认 */
-export function isLastDeliverablesConfirmed(order: Pick<Order, "stages">): boolean {
-  const reviewStages = order.stages.filter((s) => !isPrepaymentStage(order, s));
-  if (reviewStages.length === 0) return order.stages.length > 0;
-  const last = reviewStages[reviewStages.length - 1];
-  return Boolean(last.deliverablesConfirmedAt);
-}
+export { isLastDeliverablesConfirmed } from "@/lib/order-payment-stages";
 
 /**
  * 设计师本专业服务已完毕：最后成果已确认，且委托人已支付全部费用。

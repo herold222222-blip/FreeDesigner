@@ -1,3 +1,4 @@
+import { platformFeeAmountFromOrder } from "@/lib/directed-platform-fee";
 import { resolveTrackLabels } from "@/lib/constants";
 import {
   landscapeTimeTrackFromL3,
@@ -325,11 +326,23 @@ function lineBasicServiceFee(
   );
 }
 
+/** 从订单总额扣除平台手续费后的设计师实收 */
+export function designerNetFromGross(
+  order: Pick<Order, "orderSource" | "feeRate" | "taxCoefficient" | "quote">,
+  amount: number,
+) {
+  const gross = Math.max(0, Math.round(amount) || 0);
+  if (gross <= 0) return 0;
+  const fee = platformFeeAmountFromOrder(order, gross);
+  return Math.max(0, gross - fee);
+}
+
 /**
  * 设计师「预计实收」= 其负责专业的基础服务费之和。
  * 基础服务费 = 单价基数 × 工时 × 等级系数 × 地区系数 × 服务范围系数 × 难度系数 × 客户等级系数。
  * 远程服务地区系数统一 1.0，客户等级按委托人实际等级。
  * 不含平台管理费、商务费、审图/项目管理费与税费。
+ * 扫码 / 定向下单等无报价单时，按订单总额扣除平台手续费。
  */
 export function sumDesignerOrderNetEarnings(
   order: Order,
@@ -346,15 +359,17 @@ export function sumDesignerOrderNetEarnings(
   if (!designerOwnsOrderShare(order, designerId)) return 0;
 
   const basic = order.quote?.basicFee ?? 0;
-  if (!(basic > 0)) return 0;
-
-  const assignments = order.trackAssignments ?? [];
-  const mine = getDesignerTrackAssignments(order, designerId);
-  const unique = uniqueAssignedDesignerIds(order);
-  if (unique.length > 1 && mine.length > 0 && assignments.length > 0) {
-    return Math.round(basic * (mine.length / assignments.length));
+  if (basic > 0) {
+    const assignments = order.trackAssignments ?? [];
+    const mine = getDesignerTrackAssignments(order, designerId);
+    const unique = uniqueAssignedDesignerIds(order);
+    if (unique.length > 1 && mine.length > 0 && assignments.length > 0) {
+      return Math.round(basic * (mine.length / assignments.length));
+    }
+    return basic;
   }
-  return basic;
+
+  return designerNetFromGross(order, order.totalAmount ?? 0);
 }
 
 export function canDesignerRequestWithdraw(

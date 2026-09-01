@@ -2,7 +2,7 @@ import {
   isAwaitingClientPaymentOrder,
   isAwaitingReviewOrder,
 } from "@/lib/order-supervision";
-import { isPrepaymentStage } from "@/lib/order-payment-stages";
+import { stageRequiresDeliverables } from "@/lib/order-payment-stages";
 import type { Order, PaymentStage } from "@/lib/types";
 import type { UnifiedProjectItem } from "@/lib/unified-project-list";
 
@@ -54,14 +54,14 @@ export function getPendingReviewStage(order: Order): PaymentStage | null {
   return (
     order.stages.find(
       (s) =>
-        !isPrepaymentStage(order, s) &&
+        stageRequiresDeliverables(order, s) &&
         !s.deliverablesConfirmedAt &&
         (s.status === "pending" || s.status === "frozen") &&
         (s.deliverables?.length ?? 0) > 0,
     ) ??
     order.stages.find(
       (s) =>
-        !isPrepaymentStage(order, s) &&
+        stageRequiresDeliverables(order, s) &&
         !s.deliverablesConfirmedAt &&
         (s.status === "pending" || s.status === "frozen"),
     ) ??
@@ -69,7 +69,7 @@ export function getPendingReviewStage(order: Order): PaymentStage | null {
   );
 }
 
-/** 待签约 / 待确认档期 */
+/** 待签约 / 待确认匹配 */
 export function isPendingContractOrder(order: Order): boolean {
   return (
     order.status === "pending_contract" || order.status === "pending_schedule"

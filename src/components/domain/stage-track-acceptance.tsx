@@ -14,8 +14,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DesignerName } from "@/components/domain/designer-name";
-import { DeliverableFileList } from "@/components/domain/deliverable-file-list";
-import { cn } from "@/lib/utils";
+import { isContractFullySigned } from "@/lib/order-lifecycle";
+import { DeliverableHistorySections } from "@/components/domain/deliverable-file-list";
+import { cn, formatDateTime } from "@/lib/utils";
 import {
   Check,
   CheckCircle2,
@@ -76,6 +77,7 @@ export function StageTrackAcceptancePanel({
     EMPTY_ACCEPTED;
   const acceptTracks = useStageAcceptanceStore((s) => s.acceptTracks);
   const clientAccepted = isStageClientAccepted(stage);
+  const revealFullName = isContractFullySigned(order);
 
   const groups = useMemo(
     () => getStageTrackDeliverableGroups(order, stage),
@@ -104,11 +106,23 @@ export function StageTrackAcceptancePanel({
     }
   };
 
+  const acceptedAt = stage.deliverablesConfirmedAt ?? stage.releasedAt;
+  const acceptedAtLabel =
+    acceptedAt && !Number.isNaN(new Date(acceptedAt).getTime())
+      ? formatDateTime(acceptedAt)
+      : null;
   const acceptedBadge = (
-    <Badge variant="emerald" className="h-9 px-3 text-xs">
-      <CheckCircle2 className="h-3.5 w-3.5" />
-      委托方已验收
-    </Badge>
+    <span className="inline-flex items-center gap-1.5">
+      <Badge variant="emerald" className="h-9 px-3 text-xs">
+        <CheckCircle2 className="h-3.5 w-3.5" />
+        委托方已验收
+      </Badge>
+      {acceptedAtLabel ? (
+        <span className="text-[11px] font-normal text-ink-50">
+          {acceptedAtLabel}
+        </span>
+      ) : null}
+    </span>
   );
   const selectablePending = pendingGroups.map((g) => g.groupId);
   const allSelected =
@@ -188,7 +202,7 @@ export function StageTrackAcceptancePanel({
           </div>
         </div>
 
-        <DeliverableFileList
+        <DeliverableHistorySections
           files={group.deliverables}
           getDesigner={getDesigner}
           unlocked={accepted}
@@ -327,19 +341,25 @@ export function StageTrackAcceptancePanel({
                     {designer ? (
                       <div className="flex items-center gap-2">
                         <Avatar className="h-7 w-7">
-                          <AvatarImage src={designer.avatar} alt={designer.name} />
+                          <AvatarImage
+                            src={designer.avatar}
+                            alt={revealFullName ? designer.name : designer.name.slice(0, 1)}
+                          />
                           <AvatarFallback>{designer.name.slice(0, 1)}</AvatarFallback>
                         </Avatar>
                         <Link
                           href={`/designers/${designer.id}`}
                           className="text-xs font-medium text-ink hover:text-brand"
                         >
-                          <DesignerName designer={designer} />
+                          <DesignerName
+                            designer={designer}
+                            revealFullName={revealFullName}
+                          />
                         </Link>
                       </div>
                     ) : null}
 
-                    <DeliverableFileList
+                    <DeliverableHistorySections
                       files={group.deliverables}
                       getDesigner={getDesigner}
                       compact
@@ -350,7 +370,14 @@ export function StageTrackAcceptancePanel({
 
                 <div className="flex shrink-0 flex-col items-end gap-2">
                   {accepted ?
-                    <Badge variant="emerald">委托方已验收</Badge>
+                    <span className="inline-flex flex-col items-end gap-0.5">
+                      <Badge variant="emerald">委托方已验收</Badge>
+                      {acceptedAtLabel ? (
+                        <span className="text-[11px] font-normal text-ink-50">
+                          {acceptedAtLabel}
+                        </span>
+                      ) : null}
+                    </span>
                   : <>
                       <Badge variant="outline" className="text-[10px]">
                         <Lock className="mr-1 h-3 w-3" />

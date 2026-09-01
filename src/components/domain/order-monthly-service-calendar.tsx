@@ -17,7 +17,6 @@ import {
 } from "@/lib/designer-schedule";
 import { classifyCnDay } from "@/lib/cn-workdays";
 import {
-  MONTHLY_PREPAY_DAY,
   countMonthlyServiceWorkdays,
   isDateInMonthlyHireSpan,
   isDateInMonthlyServicePeriod,
@@ -25,6 +24,7 @@ import {
   resolveMonthlyServicePeriod,
   type MonthlyPaymentMark,
 } from "@/lib/monthly-billing";
+import { usePlatformPricingStore } from "@/store/platform-pricing-store";
 import type { Order } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -42,10 +42,11 @@ export function OrderMonthlyServiceCalendar({
   order: Order;
   className?: string;
 }) {
+  const commerce = usePlatformPricingStore((s) => s.config.commerce);
   const period = useMemo(() => resolveMonthlyServicePeriod(order), [order]);
   const paymentMarks = useMemo(
-    () => resolveMonthlyPaymentMarks(order),
-    [order],
+    () => resolveMonthlyPaymentMarks(order, commerce),
+    [order, commerce],
   );
 
   const yearOptions = useMemo(() => {
@@ -169,7 +170,7 @@ export function OrderMonthlyServiceCalendar({
             <span className="flex h-4 items-center justify-center rounded bg-amber-500 px-1 text-[9px] font-semibold text-white">
               支付下月
             </span>
-            每月 {MONTHLY_PREPAY_DAY} 日 17:00 前，遇休息日提前
+            每月 {commerce.monthlyPrepayDay} 日 {String(commerce.billingCutoffHour).padStart(2, "0")}:00 前，遇休息日提前
           </span>
         </div>
       </div>

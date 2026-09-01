@@ -28,34 +28,73 @@ import {
   findOversizedAttachment,
   oversizedAttachmentMessage,
 } from "@/lib/attachment-limits";
+import { LandscapeAreaDifficultyCards } from "@/components/domain/landscape-area-difficulty-cards";
 import {
-  difficultyOptionKey,
   getHardscapeScopeNote,
   landscapeAreaDifficultyUI,
 } from "@/lib/landscape-area-difficulty";
 import { buildRegularEntrustDescription } from "@/lib/entrust-submit";
-import { resolveLandscapeAreaPaymentStages } from "@/lib/landscape-payment-stages";
-import { PlatformPaymentStagesPreview } from "@/components/domain/platform-payment-stages-preview";
-import { getProjectTypes } from "@/lib/constants";
-import type { BountyAttachment, ServiceMode, Specialty } from "@/lib/types";
+import { formatDirectedPlatformFeeLabel, directedPlatformFeeRate, taxPointRateFromOption } from "@/lib/directed-platform-fee";
+import { ScanPaymentStagesEditor } from "@/components/domain/scan-payment-stages-editor";
+import { defaultBountyPaymentStageDrafts } from "@/lib/bounty-payment-stages";
+import {
+  dailyTimePaymentStageDrafts,
+  monthlyRangePaymentStageDrafts,
+  paymentStagesValid,
+  type ScanPaymentStageDraft,
+} from "@/lib/scan-order";
+import {
+  formatDailyBillingRule,
+  formatMonthlyBillingRuleFull,
+} from "@/lib/platform-commerce";
+import {
+  buildMonthlyRangeQuote,
+  formatIsoDateLabel,
+  formatMonthlyRangeSummary,
+} from "@/lib/monthly-range-billing";
+import { calculateAreaBasedFee } from "@/lib/fee-calculator";
+import {
+  designerAppliedTimeRates,
+  designerLandscapeAreaTrackFactor,
+} from "@/lib/designer-rate-settings";
+import {
+  inferDesignerLandscapeTimeTrack,
+  type LandscapeTimeRateTrack,
+} from "@/lib/designer-rates";
+import { getProjectTypes, resolveDesignerRegionTier } from "@/lib/constants";
+import type {
+  BountyAttachment,
+  HalfDaySlot,
+  ServiceMode,
+  Specialty,
+} from "@/lib/types";
+import { DesignerSchedulePicker } from "@/components/domain/designer-schedule-picker";
+import { DesignerDateRangeCalendar } from "@/components/domain/designer-date-range-calendar";
+import {
+  formatMonthLabel,
+  formatSelectedSlotsSummary,
+  halfDaysToWorkDays,
+  slotsToDateRange,
+} from "@/lib/designer-schedule";
+import { buildDesignerBookingCalendar } from "@/lib/designer-work-calendar";
 import {
   ArrowLeft,
-  Calculator,
+  CircleDollarSign,
+  Clock,
   FileSignature,
   Paperclip,
   QrCode,
   Ruler,
-  Sparkles,
   Wallet,
   X,
 } from "lucide-react";
-import { createOrderRequest } from "@/lib/api-client";
-import { expectedDateFieldLabel } from "@/lib/order-lifecycle";
+import { createDesignerSelfOrderRequest, createOrderRequest } from "@/lib/api-client";
 import { cn, formatCurrency } from "@/lib/utils";
 import { useSessionStore } from "@/store/session-store";
 import { useRoleStore } from "@/store/role-store";
 import { usePlatformPricingStore } from "@/store/platform-pricing-store";
 import { DesignerName } from "@/components/domain/designer-name";
+import { maskDesignerPublicName } from "@/lib/designer-contact-privacy";
 import { DesignerLevelBadge } from "@/components/domain/level-badges";
 import { GuestAccessGate } from "@/components/domain/guest-access-gate";
 import type { DesignerLevel } from "@/lib/types";
@@ -68,7 +107,15 @@ const TRACK_OPTIONS = [
 ] as const;
 
 type TrackKey = (typeof TRACK_OPTIONS)[number]["value"];
-type ScanBillingTab = "platform_area" | "direct_amount";
+type ScanBillingTab = "platform_area" | "designer_time" | "direct_amount";
+type ScanTimeUnit = "daily" | "monthly";
+
+function scanFieldClass(highlight: boolean) {
+  return cn(
+    "scroll-mt-24 rounded-xl transition-shadow",
+    highlight && "bg-rose-50/80 p-2 ring-2 ring-rose-400 ring-offset-2",
+  );
+}
 
 export default function ScanOrderPage({
   params,
@@ -95,8 +142,11 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
   const [submitting, setSubmitting] = useState(false);
   const [title, setTitle] = useState("");
   const [projectType, setProjectType] = useState("");
-  const [expectedDeliveryAt, setExpectedDeliveryAt] = useState("");
   const [serviceMode, setServiceMode] = useState<ServiceMode>("online");
+  const [onsiteAddress, setOnsiteAddress] = useState("");
+  const [onsiteAdminTriple, setOnsiteAdminTriple] = useState<AdministrativeTriple>(
+    getDefaultAdministrativeTriple(),
+  );
   const [area, setArea] = useState<number | "">("");
   const [selectedL2, setSelectedL2] = useState<string[]>([]);
   const [tracks, setTracks] = useState<TrackKey[]>([]);
@@ -106,12 +156,21 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
   const [buildType, setBuildType] = useState<"new" | "renovation" | null>(null);
   const [billingTab, setBillingTab] = useState<ScanBillingTab>("platform_area");
   const [directAmount, setDirectAmount] = useState<number | "">("");
+  const [timeUnit, setTimeUnit] = useState<ScanTimeUnit>("daily");
+  const [selectedSlots, setSelectedSlots] = useState<HalfDaySlot[]>([]);
+  const [monthlyFrom, setMonthlyFrom] = useState("");
+  const [monthlyTo, setMonthlyTo] = useState("");
+  const [timeTrack, setTimeTrack] = useState<LandscapeTimeRateTrack | null>(null);
+  const [paymentStages, setPaymentStages] = useState<ScanPaymentStageDraft[]>(
+    defaultBountyPaymentStageDrafts,
+  );
   const [tax, setTax] = useState<{
     value: string;
     label: string;
     coefficient: number;
   } | null>(null);
   const [description, setDescription] = useState("");
+  const [highlightField, setHighlightField] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<BountyAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
@@ -135,6 +194,16 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
     [projectAdminTriple],
   );
   const projectCity = projectSiteResolution?.fullLabel ?? "";
+  const onsiteSiteResolution = useMemo(
+    () => resolveAdministrativeTriple(onsiteAdminTriple),
+    [onsiteAdminTriple],
+  );
+  const composedOnsiteAddress = [
+    onsiteSiteResolution?.fullLabel,
+    onsiteAddress.trim(),
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   useEffect(() => {
     if (!client) return;
@@ -142,6 +211,14 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
     setContactName(client.contactName || client.name || "");
     setContactPhone(client.phone || "");
   }, [client]);
+
+  const applyTimePaymentStages = (unit: ScanTimeUnit) => {
+    setPaymentStages(
+      unit === "monthly"
+        ? monthlyRangePaymentStageDrafts(null, pricingConfig.commerce)
+        : dailyTimePaymentStageDrafts(pricingConfig.commerce),
+    );
+  };
 
   useEffect(() => {
     setAreaDifficulty((prev) => {
@@ -180,43 +257,229 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
     !!tax;
 
   const directBillingComplete =
-    typeof directAmount === "number" && directAmount > 0;
+    typeof directAmount === "number" && directAmount > 0 && !!tax;
 
-  const canSubmit =
-    committerName.trim().length > 0 &&
-    title.trim().length > 1 &&
-    contactName.trim().length > 0 &&
-    contactPhone.trim().length > 0 &&
-    !!projectSiteResolution &&
-    projectType.trim().length > 0 &&
-    !!expectedDeliveryAt &&
-    description.trim().length > 4 &&
-    (billingTab === "platform_area" ? areaBillingComplete : directBillingComplete);
+  const isSelfOrder = role === "designer" && identityId === designerId;
 
   const trackLabels = tracks.map(
     (t) => TRACK_OPTIONS.find((o) => o.value === t)?.label ?? t,
   );
 
-  const platformPaymentStages = useMemo(() => {
-    if (billingTab === "direct_amount") {
-      return resolveLandscapeAreaPaymentStages(["construction_doc"]);
-    }
-    return resolveLandscapeAreaPaymentStages(selectedL2);
-  }, [billingTab, selectedL2]);
+  const directedFeeLabel = formatDirectedPlatformFeeLabel(
+    taxPointRateFromOption(tax),
+  );
 
-  const paymentPreviewDescription =
-    billingTab === "platform_area"
-      ? selectedL2.length === 0
-        ? "请先选择二级专业；仅选方案设计时适用方案阶段规则，含施工图/扩初时适用施工图规则（30 / 40 / 30）。"
-        : selectedL2.every((l2) => l2 === "scheme")
-          ? "当前为景观方案按面积项目，付款阶段按平台方案规则执行。"
-          : "当前为景观施工图按面积项目，付款阶段按平台常规规则（30 / 40 / 30）执行。"
-      : "以下为平台常规施工图付款阶段参考；提交后设计师可确认或调整。";
+  const designerAreaFee = useMemo(() => {
+    if (billingTab !== "platform_area" || !designer) return null;
+    if (
+      typeof area !== "number" ||
+      area <= 0 ||
+      tracks.length === 0 ||
+      !buildType ||
+      !areaDifficultyComplete
+    ) {
+      return null;
+    }
+    const breakdown = calculateAreaBasedFee(
+      {
+        area,
+        projectType,
+        designerLevel: designer.level ?? "mid_v1",
+        designerRegion: resolveDesignerRegionTier(designer),
+        clientLevel: client?.level ?? "",
+        selectedTracks: tracks,
+        difficulty: areaDifficulty as Record<string, number>,
+        buildType,
+        taxCoefficient: 1,
+      },
+      pricingConfig,
+    );
+    const percents = designer.ratePercents ?? {};
+    let drawingFee = 0;
+    const byTrack: Record<string, number> = {};
+    for (const track of tracks) {
+      const factor = designerLandscapeAreaTrackFactor(
+        track,
+        selectedL2,
+        percents,
+      );
+      const amount = Math.round((breakdown.byTrack[track] ?? 0) * factor);
+      byTrack[track] = amount;
+      drawingFee += amount;
+    }
+    const feeRate = directedPlatformFeeRate(taxPointRateFromOption(tax));
+    const total = Math.round(drawingFee * (1 + feeRate));
+    return { drawingFee, byTrack, total, feeRate };
+  }, [
+    billingTab,
+    designer,
+    area,
+    tracks,
+    buildType,
+    areaDifficultyComplete,
+    projectType,
+    client?.level,
+    areaDifficulty,
+    pricingConfig,
+    selectedL2,
+    tax,
+  ]);
+
+  const resolvedTimeTrack: LandscapeTimeRateTrack =
+    timeTrack ??
+    (designer ? inferDesignerLandscapeTimeTrack(designer) : "hardscape");
+
+  const bookingCalendar = useMemo(
+    () =>
+      designer
+        ? buildDesignerBookingCalendar(designer)
+        : { base: [], booking: [], events: [] },
+    [designer],
+  );
+  const calendarToday = useMemo(() => new Date(), []);
+  const timeQty = halfDaysToWorkDays(selectedSlots);
+
+  const monthlyRangeQuote = useMemo(() => {
+    if (billingTab !== "designer_time" || timeUnit !== "monthly" || !designer) {
+      return null;
+    }
+    if (!monthlyFrom || !monthlyTo) return null;
+    const rates = designerAppliedTimeRates(
+      designer,
+      resolvedTimeTrack,
+      designer.ratePercents,
+      pricingConfig,
+    );
+    const monthlyRate =
+      serviceMode === "onsite" ? rates.onsiteMonthly : rates.remoteMonthly;
+    return buildMonthlyRangeQuote(monthlyFrom, monthlyTo, monthlyRate);
+  }, [
+    billingTab,
+    timeUnit,
+    designer,
+    monthlyFrom,
+    monthlyTo,
+    resolvedTimeTrack,
+    pricingConfig,
+    serviceMode,
+  ]);
+
+  const selectedMonths = monthlyRangeQuote?.segments.map((seg) => seg.monthKey) ?? [];
+
+  const designerTimeFee = useMemo(() => {
+    if (billingTab !== "designer_time" || !designer) return null;
+    const rates = designerAppliedTimeRates(
+      designer,
+      resolvedTimeTrack,
+      designer.ratePercents,
+      pricingConfig,
+    );
+    const unit =
+      serviceMode === "onsite"
+        ? timeUnit === "monthly"
+          ? rates.onsiteMonthly
+          : rates.onsiteDaily
+        : timeUnit === "monthly"
+          ? rates.remoteMonthly
+          : rates.remoteDaily;
+    const drawingFee =
+      timeUnit === "monthly"
+        ? monthlyRangeQuote?.drawingFee ?? 0
+        : Math.round(unit * timeQty);
+    if (drawingFee <= 0) return null;
+    const feeRate = directedPlatformFeeRate(taxPointRateFromOption(tax));
+    const total = Math.round(drawingFee * (1 + feeRate));
+    return {
+      unit,
+      drawingFee,
+      total,
+      feeRate,
+      trackLabel: rates.trackLabel,
+      quote: monthlyRangeQuote,
+    };
+  }, [
+    billingTab,
+    designer,
+    timeQty,
+    resolvedTimeTrack,
+    pricingConfig,
+    serviceMode,
+    timeUnit,
+    tax,
+    monthlyRangeQuote,
+  ]);
+
+  const timeBillingComplete = !!designerTimeFee && !!tax && !!resolvedTimeTrack;
+
+  useEffect(() => {
+    if (billingTab !== "designer_time" || timeUnit !== "monthly") return;
+    setPaymentStages(
+      monthlyRangePaymentStageDrafts(monthlyRangeQuote, pricingConfig.commerce),
+    );
+  }, [billingTab, timeUnit, monthlyRangeQuote, pricingConfig.commerce]);
 
   const previewTotalAmount =
     billingTab === "direct_amount" && typeof directAmount === "number"
       ? directAmount
-      : undefined;
+      : billingTab === "designer_time"
+        ? designerTimeFee?.total
+        : designerAreaFee?.total;
+
+  const firstIncompleteFieldId = (): string | null => {
+    if (!isSelfOrder) {
+      if (!committerName.trim()) return "field-committer";
+      if (!contactName.trim()) return "field-contact-name";
+      if (!contactPhone.trim()) return "field-contact-phone";
+    }
+    if (title.trim().length <= 1) return "field-title";
+    if (!projectSiteResolution) return "field-project-site";
+    if (!projectType.trim()) return "field-project-type";
+    if (serviceMode === "onsite") {
+      if (!onsiteSiteResolution) return "field-onsite-region";
+      if (onsiteAddress.trim().length <= 2) return "field-onsite-detail";
+    }
+    if (billingTab === "platform_area") {
+      if (!(typeof area === "number" && area > 0)) return "field-area";
+      if (selectedL2.length === 0) return "field-l2";
+      if (tracks.length === 0 || !areaDifficultyComplete) return "field-tracks";
+      if (!buildType) return "field-build-type";
+      if (!tax) return "field-tax";
+    } else if (billingTab === "designer_time") {
+      if (!designerTimeFee) return "field-schedule";
+      if (!tax) return "field-tax";
+    } else {
+      if (!(typeof directAmount === "number" && directAmount > 0)) {
+        return "field-direct-amount";
+      }
+      if (!tax) return "field-tax";
+    }
+    if (!paymentStagesValid(paymentStages)) return "field-payment-stages";
+    if (description.trim().length <= 4) return "field-description";
+    if (isSelfOrder && !(previewTotalAmount && previewTotalAmount > 0)) {
+      return billingTab === "designer_time"
+        ? "field-schedule"
+        : billingTab === "direct_amount"
+          ? "field-direct-amount"
+          : "field-area";
+    }
+    return null;
+  };
+
+  const canSubmit = !firstIncompleteFieldId();
+  const shownHighlight =
+    highlightField && highlightField === firstIncompleteFieldId()
+      ? highlightField
+      : null;
+
+  const scrollToScanField = (id: string) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const focusable = el.querySelector<HTMLElement>(
+      "input:not([type=hidden]):not([disabled]), textarea, select, button:not([disabled])",
+    );
+    focusable?.focus({ preventScroll: true });
+  };
 
   const toggleTrack = (t: TrackKey) =>
     setTracks((prev) =>
@@ -282,8 +545,19 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
   };
 
   const handleSubmit = async () => {
-    if (!canSubmit || submitting || !designer) return;
-    if (role === "guest" || !identityId) {
+    if (submitting || !designer) return;
+    const incomplete = firstIncompleteFieldId();
+    if (incomplete) {
+      setHighlightField(incomplete);
+      scrollToScanField(incomplete);
+      push({
+        title: "请完善必填项",
+        description: "已跳转到未填写的内容，补全后即可提交。",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!isSelfOrder && (role === "guest" || !identityId)) {
       push({
         title: "请先登录",
         description: "扫码下单需使用委托人账号登录。",
@@ -292,9 +566,32 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
       router.push(`/login?redirect=/scan-order/${designer.id}`);
       return;
     }
+    if (isSelfOrder && (role !== "designer" || identityId !== designer.id)) {
+      push({
+        title: "请先登录设计师账号",
+        description: "自己下单需使用本设计师账号。",
+        variant: "destructive",
+      });
+      return;
+    }
     setSubmitting(true);
     try {
-      const serviceModeLabel = serviceMode === "online" ? "线上远程" : "线下驻场";
+      const serviceModeLabel = serviceMode === "online" ? "线上远程" : "线下服务";
+      const closingLine = isSelfOrder
+        ? "设计师已填写订单，等待委托人确认后双方签约。"
+        : "扫码下单已提交，等待设计师确认费用与付款阶段。";
+      const contactBlock = [
+        description.trim(),
+        "",
+        "--- 委托联系信息 ---",
+        committerName ? `委托方：${committerName}` : null,
+        contactName ? `联系人：${contactName}` : null,
+        contactPhone ? `电话：${contactPhone}` : null,
+        projectCity ? `项目城市：${projectCity}` : null,
+        serviceMode === "onsite" && composedOnsiteAddress
+          ? `驻场地址：${composedOnsiteAddress}`
+          : null,
+      ];
       const fullDescription =
         billingTab === "platform_area"
           ? buildRegularEntrustDescription({
@@ -310,49 +607,129 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
               buildType,
               serviceModeLabel,
               taxLabel: tax?.label,
-              closingLine: "扫码下单已提交，等待设计师确认费用与付款阶段。",
+              closingLine: designerAreaFee
+                ? `按设计师标准取费预估 ${formatCurrency(designerAreaFee.total)}（设计费 ${formatCurrency(designerAreaFee.drawingFee)}，含平台服务费 ${directedFeeLabel}）。${closingLine}`
+                : closingLine,
             })
-          : [
-              description.trim(),
-              "",
-              "--- 委托联系信息 ---",
-              committerName ? `委托方：${committerName}` : null,
-              `联系人：${contactName}`,
-              `电话：${contactPhone}`,
-              projectCity ? `项目城市：${projectCity}` : null,
-              "",
-              "--- 计费摘要 ---",
-              "计费方式：直接输入费用金额",
-              `委托人填写费用：${formatCurrency(
-                typeof directAmount === "number" ? directAmount : 0,
-              )}`,
-              `服务方式：${serviceModeLabel}`,
-              "",
-              "扫码下单已提交，等待设计师确认费用与付款阶段。",
-            ]
-              .filter(Boolean)
-              .join("\n");
-      const order = await createOrderRequest({
+          : billingTab === "designer_time"
+            ? [
+                ...contactBlock,
+                "",
+                "--- 计费摘要 ---",
+                "计费方式：按工时计费（设计师标准）",
+                `专业档位：${designerTimeFee?.trackLabel ?? resolvedTimeTrack}`,
+                `计费单位：${timeUnit === "monthly" ? "按月" : "按工日"}`,
+                timeUnit === "monthly"
+                  ? monthlyRangeQuote
+                    ? `服务期：${formatMonthlyRangeSummary(monthlyRangeQuote)}`
+                    : "服务期：未选"
+                  : `已选日期：${
+                      selectedSlots.length
+                        ? formatSelectedSlotsSummary(selectedSlots)
+                        : "未选"
+                    }`,
+                timeUnit === "monthly"
+                  ? monthlyRangeQuote
+                    ? `折算明细：${monthlyRangeQuote.segments
+                        .map((seg) =>
+                          seg.isFull
+                            ? `${formatMonthLabel(seg.monthKey)}整月 ${formatCurrency(seg.amount)}`
+                            : `${formatMonthLabel(seg.monthKey)} ${seg.workdays} 工作日 ${formatCurrency(seg.amount)}`,
+                        )
+                        .join("；")}`
+                    : null
+                  : `数量：${timeQty} 工日`,
+                designerTimeFee
+                  ? `单价：${formatCurrency(designerTimeFee.unit)} / ${timeUnit === "monthly" ? "月" : "工日"}`
+                  : null,
+                designerTimeFee
+                  ? `按设计师标准取费预估 ${formatCurrency(designerTimeFee.total)}（设计费 ${formatCurrency(designerTimeFee.drawingFee)}，含平台服务费 ${directedFeeLabel}）`
+                  : null,
+                `服务方式：${serviceModeLabel}`,
+                "",
+                closingLine,
+              ]
+                .filter(Boolean)
+                .join("\n")
+            : [
+                ...contactBlock,
+                "",
+                "--- 计费摘要 ---",
+                "计费方式：直接输入费用金额",
+                `委托人填写费用：${formatCurrency(
+                  typeof directAmount === "number" ? directAmount : 0,
+                )}`,
+                `服务方式：${serviceModeLabel}`,
+                `平台服务费：${directedFeeLabel}`,
+                "",
+                closingLine,
+              ]
+                .filter(Boolean)
+                .join("\n");
+      const payload = {
         designerId: designer.id,
         title: title.trim(),
         specialty,
         projectType,
         serviceMode,
-        billingMode: "area",
-        orderSource: "scan",
-        totalAmount: 0,
+        billingMode:
+          billingTab === "designer_time" ? timeUnit : ("area" as const),
+        orderSource: "scan" as const,
+        totalAmount: isSelfOrder ? (previewTotalAmount ?? 0) : 0,
         description: fullDescription,
         projectAreaSqm:
           billingTab === "platform_area" && typeof area === "number"
             ? area
             : undefined,
-        expectedDeliveryAt,
+        expectedDeliveryAt:
+          billingTab === "designer_time" && timeUnit === "daily"
+            ? slotsToDateRange(selectedSlots)?.to
+            : billingTab === "designer_time" && timeUnit === "monthly"
+              ? monthlyFrom || undefined
+              : undefined,
         attachments: attachments.length ? attachments : undefined,
-        selectedSlots: [],
-      });
+        selectedSlots:
+          billingTab === "designer_time" && timeUnit === "daily"
+            ? selectedSlots
+            : [],
+        selectedMonths:
+          billingTab === "designer_time" && timeUnit === "monthly"
+            ? selectedMonths
+            : undefined,
+        scheduleFrom:
+          billingTab === "designer_time" && timeUnit === "daily"
+            ? slotsToDateRange(selectedSlots)?.from
+            : billingTab === "designer_time" && timeUnit === "monthly"
+              ? monthlyFrom || undefined
+              : undefined,
+        scheduleTo:
+          billingTab === "designer_time" && timeUnit === "daily"
+            ? slotsToDateRange(selectedSlots)?.to
+            : billingTab === "designer_time" && timeUnit === "monthly"
+              ? monthlyTo || undefined
+              : undefined,
+        address: serviceMode === "onsite" ? composedOnsiteAddress : undefined,
+        taxCoefficient: tax?.coefficient ?? 1,
+        customStageRatios: paymentStages.map((s) => ({
+          name: s.name.trim(),
+          ratio: s.ratio,
+          note: s.note?.trim() || undefined,
+        })),
+      };
+      if (isSelfOrder) {
+        const created = await createDesignerSelfOrderRequest(payload);
+        push({
+          title: "订单已生成",
+          description: `请把确认链接发给委托人。订单号 ${created.code}。`,
+          variant: "success",
+        });
+        router.push(`/designer/orders/${created.id}?selfShare=1`);
+        return;
+      }
+      const order = await createOrderRequest(payload);
       push({
         title: "需求已提交",
-        description: `已发送给 ${designer.name}，请等待对方确认费用与付款阶段。订单号 ${order.code}。`,
+        description: `已发送给 ${maskDesignerPublicName(designer.name)}，请等待对方确认费用与付款阶段。订单号 ${order.code}。`,
         variant: "success",
       });
       router.push(`/client/orders/${order.id}`);
@@ -392,10 +769,14 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
   }
 
   return (
-    <div className="container-page py-10">
-      <div className="mb-4 flex items-center gap-2 text-sm text-ink-60">
+    <div className="container-page py-6 sm:py-10">
+      <div className="mb-4 flex min-w-0 items-center gap-2 text-sm text-ink-60">
         <QrCode className="h-4 w-4 text-brand" />
-        <span>扫码下单 · 填写项目需求</span>
+        <span>
+          {isSelfOrder
+            ? "自己下单 · 填写后发给委托人确认"
+            : "扫码下单 · 填写项目需求"}
+        </span>
       </div>
 
       <Link
@@ -405,16 +786,21 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
         <ArrowLeft className="h-3.5 w-3.5" /> 查看设计师主页
       </Link>
 
-      <div className="grid gap-8 lg:grid-cols-[1fr_300px]">
-        <div className="space-y-6">
-          <Card className="p-6">
+      <div className="grid min-w-0 gap-6 lg:grid-cols-[1fr_300px] lg:gap-8">
+        <div className="min-w-0 space-y-6">
+          <Card className="p-4 sm:p-6">
             <div className="flex items-center gap-4">
               <Avatar className="h-14 w-14">
-                <AvatarImage src={designer.avatar} alt={designer.name} />
-                <AvatarFallback>{designer.name.slice(0, 1)}</AvatarFallback>
+                <AvatarImage
+                  src={designer.avatar}
+                  alt={maskDesignerPublicName(designer.name)}
+                />
+                <AvatarFallback>
+                  {maskDesignerPublicName(designer.name).slice(0, 1)}
+                </AvatarFallback>
               </Avatar>
               <div>
-                <h1 className="text-xl font-semibold text-ink">
+                <h1 className="text-lg font-semibold text-ink sm:text-xl">
                   <DesignerName designer={designer} />
                 </h1>
                 <div className="mt-1 flex flex-wrap gap-2">
@@ -425,13 +811,21 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
             </div>
           </Card>
 
-          <Card className="space-y-5 p-6">
-            <h2 className="text-lg font-semibold text-ink">1 · 填写委托方</h2>
+          <Card className="space-y-4 p-4 sm:space-y-5 sm:p-6">
+            <h2 className="text-base font-semibold text-ink sm:text-lg">1 · 填写委托方</h2>
             <p className="text-xs text-ink-60">
-              已登录委托人账号时将自动填充；联系人可与委托方名称相同或另行填写。
+              {isSelfOrder
+                ? "委托人确认链接后会绑定其账号；此处可先留空或填写已知联系人。"
+                : "已登录委托人账号时将自动填充；联系人可与委托方名称相同或另行填写。"}
             </p>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="sm:col-span-2">
+              <div
+                id="field-committer"
+                className={cn(
+                  "sm:col-span-2",
+                  scanFieldClass(shownHighlight === "field-committer"),
+                )}
+              >
                 <Label>
                   委托方名称 <span className="text-rose-500">*</span>
                 </Label>
@@ -442,7 +836,10 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                   onChange={(e) => setCommitterName(e.target.value)}
                 />
               </div>
-              <div>
+              <div
+                id="field-contact-name"
+                className={scanFieldClass(shownHighlight === "field-contact-name")}
+              >
                 <Label>联系人 *</Label>
                 <Input
                   className="mt-2"
@@ -451,7 +848,10 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                   onChange={(e) => setContactName(e.target.value)}
                 />
               </div>
-              <div>
+              <div
+                id="field-contact-phone"
+                className={scanFieldClass(shownHighlight === "field-contact-phone")}
+              >
                 <Label>联系电话 *</Label>
                 <Input
                   className="mt-2"
@@ -463,10 +863,13 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
             </div>
           </Card>
 
-          <Card className="space-y-5 p-6">
-            <h2 className="text-lg font-semibold text-ink">2 · 项目信息</h2>
+          <Card className="space-y-4 p-4 sm:space-y-5 sm:p-6">
+            <h2 className="text-base font-semibold text-ink sm:text-lg">2 · 项目信息</h2>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="sm:col-span-2">
+              <div
+                id="field-title"
+                className={cn("sm:col-span-2", scanFieldClass(shownHighlight === "field-title"))}
+              >
                 <Label>项目名称 *</Label>
                 <Input
                   className="mt-2"
@@ -475,7 +878,13 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                   onChange={(e) => setTitle(e.target.value)}
                 />
               </div>
-              <div className="sm:col-span-2">
+              <div
+                id="field-project-site"
+                className={cn(
+                  "sm:col-span-2",
+                  scanFieldClass(shownHighlight === "field-project-site"),
+                )}
+              >
                 <Label>项目所在地 *</Label>
                 <div className="relative z-[5] mt-2">
                   <AdministrativeRegionSelector
@@ -484,12 +893,15 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                   />
                 </div>
               </div>
-              <div>
+              <div
+                id="field-project-type"
+                className={scanFieldClass(shownHighlight === "field-project-type")}
+              >
                 <Label>项目类型 *</Label>
                 <select
                   value={projectType}
                   onChange={(e) => setProjectType(e.target.value)}
-                  className="mt-2 h-11 w-full rounded-xl border border-ink-20 bg-white px-3 text-sm"
+                  className="mt-2 h-11 w-full rounded-xl border border-ink-20 bg-white px-3 text-base sm:text-sm"
                 >
                   <option value="" disabled>
                     请选择
@@ -501,68 +913,91 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                   ))}
                 </select>
               </div>
-              <div>
-                <Label>
-                  {expectedDateFieldLabel(serviceMode)}
-                  <span className="ml-1 text-rose-500">*</span>
-                </Label>
-                <Input
-                  type="date"
-                  className="mt-2"
-                  value={expectedDeliveryAt}
-                  onChange={(e) => setExpectedDeliveryAt(e.target.value)}
-                />
-              </div>
               <div className="sm:col-span-2">
                 <Label>服务方式</Label>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {[
                     { v: "online" as const, l: "线上远程" },
-                    { v: "onsite" as const, l: "线下驻场" },
+                    { v: "onsite" as const, l: "线下服务" },
                   ].map((m) => (
                     <button
                       key={m.v}
                       type="button"
-                      disabled={
-                        m.v === "onsite" && !designer.serviceModes.includes("onsite")
-                      }
-                      onClick={() => setServiceMode(m.v)}
+                      onClick={() => {
+                        if (m.v === "onsite" && serviceMode !== "onsite") {
+                          setOnsiteAdminTriple(projectAdminTriple);
+                        }
+                        setServiceMode(m.v);
+                      }}
                       className={cn(
                         "rounded-full border px-4 py-2 text-sm transition-colors",
                         serviceMode === m.v
                           ? "border-brand bg-brand/5 text-brand"
                           : "border-ink-20 text-ink-60 hover:border-ink/40",
-                        m.v === "onsite" &&
-                          !designer.serviceModes.includes("onsite") &&
-                          "cursor-not-allowed opacity-50",
                       )}
                     >
                       {m.l}
                     </button>
                   ))}
                 </div>
+                {serviceMode === "onsite" ? (
+                  <div className="mt-3 space-y-3">
+                    <Label>
+                      驻场地址 <span className="text-rose-500">*</span>
+                    </Label>
+                    <div
+                      id="field-onsite-region"
+                      className={scanFieldClass(
+                        shownHighlight === "field-onsite-region",
+                      )}
+                    >
+                      <AdministrativeRegionSelector
+                        triple={onsiteAdminTriple}
+                        onTripleChange={setOnsiteAdminTriple}
+                        showRateCoefficient={false}
+                        footerNote="先选省 / 市 / 区县，再填写路名与门牌号。"
+                      />
+                    </div>
+                    <div
+                      id="field-onsite-detail"
+                      className={scanFieldClass(
+                        shownHighlight === "field-onsite-detail",
+                      )}
+                    >
+                      <Label>
+                        具体地址 / 门牌号{" "}
+                        <span className="text-rose-500">*</span>
+                      </Label>
+                      <Input
+                        className="mt-2"
+                        autoComplete="off"
+                        placeholder="请填写路名、门牌号、楼层等"
+                        value={onsiteAddress}
+                        onChange={(e) => setOnsiteAddress(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
           </Card>
 
-          <Card className="space-y-5 p-6">
+          <Card className="space-y-4 p-4 sm:space-y-5 sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-lg font-semibold text-ink">3 · 费用计算</h2>
-              {billingTab === "platform_area" ? (
-                <Button asChild variant="outline" size="sm">
-                  <Link href="/calculator" target="_blank">
-                    <Calculator className="h-3.5 w-3.5" /> 平台收费标准
-                  </Link>
-                </Button>
-              ) : null}
+              <h2 className="text-base font-semibold text-ink sm:text-lg">3 · 费用计算</h2>
             </div>
 
             <div className="flex flex-wrap gap-2">
               {[
                 {
                   v: "platform_area" as const,
-                  l: "按面积计费（平台标准）",
+                  l: "按面积计费（设计师标准）",
                   icon: Ruler,
+                },
+                {
+                  v: "designer_time" as const,
+                  l: "按工时计费（设计师标准）",
+                  icon: Clock,
                 },
                 {
                   v: "direct_amount" as const,
@@ -575,9 +1010,16 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                   <button
                     key={tab.v}
                     type="button"
-                    onClick={() => setBillingTab(tab.v)}
+                    onClick={() => {
+                      setBillingTab(tab.v);
+                      if (tab.v === "designer_time") {
+                        applyTimePaymentStages(timeUnit);
+                      } else {
+                        setPaymentStages(defaultBountyPaymentStageDrafts());
+                      }
+                    }}
                     className={cn(
-                      "inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm transition-colors",
+                      "inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-2 text-xs transition-colors sm:gap-2 sm:px-4 sm:text-sm",
                       billingTab === tab.v
                         ? "border-brand bg-brand/5 text-brand"
                         : "border-ink-20 text-ink-60 hover:border-ink/40",
@@ -592,7 +1034,10 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
 
             {billingTab === "platform_area" ? (
             <div className="grid gap-4 sm:grid-cols-2">
-              <div>
+              <div
+                id="field-area"
+                className={scanFieldClass(shownHighlight === "field-area")}
+              >
                 <Label>景观面积（㎡）*</Label>
                 <Input
                   type="number"
@@ -604,7 +1049,13 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                   }
                 />
               </div>
-              <div className="sm:col-span-2">
+              <div
+                id="field-l2"
+                className={cn(
+                  "sm:col-span-2",
+                  scanFieldClass(shownHighlight === "field-l2"),
+                )}
+              >
                 <Label>二级专业（可多选）*</Label>
                 <div className="mt-2">
                   <BountyTrackMultiSelect
@@ -617,7 +1068,13 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                   />
                 </div>
               </div>
-              <div className="sm:col-span-2">
+              <div
+                id="field-tracks"
+                className={cn(
+                  "sm:col-span-2",
+                  scanFieldClass(shownHighlight === "field-tracks"),
+                )}
+              >
                 <Label>三级专业与难度系数 *</Label>
                 <div className="mt-3 space-y-3">
                   {TRACK_OPTIONS.map((spec) => {
@@ -649,37 +1106,6 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                               </p>
                             ) : null}
                           </div>
-                          {checked && ui.kind === "select" ? (
-                            <div className="flex flex-shrink-0 flex-col items-start gap-1 sm:items-end">
-                              <div className="flex flex-wrap gap-1.5 sm:justify-end">
-                                {ui.options.map((opt) => (
-                                  <button
-                                    key={difficultyOptionKey(opt)}
-                                    type="button"
-                                    onClick={() =>
-                                      setAreaDifficulty((prev) => ({
-                                        ...prev,
-                                        [tk]: opt.value,
-                                      }))
-                                    }
-                                    className={cn(
-                                      "rounded-full border px-2.5 py-0.5 text-[11px] transition-colors",
-                                      areaDifficulty[tk] === opt.value
-                                        ? "border-brand bg-brand text-white"
-                                        : "border-ink-20 text-ink-60 hover:border-brand/60",
-                                    )}
-                                  >
-                                    {opt.label} {Math.round(opt.value * 100)}%
-                                  </button>
-                                ))}
-                              </div>
-                              {areaDifficulty[tk] == null ? (
-                                <span className="text-[10px] text-rose-500">
-                                  请选择难度系数
-                                </span>
-                              ) : null}
-                            </div>
-                          ) : null}
                           {checked && ui.kind === "fixed" ? (
                             <Badge
                               variant="brand"
@@ -690,31 +1116,26 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                           ) : null}
                         </div>
                         {checked && ui.kind === "select" ? (
-                          <div className="mt-3 border-t border-dashed border-ink-20/70 pt-3">
-                            <div className="mb-2 text-[10px] font-medium uppercase tracking-wider text-ink-40">
-                              {tk === "drainage"
+                          <LandscapeAreaDifficultyCards
+                            options={ui.options}
+                            selectedValue={areaDifficulty[tk]}
+                            onSelect={(opt) =>
+                              setAreaDifficulty((prev) => ({
+                                ...prev,
+                                [tk]: opt.value,
+                              }))
+                            }
+                            heading={
+                              tk === "drainage"
                                 ? "选项说明 · 给排水"
-                                : `难度说明 · ${spec.label.split("（")[0]?.trim()}`}
-                            </div>
-                            <div className="grid gap-2 sm:grid-cols-2">
-                              {ui.options.map((opt) => (
-                                <div
-                                  key={difficultyOptionKey(opt)}
-                                  className={cn(
-                                    "rounded-lg border px-2.5 py-2 text-[11px] leading-snug",
-                                    areaDifficulty[tk] === opt.value
-                                      ? "border-brand/40 bg-brand/5"
-                                      : "border-ink-20/80 bg-white/60",
-                                  )}
-                                >
-                                  <span className="font-semibold text-ink">
-                                    {opt.label} · {Math.round(opt.value * 100)}%
-                                  </span>
-                                  <span className="mt-1 block text-ink-60">{opt.remark}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
+                                : `难度说明 · ${spec.label.split("（")[0]?.trim()}`
+                            }
+                            missingHint={
+                              areaDifficulty[tk] == null
+                                ? "请选择难度系数"
+                                : undefined
+                            }
+                          />
                         ) : null}
                         {checked && ui.kind === "fixed" ? (
                           <div className="mt-3 border-t border-dashed border-ink-20/70 pt-3">
@@ -731,7 +1152,10 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                   （与计算器一致）。
                 </p>
               </div>
-              <div>
+              <div
+                id="field-build-type"
+                className={scanFieldClass(shownHighlight === "field-build-type")}
+              >
                 <Label>建造类型 *</Label>
                 <div className="mt-2 flex gap-2">
                   {[
@@ -754,7 +1178,10 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                   ))}
                 </div>
               </div>
-              <div>
+              <div
+                id="field-tax"
+                className={scanFieldClass(shownHighlight === "field-tax")}
+              >
                 <Label>税率 *</Label>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {pricingConfig.taxOptions.map((t) => (
@@ -775,9 +1202,139 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                 </div>
               </div>
             </div>
+            ) : billingTab === "designer_time" ? (
+              <div className="space-y-4">
+                <div>
+                  <Label>计费专业档位 *</Label>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {TRACK_OPTIONS.map((spec) => (
+                      <button
+                        key={spec.value}
+                        type="button"
+                        onClick={() =>
+                          setTimeTrack(spec.value as LandscapeTimeRateTrack)
+                        }
+                        className={cn(
+                          "rounded-full border px-3 py-1.5 text-xs",
+                          resolvedTimeTrack === spec.value
+                            ? "border-ink bg-ink text-white"
+                            : "border-ink-20 text-ink-60",
+                        )}
+                      >
+                        {spec.label.split("（")[0]?.trim()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <Label>计费单位 *</Label>
+                  <div className="mt-2 flex gap-2">
+                    {[
+                      { v: "daily" as const, l: "按工日" },
+                      { v: "monthly" as const, l: "按月" },
+                    ].map((u) => (
+                      <button
+                        key={u.v}
+                        type="button"
+                        onClick={() => {
+                          setTimeUnit(u.v);
+                          if (u.v === "daily") {
+                            setMonthlyFrom("");
+                            setMonthlyTo("");
+                          } else {
+                            setSelectedSlots([]);
+                          }
+                          applyTimePaymentStages(u.v);
+                        }}
+                        className={cn(
+                          "rounded-full border px-3 py-1.5 text-xs",
+                          timeUnit === u.v
+                            ? "border-ink bg-ink text-white"
+                            : "border-ink-20 text-ink-60",
+                        )}
+                      >
+                        {u.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div
+                  id="field-schedule"
+                  className={scanFieldClass(shownHighlight === "field-schedule")}
+                >
+                  <Label>
+                      : "选择服务日期（设计师工作日历）"}{" "}
+                    <span className="text-rose-500">*</span>
+                  </Label>
+                  <p className="mt-1 text-xs text-ink-60">
+                    {timeUnit === "monthly"
+                      ? "日历标出该设计师忙闲。先点开始日期，再点结束日期。首尾不足整月按工作日折算（日费 = 月费 ÷ 21），中间整月按月费率。"
+                      : "日历标出该设计师目前忙闲时段。可单选或多选空闲日期，数量按已选工日计算。"}
+                  </p>
+                  <div className="mt-3">
+                    {timeUnit === "daily" ? (
+                      <DesignerSchedulePicker
+                        calendar={bookingCalendar.booking}
+                        events={bookingCalendar.events}
+                        value={selectedSlots}
+                        onChange={setSelectedSlots}
+                        initialYear={calendarToday.getFullYear()}
+                        initialMonth={calendarToday.getMonth() + 1}
+                      />
+                    ) : (
+                      <DesignerDateRangeCalendar
+                        calendar={bookingCalendar.booking}
+                        events={bookingCalendar.events}
+                        value={{ from: monthlyFrom, to: monthlyTo }}
+                        onChange={(next) => {
+                          setMonthlyFrom(next.from);
+                          setMonthlyTo(next.to);
+                        }}
+                        initialYear={calendarToday.getFullYear()}
+                        initialMonth={calendarToday.getMonth() + 1}
+                      />
+                    )}
+                  </div>
+                </div>
+                <div
+                  id="field-tax"
+                  className={scanFieldClass(shownHighlight === "field-tax")}
+                >
+                  <Label>税率 *</Label>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {pricingConfig.taxOptions.map((t) => (
+                      <button
+                        key={t.value}
+                        type="button"
+                        onClick={() => setTax(t)}
+                        className={cn(
+                          "rounded-full border px-3 py-1.5 text-xs",
+                          tax?.value === t.value
+                            ? "border-ink bg-ink text-white"
+                            : "border-ink-20 text-ink-60",
+                        )}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-xs leading-relaxed text-ink-60">
+                  单价取该设计师已设定的
+                  {serviceMode === "onsite" ? "驻场" : "线上"}
+                  {timeUnit === "monthly" ? "月" : "工日"}
+                  费率，再计平台服务费 {directedFeeLabel}。
+                </p>
+              </div>
             ) : (
               <div className="space-y-4">
-                <div className="max-w-xs">
+                <div
+                  id="field-direct-amount"
+                  className={cn(
+                    "max-w-xs",
+                    scanFieldClass(shownHighlight === "field-direct-amount"),
+                  )}
+                >
                   <Label>
                     费用金额（元） <span className="text-rose-500">*</span>
                   </Label>
@@ -795,16 +1352,145 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
                     }
                   />
                 </div>
+                <div
+                  id="field-tax"
+                  className={scanFieldClass(shownHighlight === "field-tax")}
+                >
+                  <Label>税率 *</Label>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {pricingConfig.taxOptions.map((t) => (
+                      <button
+                        key={t.value}
+                        type="button"
+                        onClick={() => setTax(t)}
+                        className={cn(
+                          "rounded-full border px-3 py-1.5 text-xs",
+                          tax?.value === t.value
+                            ? "border-ink bg-ink text-white"
+                            : "border-ink-20 text-ink-60",
+                        )}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <p className="text-xs leading-relaxed text-ink-60">
-                  填写您期望的项目费用即可，无需填写面积与专业难度。提交后设计师可确认或调整，并设置付款阶段。
+                  填写您期望的项目费用即可，无需填写面积与专业难度。提交后设计师可确认或调整。
+                  定向下单平台仅收取 {directedFeeLabel}。
                 </p>
               </div>
             )}
+
+            {billingTab === "platform_area" || billingTab === "designer_time" ? (
+              <div className="rounded-xl border border-ink-20 bg-ink-20/20 px-4 py-3">
+                <div className="text-xs text-ink-60">按该设计师费率预估</div>
+                <div className="mt-1 text-2xl font-bold tabular-nums text-ink">
+                  {billingTab === "designer_time"
+                    ? designerTimeFee
+                      ? formatCurrency(designerTimeFee.total)
+                      : timeUnit === "monthly"
+                        ? "请在日历中选择开始日期与结束日期"
+                        : "请在日历中选择服务日期"
+                    : designerAreaFee
+                      ? formatCurrency(designerAreaFee.total)
+                      : "待补全面积与专业"}
+                </div>
+                {billingTab === "designer_time" ? (
+                  designerTimeFee ? (
+                    <div className="mt-1.5 space-y-1 text-[11px] leading-relaxed text-ink-50">
+                      <p>
+                        {designerTimeFee.trackLabel} ·{" "}
+                        {formatCurrency(designerTimeFee.unit)} /{" "}
+                        {timeUnit === "monthly" ? "月" : "工日"}
+                        {timeUnit === "monthly" && monthlyRangeQuote
+                          ? ` · 日费 ${formatCurrency(monthlyRangeQuote.dailyRate)}`
+                          : ` × ${timeQty}`}{" "}
+                        · 设计费 {formatCurrency(designerTimeFee.drawingFee)} ·
+                        含平台服务费 {directedFeeLabel}。
+                      </p>
+                      {timeUnit === "monthly" && monthlyRangeQuote ? (
+                        <ul className="space-y-0.5 text-ink-50">
+                          {monthlyRangeQuote.segments.map((seg) => (
+                            <li key={seg.monthKey}>
+                              {seg.isFull
+                                ? `${formatMonthLabel(seg.monthKey)}整月`
+                                : `${formatMonthLabel(seg.monthKey)} ${formatIsoDateLabel(seg.from)}～${formatIsoDateLabel(seg.to)} · ${seg.workdays} 工作日`}{" "}
+                              {formatCurrency(seg.amount)}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-ink-50">
+                      按该设计师已设定的
+                      {serviceMode === "onsite" ? "驻场" : "线上"}
+                      工时费率估算。
+                    </p>
+                  )
+                ) : designerAreaFee ? (
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-ink-50">
+                    设计费 {formatCurrency(designerAreaFee.drawingFee)} · 含平台服务费{" "}
+                    {directedFeeLabel}。提交后设计师仍可确认或调整。
+                  </p>
+                ) : (
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-ink-50">
+                    按该设计师已设定的取费标准（等级、地区及本人费率）估算，不含平台通用价目。
+                  </p>
+                )}
+              </div>
+            ) : null}
           </Card>
 
-          <Card className="space-y-4 p-6">
-            <h2 className="text-lg font-semibold text-ink">4 · 项目描述与附件</h2>
-            <div>
+          <Card
+            id="field-payment-stages"
+            className={cn(
+              "space-y-4 p-4 sm:p-6",
+              scanFieldClass(shownHighlight === "field-payment-stages"),
+            )}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <CircleDollarSign className="h-5 w-5 shrink-0 text-brand" />
+              <h2 className="text-base font-semibold text-ink sm:text-lg">付款阶段</h2>
+            </div>
+            <p className="text-xs leading-relaxed text-ink-60">
+              {billingTab === "designer_time" && timeUnit === "daily"
+                ? "与常规委托按日一致：签约预付后开工，服务结束后付清尾款。比例合计须为 100%，每阶段备注必填。"
+                : billingTab === "designer_time" && timeUnit === "monthly"
+                  ? "与常规委托按月一致：按服务期内各月一期。首尾不足整月按工作日折算金额占比，中间整月按月费率。比例合计须为 100%。"
+                  : "默认一个阶段（全款）。可增减阶段、调整比例与付款条件，比例合计须为 100%，每阶段备注必填。提交后设计师可再确认或调整。"}
+            </p>
+            <ScanPaymentStagesEditor
+              stages={paymentStages}
+              onChange={setPaymentStages}
+              totalAmount={previewTotalAmount ?? 0}
+              variant={
+                billingTab === "designer_time"
+                  ? timeUnit === "monthly"
+                    ? "monthly"
+                    : "daily"
+                  : "custom"
+              }
+              ruleHint={
+                billingTab === "designer_time"
+                  ? timeUnit === "monthly"
+                    ? formatMonthlyBillingRuleFull(pricingConfig.commerce)
+                    : formatDailyBillingRule(pricingConfig.commerce)
+                  : undefined
+              }
+              allowAddRemove={
+                billingTab !== "designer_time" || timeUnit !== "monthly"
+              }
+            />
+          </Card>
+
+          <Card className="space-y-4 p-4 sm:p-6">
+            <h2 className="text-base font-semibold text-ink sm:text-lg">4 · 项目描述与附件</h2>
+            <div
+              id="field-description"
+              className={scanFieldClass(shownHighlight === "field-description")}
+            >
               <Label>需求描述 *</Label>
               <Textarea
                 className="mt-2 min-h-[120px]"
@@ -863,31 +1549,47 @@ function ScanOrderForm({ designerId }: { designerId: string }) {
           <Button
             variant="brand"
             size="lg"
-            className="w-full"
-            disabled={!canSubmit || submitting}
+            className="h-auto w-full whitespace-normal py-3"
+            disabled={submitting}
             onClick={handleSubmit}
           >
             <FileSignature className="h-4 w-4" />
-            {submitting ? "提交中..." : "提交给设计师确认费用"}
+            {submitting
+              ? "提交中..."
+              : isSelfOrder
+                ? "生成确认链接发给委托人"
+                : "提交给设计师确认费用"}
           </Button>
+          {!canSubmit ? (
+            <p className="text-center text-[11px] text-rose-500">
+              还有必填项未完成。点击提交会跳转到需要填写的位置。
+            </p>
+          ) : null}
         </div>
 
         <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
-          <PlatformPaymentStagesPreview
-            stages={platformPaymentStages}
-            totalAmount={previewTotalAmount}
-            description={paymentPreviewDescription}
-          />
-          <Card className="space-y-3 p-6">
+          <Card className="space-y-3 p-4 sm:p-6">
+            <div className="text-xs uppercase tracking-wider text-ink-40">费用预览</div>
+            <div className="text-2xl font-bold tabular-nums text-ink">
+              {previewTotalAmount ? formatCurrency(previewTotalAmount) : "待填写"}
+            </div>
+            <p className="text-xs leading-relaxed text-ink-60">
+              {billingTab === "direct_amount"
+                ? "以您填写的费用为准，提交后设计师可确认或调整。"
+                : "按该设计师已设定的取费标准估算，提交后对方可确认或调整。"}
+            </p>
+          </Card>
+          <Card className="space-y-3 p-4 sm:p-6">
             <div className="text-xs uppercase tracking-wider text-ink-40">流程说明</div>
             <ol className="space-y-2 text-xs leading-relaxed text-ink-60">
-              <li>① 填写项目需求（按面积或直填费用）</li>
+              <li>① 填写项目需求与付款阶段</li>
               <li>② 设计师确认费用与付款阶段</li>
               <li>③ 您确认后双方签约并预付</li>
               <li>④ 进入项目服务</li>
             </ol>
             <p className="rounded-xl bg-brand/5 p-3 text-[11px] leading-relaxed text-ink-60">
-              以上为平台标准付款条件；最终费用与阶段由设计师确认后，需您确认才会进入签约。
+              按面积取费以该设计师本人费率为准。最终费用与阶段由设计师确认后，需您确认才会进入签约。
+              定向下单平台服务费为 {formatDirectedPlatformFeeLabel(taxPointRateFromOption(tax))}。
             </p>
           </Card>
         </aside>

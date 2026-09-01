@@ -3,11 +3,16 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { UnifiedProjectList } from "@/components/domain/unified-project-list";
+import { ScanOrderQrDialog } from "@/components/domain/scan-order-qr-dialog";
+import { buildScanOrderPath } from "@/lib/scan-order";
+import { useDesigner } from "@/lib/use-data";
 import { useRoleStore } from "@/store/role-store";
-import { QrCode } from "lucide-react";
+import { Pencil } from "lucide-react";
 
 export default function DesignerDirectedOrdersPage() {
   const identityId = useRoleStore((s) => s.identityId);
+  const { data: designer } = useDesigner(identityId);
+  const selfOrderHref = identityId ? buildScanOrderPath(identityId) : "";
 
   return (
     <div className="space-y-6">
@@ -21,11 +26,21 @@ export default function DesignerDirectedOrdersPage() {
           </p>
         </div>
         {identityId ? (
-          <Button asChild variant="outline">
-            <Link href={`/designers/${identityId}`}>
-              <QrCode className="h-4 w-4" /> 个人主页 · 分享下单
-            </Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline">
+              <Link href={selfOrderHref}>
+                <Pencil className="h-4 w-4" /> 自己填单
+              </Link>
+            </Button>
+            <ScanOrderQrDialog
+              designerId={identityId}
+              designerName={designer?.name ?? ""}
+              triggerLabel="分享下单链接"
+              triggerSize="default"
+              triggerClassName=""
+              showEnterOrder={false}
+            />
+          </div>
         ) : null}
       </div>
 

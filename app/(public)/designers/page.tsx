@@ -62,10 +62,10 @@ function DesignersInner() {
   const distanceRef = getSortReferenceLabel(filters.city);
 
   return (
-    <div className="container-page py-10">
-      <div className="mb-8 flex items-end justify-between">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-ink">
+    <div className="container-page py-6 sm:py-10">
+      <div className="mb-6 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
             找设计
           </h1>
           <p className="mt-2 text-sm text-ink-60">

@@ -3,7 +3,6 @@ import {
   ADMIN_DEFAULT_TAB_PRIORITY,
   adminClientAllSortRank,
   compareByCreatedAtDesc,
-  isActiveSupervisionOrderWithClientReview,
   isAwaitingClientPaymentOrder,
   isAwaitingClientSignOrder,
   isAwaitingDesignerSignOrder,
@@ -15,13 +14,14 @@ import {
   type OrderSupervisionStatus,
 } from "@/lib/order-supervision";
 import { isAwaitingClientReviewOrder } from "@/lib/client-review";
+import { isDirectedOrderSource } from "@/lib/unified-project-list";
 import type { Client, Designer, Order, Specialty } from "@/lib/types";
 
 export type AdminOrderStatusFilter = OrderSupervisionStatus | "payment_overdue";
 
 export type AdminOrderSpecialtyFilter = Specialty | "all";
 
-export type AdminOrderTypeFilter = "all" | "regular" | "bounty";
+export type AdminOrderTypeFilter = "all" | "regular" | "bounty" | "directed";
 
 export const ADMIN_ORDER_TYPE_FILTERS: {
   value: AdminOrderTypeFilter;
@@ -30,10 +30,15 @@ export const ADMIN_ORDER_TYPE_FILTERS: {
   { value: "all", label: "全部" },
   { value: "regular", label: "常规委托" },
   { value: "bounty", label: "悬赏委托" },
+  { value: "directed", label: "定向委托" },
 ];
 
 export function isBountyEntrustOrder(order: Order): boolean {
   return order.orderSource === "bounty" || Boolean(order.bountyId);
+}
+
+export function isDirectedEntrustOrder(order: Order): boolean {
+  return !isBountyEntrustOrder(order) && isDirectedOrderSource(order);
 }
 
 export const ADMIN_ORDER_SPECIALTY_FILTERS: {
@@ -119,7 +124,7 @@ function matchesAdminStatus(
 ): boolean {
   switch (statusFilter) {
     case "all":
-      return isActiveSupervisionOrderWithClientReview(order);
+      return true;
     case "payment_overdue":
       return (
         order.status !== "cancelled" &&
@@ -150,7 +155,7 @@ function matchesAdminStatus(
     case "completed":
       return order.status === "completed" && !isAwaitingClientReviewOrder(order);
     case "cancelled":
-      return order.status === "cancelled";
+      return order.status === "cancelled" || order.status === "terminated";
     default:
       return false;
   }
@@ -162,7 +167,10 @@ function matchesAdminType(
 ): boolean {
   if (typeFilter === "all") return true;
   const isBounty = isBountyEntrustOrder(order);
-  return typeFilter === "bounty" ? isBounty : !isBounty;
+  const isDirected = isDirectedEntrustOrder(order);
+  if (typeFilter === "bounty") return isBounty;
+  if (typeFilter === "directed") return isDirected;
+  return !isBounty && !isDirected;
 }
 
 export function filterAdminOrders(
@@ -278,7 +286,6 @@ export function countAdminOrdersBySpecialty(
 export function countAdminOrdersByType(
   orders: Order[],
   query: string,
-  statusFilter: AdminOrderStatusFilter,
   specialtyFilter: AdminOrderSpecialtyFilter,
   partyIndex: ReturnType<typeof buildAdminOrderPartyIndex>,
 ): Record<AdminOrderTypeFilter, number> {
@@ -287,7 +294,7 @@ export function countAdminOrdersByType(
       acc[item.value] = filterAdminOrders(
         orders,
         query,
-        statusFilter,
+        "all",
         specialtyFilter,
         partyIndex,
         undefined,

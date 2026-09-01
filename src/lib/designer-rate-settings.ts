@@ -3,6 +3,13 @@ import type {
   DesignerPricingBaseSnapshot,
 } from "@/lib/designer-pricing-base";
 import { formatPricePerSqm } from "@/lib/designer-pricing-base";
+import {
+  getDesignerV11TimeRates,
+  LANDSCAPE_TIME_TRACK_LABELS,
+  type LandscapeTimeRateTrack,
+} from "@/lib/designer-rates";
+import type { PlatformPricingConfig } from "@/lib/platform-pricing";
+import type { Designer } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 
 export const DEFAULT_DESIGNER_RATE_PERCENT = 100;
@@ -42,6 +49,64 @@ export function getTimeRatePercentKey(lineId: string, subKey: TimeRateSubKey) {
 export function clampDesignerRatePercent(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_DESIGNER_RATE_PERCENT;
   return Math.max(MIN_DESIGNER_RATE_PERCENT, Math.round(value));
+}
+
+const LANDSCAPE_AREA_TRACK_L3: Record<
+  "hardscape" | "softscape" | "drainage" | "electrical",
+  string[]
+> = {
+  hardscape: ["ls_garden", "ls_garden_struct"],
+  softscape: ["ls_greening"],
+  drainage: ["ls_drainage", "ls_drainage_irrigation"],
+  electrical: ["ls_electrical"],
+};
+
+/** 扫码 / 定向下单按面积：套用设计师本人费率百分比（相对综合基数） */
+export function designerLandscapeAreaTrackFactor(
+  track: "hardscape" | "softscape" | "drainage" | "electrical",
+  selectedL2: string[],
+  percents: DesignerRatePercents | undefined,
+): number {
+  const map = percents ?? {};
+  const schemeOnly =
+    selectedL2.length > 0 && selectedL2.every((l2) => l2 === "scheme");
+  const prefix = schemeOnly
+    ? "scheme"
+    : selectedL2.includes("construction_doc")
+      ? "cd"
+      : selectedL2.includes("preliminary")
+        ? "pre"
+        : "cd";
+  const l3s = LANDSCAPE_AREA_TRACK_L3[track] ?? [];
+  for (const l3 of l3s) {
+    const key = `${prefix}-${l3}`;
+    if (map[key] != null && !Number.isNaN(map[key])) {
+      return getLineRatePercent(key, map) / 100;
+    }
+  }
+  return getLineRatePercent(`${prefix}-${l3s[0] ?? ""}`, map) / 100;
+}
+
+/** 扫码 / 定向下单按工时：平台综合基数 × 设计师本人时间费率百分比 */
+export function designerAppliedTimeRates(
+  designer: Designer,
+  track: LandscapeTimeRateTrack,
+  percents: DesignerRatePercents | undefined,
+  config?: PlatformPricingConfig,
+) {
+  const base = getDesignerV11TimeRates(designer, { track, config });
+  const lineId = `time-${track}`;
+  const map = percents ?? {};
+  const factor = (sub: TimeRateSubKey) =>
+    getTimeSubRatePercent(lineId, sub, map) / 100;
+  return {
+    track,
+    trackLabel: LANDSCAPE_TIME_TRACK_LABELS[track],
+    remoteDaily: Math.round(base.remote.daily * factor("remoteDaily")),
+    remoteMonthly: Math.round(base.remote.monthly * factor("remoteMonthly")),
+    onsiteDaily: Math.round(base.onsite.daily * factor("onsiteDaily")),
+    onsiteMonthly: Math.round(base.onsite.monthly * factor("onsiteMonthly")),
+  };
 }
 
 export function getLineRatePercent(

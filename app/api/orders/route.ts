@@ -5,7 +5,12 @@ import { AuthError, requireSession } from "@/lib/server/auth";
 import { placeOrder } from "@/lib/server/order-service";
 import type { CreateOrderInput } from "@/lib/server/order-builder";
 import type { CreateOrderBody } from "@/lib/api-client";
-import { buildRegularTimeQuote, buildRegularTimeQuotesByLevel } from "@/lib/regular-entrust-quote";
+import {
+  buildRegularAreaQuote,
+  buildRegularAreaQuotesByLevel,
+  buildRegularTimeQuote,
+  buildRegularTimeQuotesByLevel,
+} from "@/lib/regular-entrust-quote";
 import { DEFAULT_CLIENT_LEVEL } from "@/lib/level-management";
 
 export const dynamic = "force-dynamic";
@@ -73,6 +78,39 @@ export async function POST(req: NextRequest) {
     }
 
     if (
+      source === "regular" &&
+      billingMode === "area" &&
+      body.areaQuote &&
+      (body.areaQuote.tracks?.length || body.areaQuote.structure)
+    ) {
+      try {
+        const client = await getClient(session.identityId);
+        const quoteInput = {
+          area: body.areaQuote.area,
+          projectType: body.areaQuote.projectType || body.projectType || "",
+          buildType: body.areaQuote.buildType,
+          tracks: body.areaQuote.tracks ?? [],
+          structure: body.areaQuote.structure,
+          withAudit: body.withAuditService,
+          withPM: body.withProjectManagement,
+          taxCoefficient: body.areaQuote.taxCoefficient,
+          clientLevel: client?.level ?? DEFAULT_CLIENT_LEVEL,
+        };
+        levelQuotes = buildRegularAreaQuotesByLevel(quoteInput);
+        quote =
+          levelQuotes.find((q) => q.assumptions.designerLevel === "mid_v1") ??
+          levelQuotes[0] ??
+          buildRegularAreaQuote({ ...quoteInput, designerLevel: "mid_v1" });
+        totalAmount = quote.total;
+      } catch (e) {
+        throw new AuthError(
+          400,
+          e instanceof Error ? e.message : "无法生成报价单",
+        );
+      }
+    }
+
+    if (
       !body.title ||
       (source !== "scan" && totalAmount == null) ||
       (needsDesigner && !body.designerId)
@@ -80,7 +118,7 @@ export async function POST(req: NextRequest) {
       return fail(400, "缺少必要的下单参数");
     }
     const expectedDeliveryAt = body.expectedDeliveryAt?.trim() ?? "";
-    if (!expectedDeliveryAt) {
+    if (!expectedDeliveryAt && source !== "scan") {
       return fail(400, "请填写预期交付时间或开始服务时间");
     }
 
@@ -107,6 +145,7 @@ export async function POST(req: NextRequest) {
       customStageRatios: body.customStageRatios,
       attachments: body.attachments,
       expectedDeliveryAt,
+      taxCoefficient: body.taxCoefficient,
       quote,
       levelQuotes,
     });

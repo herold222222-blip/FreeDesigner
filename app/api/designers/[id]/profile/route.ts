@@ -36,6 +36,8 @@ export async function PATCH(
       calendarBatchSettings?: Designer["calendarBatchSettings"];
       portfolio?: PortfolioItem[];
       acceptingOrders?: boolean;
+      isOpenToTravel?: boolean;
+      supportsHandDrawing?: boolean;
     };
 
     let next: Designer = base;
@@ -67,6 +69,18 @@ export async function PATCH(
     }
     if (typeof body.acceptingOrders === "boolean") {
       next = { ...next, acceptingOrders: body.acceptingOrders };
+    }
+    if (typeof body.isOpenToTravel === "boolean") {
+      next = {
+        ...next,
+        isOpenToTravel: body.isOpenToTravel,
+        travelDuration: body.isOpenToTravel
+          ? (next.travelDuration ?? "short")
+          : null,
+      };
+    }
+    if (typeof body.supportsHandDrawing === "boolean") {
+      next = { ...next, supportsHandDrawing: body.supportsHandDrawing };
     }
 
     await saveDesigner(next);

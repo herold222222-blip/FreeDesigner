@@ -1,6 +1,7 @@
 "use client";
 
 import { Card } from "@/components/ui/card";
+import { PaymentEscrowHint } from "@/components/domain/payment-escrow-hint";
 import type { PlatformPaymentStageDef } from "@/lib/landscape-payment-stages";
 import { cn, formatCurrency } from "@/lib/utils";
 import { CircleDollarSign } from "lucide-react";
@@ -32,6 +33,7 @@ export function PlatformPaymentStagesPreview({
           {description ? (
             <p className="mt-1 text-[11px] leading-relaxed text-ink-60">{description}</p>
           ) : null}
+          <PaymentEscrowHint className="mt-1.5" />
         </div>
       </div>
       <ul className="space-y-2">

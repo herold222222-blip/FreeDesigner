@@ -1,7 +1,14 @@
 import { slotsToDateRange } from "@/lib/designer-schedule";
-import { MONTHLY_PREPAY_DAY, monthlyFirstPrepayDueDate, monthlyPaymentDueAtIso, monthlyPrepayDate, resolveMonthlyServicePeriod } from "@/lib/monthly-billing";
+import {
+  formatDailyBillingRule,
+  formatMonthlyBillingRuleFull,
+  normalizeCommerceSettings,
+  type PlatformCommerceSettings,
+} from "@/lib/platform-commerce";
+import { MONTHLY_PREPAY_DAY, getMonthlyHireMonthCount, monthlyFirstPrepayDueDate, monthlyPaymentDueAtIso, monthlyPrepayDate, resolveMonthlyServicePeriod } from "@/lib/monthly-billing";
 import { adjustToPreviousCnWorkday } from "@/lib/cn-workdays";
 import type { Order, PaymentStage, WorkCalendarEvent } from "@/lib/types";
+import { resolveStagePaymentCondition } from "@/lib/order-payment-stages";
 import { getOrderWorkCalendarEvents } from "@/lib/work-calendar-content";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
@@ -10,11 +17,9 @@ export const BILLING_CUTOFF_HOUR = 17;
 export const WORK_DAYS_PER_MONTH = 21;
 export const DAILY_SETTLEMENT_GRACE_DAYS = 3;
 
-export const DAILY_BILLING_RULE =
-  "签约预付后，原合同服务期结束之日起 3 日内付清尾款。延长服务须在结束日前一日 17:00 前申请（半天为计费单元），服务完成后补付延长费用。";
+export const DAILY_BILLING_RULE = formatDailyBillingRule();
 
-export const MONTHLY_BILLING_RULE_FULL =
-  "首月预付款须在开始服务日前 3 天 17:00 前支付；此后每月 25 日 17:00 前支付下一个月服务费。遇周末或法定节假日均提前至前一个工作日。按月服务不含周末与法定节假日（调休上班日照常服务）。委托人可在当天 17:00 前终止并结算；不足整月按工作日计，日费 = 月费 ÷ 21。";
+export const MONTHLY_BILLING_RULE_FULL = formatMonthlyBillingRuleFull();
 
 export const DAILY_EXTENSION_RULE =
   "在订单结束日期的前一日 17:00 之前方可申请延长，填写延长半天数（半天为计费单元）；如需再次延长，须在延长服务结束日的前一日 17:00 之前再次申请。延长费用于服务完成后补付。";
@@ -63,12 +68,23 @@ export function getContractServiceEnd(order: Order): string | null {
   return order.expectedDeliveryAt || null;
 }
 
-export function getDailySettlementDueAt(order: Order): string | null {
-  const end = getContractServiceEnd(order);
-  if (!end) return null;
-  const d = new Date(`${end}T00:00:00+08:00`);
-  d.setDate(d.getDate() + DAILY_SETTLEMENT_GRACE_DAYS);
-  d.setHours(BILLING_CUTOFF_HOUR, 0, 0, 0);
+export function getDailySettlementDueAt(
+  order: Order,
+  commerce?: Partial<PlatformCommerceSettings> | null,
+  confirmedAt?: string | null,
+): string | null {
+  const start =
+    confirmedAt ??
+    order.stages
+      .slice(1)
+      .map((s) => s.deliverablesConfirmedAt)
+      .find((at) => Boolean(at));
+  if (!start) return null;
+  const s = normalizeCommerceSettings(commerce);
+  const d = new Date(start);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setDate(d.getDate() + s.dailySettlementGraceDays);
+  d.setHours(s.billingCutoffHour, 0, 0, 0);
   return d.toISOString();
 }
 
@@ -77,9 +93,11 @@ export function monthlyPrepayDueAtFull(monthKey: string): string {
 }
 
 export function getMonthlyUnitFee(order: Order): number {
-  if (order.selectedMonths?.length) {
-    return Math.round(order.totalAmount / order.selectedMonths.length);
-  }
+  const months =
+    getMonthlyHireMonthCount(order) ||
+    resolveMonthlyServicePeriod(order)?.months.length ||
+    order.stages.length;
+  if (months > 0) return Math.round(order.totalAmount / months);
   const monthlyStage = order.stages.find((s) => s.name.includes("服务费"));
   if (monthlyStage) return monthlyStage.amount;
   return order.stages[0]?.amount ?? order.totalAmount;
@@ -103,20 +121,23 @@ function paymentItemStatusFromStage(
   return stage.status;
 }
 
-export function buildDailyPaymentItems(order: Order): TimeBillingPaymentItem[] {
+export function buildDailyPaymentItems(
+  order: Order,
+  commerce?: Partial<PlatformCommerceSettings> | null,
+): TimeBillingPaymentItem[] {
   const prepay = order.stages[0];
   const tailStages = order.stages.slice(1);
   const remaining = tailStages.reduce((sum, s) => sum + s.amount, 0);
-  const settlementDue = getDailySettlementDueAt(order);
   const tailPending = tailStages.find((s) => s.status === "pending");
   const tailFocus =
     tailPending ??
     tailStages.find((s) => s.status === "frozen" || s.status === "paid") ??
     tailStages.at(-1);
+  const confirmedAt = tailFocus?.deliverablesConfirmedAt;
+  const settlementDue = getDailySettlementDueAt(order, commerce, confirmedAt);
   const tailAllReleased =
     tailStages.length > 0 &&
     tailStages.every((s) => s.status === "released");
-  const tailUnpaid = Boolean(tailPending);
 
   let tailStatus: TimeBillingPaymentItem["status"];
   if (tailAllReleased || order.status === "completed") {
@@ -135,7 +156,12 @@ export function buildDailyPaymentItems(order: Order): TimeBillingPaymentItem[] {
       amount: prepay?.amount ?? Math.round(order.totalAmount * 0.3),
       status: paymentItemStatusFromStage(prepay),
       stageId: prepay?.id,
-      hint: "签约后预付，用于锁定档期并启动服务",
+      hint: resolveStagePaymentCondition(
+        order,
+        prepay ?? { id: "", name: "预付款" },
+        0,
+        commerce,
+      ),
     },
     {
       id: "final",
@@ -144,14 +170,20 @@ export function buildDailyPaymentItems(order: Order): TimeBillingPaymentItem[] {
       status: tailStatus,
       dueAt: settlementDue ?? undefined,
       stageId: tailFocus?.id,
-      hint: tailUnpaid && settlementDue
-        ? `原合同服务期结束后 ${DAILY_SETTLEMENT_GRACE_DAYS} 日内付清（截止 ${formatDateTime(settlementDue)}）`
-        : undefined,
+      hint: resolveStagePaymentCondition(
+        order,
+        tailFocus ?? { id: "", name: "合同尾款" },
+        Math.max(1, order.stages.findIndex((s) => s.id === tailFocus?.id)),
+        commerce,
+      ),
     },
   ];
 }
 
-export function buildMonthlyPaymentItems(order: Order): TimeBillingPaymentItem[] {
+export function buildMonthlyPaymentItems(
+  order: Order,
+  commerce?: Partial<PlatformCommerceSettings> | null,
+): TimeBillingPaymentItem[] {
   const period = resolveMonthlyServicePeriod(order);
   return order.stages.map((stage, i) => {
     const isFirst = i === 0;
@@ -162,22 +194,14 @@ export function buildMonthlyPaymentItems(order: Order): TimeBillingPaymentItem[]
             BILLING_CUTOFF_HOUR,
           )
         : undefined;
+    const monthKey = period?.months[i] ?? order.selectedMonths?.[i];
     const dueAt = isFirst
       ? firstPrepayDue
-      : order.selectedMonths?.[i]
-        ? monthlyPrepayDueAtFull(order.selectedMonths[i])
+      : monthKey
+        ? monthlyPrepayDueAtFull(monthKey)
         : stage.dueAt
           ? monthlyPaymentDueAtIso(stage.dueAt, BILLING_CUTOFF_HOUR)
           : undefined;
-
-    let hint: string | undefined;
-    if (isFirst) {
-      hint = firstPrepayDue
-        ? `请于 ${formatDateTime(firstPrepayDue)} 前支付（开始服务日前 3 天）`
-        : "开始服务日前 3 天支付首月预付款";
-    } else if (dueAt) {
-      hint = `请于 ${formatDateTime(dueAt)} 前支付（提前支付下月费用）`;
-    }
 
     return {
       id: stage.id,
@@ -188,7 +212,7 @@ export function buildMonthlyPaymentItems(order: Order): TimeBillingPaymentItem[]
         : stage.status === "pending" ? "pending"
         : stage.status,
       dueAt: dueAt ?? undefined,
-      hint,
+      hint: resolveStagePaymentCondition(order, stage, i, commerce),
       stageId: stage.id,
     };
   });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import {
   OrderEntrustDescription,
   quoteLinesFromOrder,
 } from "@/components/domain/order-entrust-description";
-import { PlatformPaymentStagesPreview } from "@/components/domain/platform-payment-stages-preview";
+import { PaymentEscrowHint } from "@/components/domain/payment-escrow-hint";
 import { ScanPaymentStagesEditor } from "@/components/domain/scan-payment-stages-editor";
 import { ScanOrderInfoEditDialog } from "@/components/domain/scan-order-info-edit-dialog";
 import {
@@ -22,32 +22,37 @@ import {
 import { PaymentDeadlineBadge } from "@/components/domain/payment-deadline-note";
 import { ProjectIdCopy } from "@/components/domain/project-id-copy";
 import { proposeScanQuoteRequest } from "@/lib/api-client";
-import { LANDSCAPE_CONSTRUCTION_PAYMENT_STAGES } from "@/lib/constants";
 import { parseRegularEntrustDescription } from "@/lib/entrust-description";
 import { isAwaitingClientPaymentOrder } from "@/lib/order-supervision";
 import { getPayableStageDeadline } from "@/lib/order-payment-overdue";
 import { orderExpectedDateLabel } from "@/lib/order-lifecycle";
+import { designerNetFromGross } from "@/lib/designer-order-scope";
 import {
-  defaultPaymentStages,
+  formatDirectedPlatformFeeLabel,
+  orderTaxCoefficient,
+  taxPointRateFromCoefficient,
+} from "@/lib/directed-platform-fee";
+import { defaultBountyPaymentStageDrafts } from "@/lib/bounty-payment-stages";
+import {
+  directedScanQuoteHasChanges,
+  draftsFromOrderPaymentStages,
   parseScanClientReferenceAmount,
   paymentStagesValid,
   type ScanPaymentStageDraft,
 } from "@/lib/scan-order";
+import { bountyTrackFromOrder } from "@/lib/order-assign-tracks";
 import type { Order } from "@/lib/types";
-import { formatCurrency, formatOptionalDate } from "@/lib/utils";
+import { cn, formatCurrency, formatOptionalDate } from "@/lib/utils";
 import {
   Calculator,
   Calendar,
+  CheckCircle2,
   Clock,
   MapPin,
   Pencil,
   Send,
 } from "lucide-react";
 import { useSessionStore } from "@/store/session-store";
-
-const PLATFORM_STAGES = LANDSCAPE_CONSTRUCTION_PAYMENT_STAGES.map((s) => ({
-  ...s,
-}));
 
 export function DesignerScanQuoteWorkspace({
   order,
@@ -81,13 +86,21 @@ export function DesignerScanQuoteWorkspace({
         ? String(clientReferenceAmount)
         : "",
   );
+  const [totalEditing, setTotalEditing] = useState(false);
+  const totalInputRef = useRef<HTMLInputElement>(null);
   const [paymentStages, setPaymentStages] = useState<ScanPaymentStageDraft[]>(
-    defaultPaymentStages,
+    () =>
+      draftsFromOrderPaymentStages(order.stages) ??
+      defaultBountyPaymentStageDrafts(),
   );
 
   const amount = Math.round(Number(totalAmount) || 0);
+  const liveNetEarnings =
+    amount > 0 ? designerNetFromGross(order, amount) : myNetEarnings;
   const canSubmit = amount > 0 && paymentStagesValid(paymentStages);
+  const hasChanges = directedScanQuoteHasChanges(order, amount, paymentStages);
   const paymentDeadline = getPayableStageDeadline(order);
+  const clientCountered = order.scanQuoteLastActor === "client";
 
   const handlePropose = async () => {
     if (!canSubmit || busy) return;
@@ -102,14 +115,16 @@ export function DesignerScanQuoteWorkspace({
         })),
       });
       push({
-        title: "费用方案已发送",
-        description: "已通知委托人确认费用与付款阶段。",
+        title: hasChanges ? "费用方案已发送" : "已确认费用",
+        description: hasChanges
+          ? "已通知委托人确认修改后的费用、付款阶段与付款条件。"
+          : "双方已确认费用，请签署电子合同。",
         variant: "success",
       });
       onUpdated();
     } catch (e) {
       push({
-        title: "提交失败",
+        title: hasChanges ? "提交失败" : "确认失败",
         description: e instanceof Error ? e.message : "请稍后再试",
         variant: "destructive",
       });
@@ -153,16 +168,21 @@ export function DesignerScanQuoteWorkspace({
             <div className="text-right">
               <div className="text-xs text-ink-60">我的预计实收</div>
               <div className="text-2xl font-semibold tracking-tight text-brand">
-                {formatCurrency(myNetEarnings)}
+                {formatCurrency(liveNetEarnings)}
               </div>
               <div className="mt-1 text-xs text-ink-60">
-                本专业基础服务费，不含平台管理费与税费
+                按确认费用扣除平台服务费（
+                {formatDirectedPlatformFeeLabel(
+                  taxPointRateFromCoefficient(orderTaxCoefficient(order)),
+                )}
+                ）后的预计实收
               </div>
             </div>
           </div>
           <OrderEntrustDescription
             description={order.description}
             quoteLines={quoteLinesFromOrder(order)}
+            primaryTrack={bountyTrackFromOrder(order)}
           />
           <div className="grid gap-4 text-sm md:grid-cols-2 lg:grid-cols-4">
             <InfoField
@@ -204,8 +224,8 @@ export function DesignerScanQuoteWorkspace({
             <div className="mt-2 text-sm leading-relaxed text-ink-60">
               委托人未直填费用金额
               {parsedDesc.structured && parsedDesc.billing?.detailLines.length
-                ? "，以下为按面积等项目信息，请结合平台标准自行报价："
-                : "，请根据项目信息与平台标准报价。"}
+                ? "，以下为按面积等项目信息，请按本人取费标准报价："
+                : "，请根据项目信息与本人取费标准报价。"}
             </div>
           )}
           {parsedDesc.structured && parsedDesc.billing?.detailLines.length ? (
@@ -224,35 +244,54 @@ export function DesignerScanQuoteWorkspace({
                 确认项目总费用
               </Label>
               <p className="mt-1 text-xs text-ink-60">
-                填写后将作为发送给委托人的正式报价金额。
+                {hasChanges
+                  ? "修改后将发送给委托人再次确认。"
+                  : "与对方提交的方案一致，确认后进入签约。"}
               </p>
             </div>
             <Button asChild variant="outline" size="sm">
-              <Link href="/calculator" target="_blank">
-                <Calculator className="h-3.5 w-3.5" /> 平台收费标准
+              <Link href="/designer/rates" target="_blank">
+                <Calculator className="h-3.5 w-3.5" /> 我的取费标准
               </Link>
             </Button>
           </div>
-          <Input
-            id="designer-scan-total"
-            type="number"
-            min={1000}
-            step={100}
-            className="max-w-xs text-lg font-semibold tabular-nums"
-            value={totalAmount}
-            onChange={(e) => setTotalAmount(e.target.value)}
-            placeholder="如 28000"
-          />
-        </section>
-
-        <section>
-          <PlatformPaymentStagesPreview
-            title="平台标准付款阶段（参考）"
-            description="以下为平台默认规则，您可在下方「付款阶段方案」中调整比例、说明或增减阶段。"
-            stages={PLATFORM_STAGES}
-            totalAmount={amount > 0 ? amount : undefined}
-            className="border-dashed shadow-none"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              ref={totalInputRef}
+              id="designer-scan-total"
+              type="number"
+              min={1000}
+              step={100}
+              readOnly={!totalEditing}
+              className={cn(
+                "max-w-xs text-lg font-semibold tabular-nums",
+                !totalEditing && "cursor-default bg-ink-20/30",
+              )}
+              value={totalAmount}
+              onChange={(e) => {
+                if (!totalEditing) return;
+                setTotalAmount(e.target.value);
+              }}
+              placeholder="如 28000"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setTotalEditing((v) => {
+                  const next = !v;
+                  if (next) {
+                    requestAnimationFrame(() => totalInputRef.current?.focus());
+                  }
+                  return next;
+                });
+              }}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              {totalEditing ? "完成修改" : "修改"}
+            </Button>
+          </div>
         </section>
 
         <section className="space-y-4">
@@ -262,8 +301,11 @@ export function DesignerScanQuoteWorkspace({
                 付款阶段方案
               </h2>
               <p className="mt-1 text-xs text-ink-60">
-                发送给委托人的正式付款阶段，可修改名称、比例与付款条件说明。
+                {hasChanges
+                  ? "可修改名称、比例与付款条件；发送后由委托人再次确认。"
+                  : "未改动付款阶段与付款条件时，确认后进入签约。"}
               </p>
+              {!stagesEditing ? <PaymentEscrowHint className="mt-1.5" /> : null}
             </div>
             <Button
               type="button"
@@ -310,6 +352,12 @@ export function DesignerScanQuoteWorkspace({
           )}
         </section>
 
+        {clientCountered ? (
+          <div className="rounded-xl border border-brand/20 bg-brand/5 px-4 py-3 text-sm text-ink">
+            委托人已修改费用或付款条款，请核对后确认；如需继续修改，将发回委托人再次确认。
+          </div>
+        ) : null}
+
         <div className="flex flex-wrap justify-end gap-3 border-t border-ink-20 pt-6">
           <Button
             variant="brand"
@@ -317,8 +365,18 @@ export function DesignerScanQuoteWorkspace({
             disabled={!canSubmit || busy}
             onClick={handlePropose}
           >
-            <Send className="h-4 w-4" />
-            {busy ? "发送中..." : "发送给委托人确认"}
+            {hasChanges ? (
+              <Send className="h-4 w-4" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4" />
+            )}
+            {busy
+              ? hasChanges
+                ? "发送中..."
+                : "确认中..."
+              : hasChanges
+                ? "发送给委托人确认"
+                : "确认费用"}
           </Button>
         </div>
       </Card>

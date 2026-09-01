@@ -13,10 +13,16 @@ import {
 } from "@/lib/designer-portfolio-readiness";
 import { DESIGNER_LEVEL_META } from "@/lib/constants";
 import { designerHasL3 } from "@/lib/bounty-tracks";
+import { maskDesignerPublicName } from "@/lib/designer-contact-privacy";
 import {
   extractOrderAssignTracks,
+  listAllL3TracksForOrder,
   type OrderAssignTrack,
 } from "@/lib/order-assign-tracks";
+import {
+  isRegularAreaHardscape,
+  withAreaHardscapeRemark,
+} from "@/lib/regular-entrust-quote";
 
 const WORKLOAD_RANK: Record<string, number> = {
   available: 0,
@@ -46,7 +52,7 @@ export function listOrderTrackDesignerCounts(
   designers: Designer[],
   order: Order,
 ): Array<OrderAssignTrack & { eligibleCount: number }> {
-  const tracks = extractOrderAssignTracks(order);
+  const tracks = listAllL3TracksForOrder(order);
   const slots = tracks.length ? tracks : [fallbackWholeOrderTrack(order)];
   return slots.map((track) => ({
     ...track,
@@ -240,7 +246,7 @@ export function explainClientMatchFailure(input: {
   if (accepting.length === 0) {
     const names = sameSpecialty
       .slice(0, 3)
-      .map((d) => d.name)
+      .map((d) => maskDesignerPublicName(d.name))
       .join("、");
     return `所选等级的设计师（如 ${names}）目前均为暂停接单，请稍后再试或换一档。`;
   }
@@ -260,7 +266,7 @@ export function explainClientMatchFailure(input: {
       ].slice(0, 6);
       const names = withPortfolio
         .slice(0, 3)
-        .map((d) => d.name)
+        .map((d) => maskDesignerPublicName(d.name))
         .join("、");
       const coveredNote = covered.length
         ? `他们当前可接单类型为：${covered.join("、")}。`
@@ -272,7 +278,14 @@ export function explainClientMatchFailure(input: {
   return `当前所选等级暂无符合条件的设计师，请换一档或稍后再试。`;
 }
 
-export function trackPoolTitle(pool: OrderMatchTrackPool) {
-  if (!pool.l3) return pool.l3Label || "项目服务";
-  return pool.l2Label ? `${pool.l2Label} · ${pool.l3Label}` : pool.l3Label;
+export function trackPoolTitle(
+  pool: OrderMatchTrackPool,
+  billingMode?: string,
+) {
+  const l3Label = withAreaHardscapeRemark(
+    pool.l3Label || "项目服务",
+    isRegularAreaHardscape({ billingMode, l3: pool.l3 }),
+  );
+  if (!pool.l3) return l3Label;
+  return pool.l2Label ? `${pool.l2Label} · ${l3Label}` : l3Label;
 }

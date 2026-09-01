@@ -66,11 +66,15 @@ export function resolveAdministrativeTriple(
     };
   }
 
-  let district = counties.find((x) => x.value === countyCode);
-  if (!district || !countyCode) district = counties[0]!;
+  let district = countyCode
+    ? counties.find((x) => x.value === countyCode)
+    : undefined;
+  const fullLabel = district
+    ? `${p.text} · ${cy.text} · ${district.text}`
+    : `${p.text} · ${cy.text}`;
 
   return {
-    fullLabel: `${p.text} · ${cy.text} · ${district.text}`,
+    fullLabel,
     prefectureCityName: cy.text,
     tier: inferTierFromPrefectureCityName(cy.text),
   };
@@ -80,15 +84,10 @@ export function getDefaultAdministrativeTriple(): AdministrativeTriple {
   const p = AREA_ROOTS.find((x) => x.text === "浙江省") ?? AREA_ROOTS[0];
   const cy =
     p?.children.find((x) => x.text === "杭州市") ?? p?.children?.[0]!;
-  let countyCode: string | null =
-    cy.children.find((x) => x.text === "西湖区")?.value ?? null;
-  if (!countyCode && cy.children[0]?.value !== undefined)
-    countyCode = cy.children[0]!.value;
-  else if (!cy.children?.length) countyCode = null;
 
   return {
     provinceCode: p!.value,
     cityCode: cy!.value,
-    countyCode,
+    countyCode: null,
   };
 }

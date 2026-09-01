@@ -15,13 +15,19 @@ import {
 } from "@/lib/client-order-focus";
 import {
   CLIENT_DEFAULT_TAB_PRIORITY,
+  CLIENT_DIRECTED_STATUS_TABS,
+  CLIENT_DIRECTED_TAB_PRIORITY,
   CLIENT_PLATFORM_STATUS_TABS,
   clientStatusCounts,
   filterItemsByClientStatus,
   type ClientOrderStatusFilter,
 } from "@/lib/client-order-status-filter";
 import {
+  DESIGNER_BOUNTY_STATUS_TABS,
+  DESIGNER_BOUNTY_TAB_PRIORITY,
   DESIGNER_DEFAULT_TAB_PRIORITY,
+  DESIGNER_DIRECTED_STATUS_TABS,
+  DESIGNER_DIRECTED_TAB_PRIORITY,
   DESIGNER_PROJECT_STATUS_TABS,
   DESIGNER_STATUS_TAB_HIGHLIGHT,
   designerStatusCounts,
@@ -90,11 +96,11 @@ export function UnifiedProjectList({
   scanOrders?: ScanOrder[];
   emptyLabel?: string;
   initialFocus?: ClientOrderFocus | null;
-  /** 委托人平台订单：扫码下单、常规委托等，不含悬赏与定向下单 */
+  /** 委托人常规订单：常规委托，不含悬赏与定向下单 */
   platformOrdersOnly?: boolean;
   /** 委托人定向下单：指定设计师发起的委托 */
   directedOrdersOnly?: boolean;
-  /** 委托人我的悬赏：仅悬赏项目 */
+  /** 委托人我的悬赏 / 设计师悬赏订单：仅悬赏项目 */
   bountiesOnly?: boolean;
 }) {
   const [category, setCategory] = useState<ProjectListCategory>("all");
@@ -105,9 +111,10 @@ export function UnifiedProjectList({
     (platformOrdersOnly || directedOrdersOnly) &&
     !initialFocus;
   const useDesignerProjectStatus =
-    perspective === "designer" && !initialFocus && !bountiesOnly;
+    perspective === "designer" && !initialFocus;
   const [bountyStatus, setBountyStatus] = useState<BountyStatusFilter>("all");
   const [specialty, setSpecialty] = useState<PlatformSpecialtyFilter>("all");
+  const isClientBountiesOnly = perspective === "client" && bountiesOnly;
   const listFilterMode = platformOrdersOnly || directedOrdersOnly || bountiesOnly;
   const focusMeta =
     perspective === "client" && initialFocus
@@ -116,7 +123,11 @@ export function UnifiedProjectList({
 
   const { data: orders, loading: ordersLoading } = useOrders();
   const { data: bounties, loading: bountiesLoading } = useBounties();
-  const listLoading = bountiesOnly ? bountiesLoading : ordersLoading;
+  const listLoading = isClientBountiesOnly
+    ? bountiesLoading || ordersLoading
+    : bountiesOnly
+      ? ordersLoading || bountiesLoading
+      : ordersLoading;
   const { data: designers } = useDesigners();
   const { data: clients } = useClients();
 
@@ -134,7 +145,7 @@ export function UnifiedProjectList({
     const built = buildUnifiedProjectList({
       perspective,
       identityId,
-      orders: bountiesOnly ? [] : orders,
+      orders,
       bounties,
       nameById,
       draftOrders:
@@ -173,6 +184,7 @@ export function UnifiedProjectList({
     platformOrdersOnly,
     directedOrdersOnly,
     bountiesOnly,
+    isClientBountiesOnly,
   ]);
 
   const counts = useMemo(() => categoryCounts(allItems), [allItems]);
@@ -200,7 +212,9 @@ export function UnifiedProjectList({
       setStatus(
         pickDefaultSupervisionTab(
           clientStatusCountMap,
-          CLIENT_DEFAULT_TAB_PRIORITY,
+          directedOrdersOnly
+            ? CLIENT_DIRECTED_TAB_PRIORITY
+            : CLIENT_DEFAULT_TAB_PRIORITY,
           "all",
         ),
       );
@@ -212,7 +226,11 @@ export function UnifiedProjectList({
       setStatus(
         pickDefaultSupervisionTab(
           designerStatusCountMap,
-          DESIGNER_DEFAULT_TAB_PRIORITY,
+          bountiesOnly
+            ? DESIGNER_BOUNTY_TAB_PRIORITY
+            : directedOrdersOnly
+              ? DESIGNER_DIRECTED_TAB_PRIORITY
+              : DESIGNER_DEFAULT_TAB_PRIORITY,
           "all",
         ),
       );
@@ -223,6 +241,8 @@ export function UnifiedProjectList({
     initialFocus,
     useClientPlatformStatus,
     useDesignerProjectStatus,
+    bountiesOnly,
+    directedOrdersOnly,
     clientStatusCountMap,
     designerStatusCountMap,
   ]);
@@ -232,10 +252,10 @@ export function UnifiedProjectList({
     if (perspective === "client" && initialFocus) {
       list = filterItemsByClientFocus(list, initialFocus);
     } else {
-      if (!bountiesOnly) {
+      if (!isClientBountiesOnly) {
         list = filterByCategory(list, category);
       }
-      if (bountiesOnly) {
+      if (isClientBountiesOnly) {
         list = filterByBountyStatus(list, bountyStatus);
       } else if (useClientPlatformStatus) {
         list = filterItemsByClientStatus(list, status as ClientOrderStatusFilter);
@@ -263,6 +283,7 @@ export function UnifiedProjectList({
     specialty,
     listFilterMode,
     bountiesOnly,
+    isClientBountiesOnly,
     perspective,
     initialFocus,
     useClientPlatformStatus,
@@ -271,9 +292,15 @@ export function UnifiedProjectList({
   ]);
 
   const statusTabs = useClientPlatformStatus
-    ? CLIENT_PLATFORM_STATUS_TABS
+    ? directedOrdersOnly
+      ? CLIENT_DIRECTED_STATUS_TABS
+      : CLIENT_PLATFORM_STATUS_TABS
     : useDesignerProjectStatus
-      ? DESIGNER_PROJECT_STATUS_TABS
+      ? bountiesOnly
+        ? DESIGNER_BOUNTY_STATUS_TABS
+        : directedOrdersOnly
+          ? DESIGNER_DIRECTED_STATUS_TABS
+          : DESIGNER_PROJECT_STATUS_TABS
       : CLIENT_PLATFORM_STATUS_TABS;
 
   return (
@@ -285,7 +312,7 @@ export function UnifiedProjectList({
         </Card>
       ) : null}
 
-      {!initialFocus && !bountiesOnly ? (
+      {!initialFocus && !isClientBountiesOnly ? (
       <Tabs value={category} onValueChange={(v) => setCategory(v as ProjectListCategory)}>
         <TabsList className="flex h-auto flex-wrap gap-1 bg-transparent p-0">
           {categoryTabs.map((t) => (
@@ -304,7 +331,7 @@ export function UnifiedProjectList({
       </Tabs>
       ) : null}
 
-      {!initialFocus && bountiesOnly ? (
+      {!initialFocus && isClientBountiesOnly ? (
         <Tabs
           value={bountyStatus}
           onValueChange={(v) => setBountyStatus(v as BountyStatusFilter)}
@@ -326,7 +353,7 @@ export function UnifiedProjectList({
         </Tabs>
       ) : null}
 
-      {!initialFocus && !bountiesOnly ? (
+      {!initialFocus && !isClientBountiesOnly ? (
       <Tabs
         value={status}
         onValueChange={(v) => setStatus(v as ListStatusFilter)}
@@ -398,7 +425,8 @@ export function UnifiedProjectList({
         </Tabs>
       ) : null}
 
-      {status === "pending_payment" && filtered.length > 0 ? (
+      {(isClientBountiesOnly ? bountyStatus : status) === "pending_payment" &&
+      filtered.length > 0 ? (
         <Card className="border-amber-300 bg-gradient-to-br from-amber-50 to-orange-50/90 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -418,7 +446,9 @@ export function UnifiedProjectList({
         </Card>
       ) : null}
 
-      {status === "pending_review" && filtered.length > 0 ? (
+      {perspective === "client" &&
+      (isClientBountiesOnly ? bountyStatus : status) === "pending_review" &&
+      filtered.length > 0 ? (
         <Card className="border-blue-300 bg-gradient-to-br from-blue-50 to-sky-50/90 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -434,7 +464,8 @@ export function UnifiedProjectList({
         </Card>
       ) : null}
 
-      {status === "pending_client_review" && filtered.length > 0 ? (
+      {(isClientBountiesOnly ? bountyStatus : status) ===
+        "pending_client_review" && filtered.length > 0 ? (
         <Card className="border-amber-300 bg-gradient-to-br from-amber-50 to-yellow-50/90 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -461,9 +492,18 @@ export function UnifiedProjectList({
               key={`${item.kind}-${item.id}`}
               item={item}
               perspective={perspective}
-              paymentHighlight={status === "pending_payment"}
-              reviewHighlight={status === "pending_review"}
-              clientReviewHighlight={status === "pending_client_review"}
+              paymentHighlight={
+                (isClientBountiesOnly ? bountyStatus : status) ===
+                "pending_payment"
+              }
+              reviewHighlight={
+                (isClientBountiesOnly ? bountyStatus : status) ===
+                "pending_review"
+              }
+              clientReviewHighlight={
+                (isClientBountiesOnly ? bountyStatus : status) ===
+                "pending_client_review"
+              }
             />
           ))
         )}

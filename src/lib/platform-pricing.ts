@@ -29,6 +29,11 @@ import {
   normalizeCalculatorQuoteRemarks,
   type CalculatorQuoteRemarksConfig,
 } from "@/lib/calculator-quote-remarks";
+import {
+  DEFAULT_PLATFORM_COMMERCE,
+  normalizeCommerceSettings,
+  type PlatformCommerceSettings,
+} from "@/lib/platform-commerce";
 
 export type { LandscapeAreaDifficultyOption };
 
@@ -83,6 +88,8 @@ export interface PlatformPricingConfig {
   landscapeDifficulty: LandscapeTrackDifficultyConfig;
   /** 费用计算器 · 合计页备注（按计费范围三套文案） */
   calculatorQuoteRemarks: CalculatorQuoteRemarksConfig;
+  /** 商务设置：付款节点、托管与售后 */
+  commerce: PlatformCommerceSettings;
 }
 
 export const DEFAULT_PLATFORM_PRICING_CONFIG: PlatformPricingConfig = {
@@ -132,6 +139,7 @@ export const DEFAULT_PLATFORM_PRICING_CONFIG: PlatformPricingConfig = {
     },
   },
   calculatorQuoteRemarks: DEFAULT_CALCULATOR_QUOTE_REMARKS,
+  commerce: { ...DEFAULT_PLATFORM_COMMERCE },
 };
 
 export function cloneDefaultPricingConfig(): PlatformPricingConfig {
@@ -192,5 +200,6 @@ export function normalizePricingConfig(
     calculatorQuoteRemarks: normalizeCalculatorQuoteRemarks(
       input.calculatorQuoteRemarks ?? base.calculatorQuoteRemarks,
     ),
+    commerce: normalizeCommerceSettings(input.commerce ?? base.commerce),
   };
 }

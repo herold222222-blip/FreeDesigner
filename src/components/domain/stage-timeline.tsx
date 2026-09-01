@@ -12,6 +12,7 @@ import { StageTrackAcceptancePanel } from "@/components/domain/stage-track-accep
 import { StageParticipantDeliverables } from "@/components/domain/stage-participant-deliverables";
 import { getActivePaymentStageId, getStagePaymentDeadline } from "@/lib/order-payment-overdue";
 import { PaymentDeadlineNote } from "@/components/domain/payment-deadline-note";
+import { StagePayButton } from "@/components/domain/stage-pay-button";
 import { resolveStagePaymentSplits } from "@/lib/stage-payment-splits";
 import {
   canDesignerRequestWithdraw,
@@ -25,30 +26,50 @@ import { findServiceProvider } from "@/lib/service-provider-catalog";
 import { useServiceProviders } from "@/lib/use-data";
 import { ForwardPaymentLinkDialog } from "@/components/domain/forward-payment-link-dialog";
 import { StageDeliverableUploadDialog } from "@/components/domain/stage-deliverable-upload-dialog";
+import { DeliverableHistorySections } from "@/components/domain/deliverable-file-list";
+import { DeliverablesForwardControls } from "@/components/domain/deliverables-forward-controls";
 import {
   ArrowDownToLine,
   Check,
-  CircleDollarSign,
-  Download,
   FileBox,
   Share2,
   Upload,
 } from "lucide-react";
 import { formatMonthlyDueHint } from "@/lib/monthly-billing";
-import { OrderMonthlyServiceCalendar } from "@/components/domain/order-monthly-service-calendar";
-import { DAILY_BILLING_RULE } from "@/lib/time-billing";
 import {
-  isPrepaymentStage,
+  formatDailyBillingRule,
+  formatEscrowRemaining,
+  formatMonthlyBillingRule,
+  resolveDeliverableConfirmDeadlineAt,
+  resolveStageEscrowEndsAt,
+} from "@/lib/platform-commerce";
+import { OrderMonthlyServiceCalendar } from "@/components/domain/order-monthly-service-calendar";
+import { usePlatformPricingStore } from "@/store/platform-pricing-store";
+import {
+  allowsPostPaymentDeliverables,
+  allocateAmountsByRatio,
   resolveOrderPaymentStages,
+  resolveStagePaymentCondition,
+  stageRequiresDeliverables,
 } from "@/lib/order-payment-stages";
-import { formatCurrency, formatDateTime } from "@/lib/utils";
+import {
+  canSkipPreliminary,
+  designerUploadHint,
+  designerUploadLabel,
+  resolveDeliverableKind,
+  resolveDeliverablePhase,
+  uploadKindForPhase,
+} from "@/lib/deliverable-phase";
+import { PaymentEscrowHint } from "@/components/domain/payment-escrow-hint";
+import { formatCurrency, formatDateTime, cn } from "@/lib/utils";
 import { useSessionStore } from "@/store/session-store";
-import { cn } from "@/lib/utils";
 import {
   isContractFullySigned,
   isOrderCancelled,
+  isStagePaymentUnlocked,
   orderHasLockedQuoteAmounts,
 } from "@/lib/order-lifecycle";
+import { isScanAwaitingDesignerQuote, parseScanClientReferenceAmount } from "@/lib/scan-order";
 
 const STAGE_STATUS_META: Record<
   PaymentStage["status"],
@@ -56,7 +77,7 @@ const STAGE_STATUS_META: Record<
 > = {
   pending: { label: "待付款", tone: "bg-ink-20/40 text-ink" },
   paid: { label: "已付款", tone: "bg-blue-100 text-blue-800" },
-  frozen: { label: "已托管 · 验收期", tone: "bg-violet-100 text-violet-800" },
+  frozen: { label: "已托管", tone: "bg-violet-100 text-violet-800" },
   released: { label: "已结算", tone: "bg-emerald-100 text-emerald-800" },
 };
 
@@ -70,7 +91,11 @@ export function StageTimeline({
   onStageComplete,
   onRevise,
   onUploadDeliverables,
+  onDeleteDeliverable,
+  onSkipPreliminary,
+  onConfirmDeliverables,
   hideMonthlyCalendar,
+  footer,
 }: {
   order: Order;
   perspective: "client" | "designer" | "admin";
@@ -82,10 +107,18 @@ export function StageTimeline({
   onStageComplete?: (stage: PaymentStage) => void;
   onRevise?: (stage: PaymentStage) => void;
   onUploadDeliverables?: (stage: PaymentStage, files: DeliverableFile[]) => void;
+  onDeleteDeliverable?: (stage: PaymentStage, file: DeliverableFile) => void;
+  onSkipPreliminary?: (stage: PaymentStage) => void;
+  /** 委托人确认初步/最终成果（付款前） */
+  onConfirmDeliverables?: (stage: PaymentStage) => void;
   /** 工作日历已在其它面板展示时隐藏，避免重复 */
   hideMonthlyCalendar?: boolean;
+  /** 阶段卡片列表之后的附加内容（如确认费用按钮） */
+  footer?: React.ReactNode;
 }) {
   const push = useSessionStore((s) => s.pushNotification);
+  const commerce = usePlatformPricingStore((s) => s.config.commerce);
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
   const { data: serviceProviders } = useServiceProviders();
   const getServiceProvider = (id: string) =>
     findServiceProvider(serviceProviders, id);
@@ -102,6 +135,12 @@ export function StageTimeline({
         designerInvolvedInStage(order, s, currentDesignerId!),
       )
     : paymentStages;
+
+  React.useEffect(() => {
+    if (!visibleStages.some((s) => s.status === "frozen")) return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, [visibleStages]);
 
   const handlePay = (stage: PaymentStage) => {
     if (onPay) {
@@ -121,8 +160,14 @@ export function StageTimeline({
       return;
     }
     push({
-      title: `已确认成果 · 解锁下载`,
-      description: `本阶段款 ${formatCurrency(stage.amount)} 进入设计师托管账户。`,
+      title:
+        resolveDeliverablePhase(stage, order.status) === "preliminary"
+          ? "已确认初步成果"
+          : "已确认最终成果 · 解锁下载",
+      description:
+        resolveDeliverablePhase(stage, order.status) === "preliminary"
+          ? "请等待设计师上传最终成果 / 确认单。"
+          : `本阶段款 ${formatCurrency(stage.amount)} 进入设计师托管账户。`,
       variant: "success",
     });
   };
@@ -160,17 +205,47 @@ export function StageTimeline({
   const amountsReady = contractSigned || orderHasLockedQuoteAmounts(order);
   /** 报价未锁定前只展示比例；匹配确认后展示金额，支付仍须签约 */
   const previewOnly = !amountsReady;
+  const referenceTotal = parseScanClientReferenceAmount(order.description ?? "");
+  const previewTotal =
+    previewOnly && (referenceTotal ?? 0) > 0
+      ? referenceTotal
+      : previewOnly && order.totalAmount > 0
+        ? order.totalAmount
+        : null;
+  const previewStageAmounts =
+    previewTotal != null
+      ? allocateAmountsByRatio(
+          previewTotal,
+          visibleStages.map((s) => s.ratio),
+        )
+      : null;
+  const displayTotal = !isDesignerView
+    ? amountsReady && order.totalAmount > 0
+      ? order.totalAmount
+      : previewTotal
+    : null;
   const activeStageId = getActivePaymentStageId(order, visibleStages);
   const revising = order.status === "in_revision";
 
   return (
     <div className="space-y-5">
+      <PaymentEscrowHint />
+      {displayTotal != null ? (
+        <div className="flex flex-wrap items-baseline justify-between gap-2 rounded-xl border border-ink-20 bg-ink-20/20 px-4 py-3">
+          <span className="text-xs font-medium text-ink-60">
+            {previewOnly ? "预估总费用" : "项目总费用"}
+          </span>
+          <span className="text-2xl font-semibold tabular-nums tracking-tight text-ink">
+            {formatCurrency(displayTotal)}
+          </span>
+        </div>
+      ) : null}
       {isMonthlyOrder && !hideMonthlyCalendar ? (
         <div className="space-y-3">
           <div>
             <h3 className="text-sm font-semibold text-ink">按月工时日历</h3>
             <p className="mt-1 text-xs text-ink-60">
-              红色为工作日服务（不含周末与法定节假日）；灰色为休息日；琥珀色「付」为支付节点（首月预付为开始服务日前 3 天，此后每月 25 日 17:00 前；遇周末或节假日提前至前一个工作日）。
+              红色为工作日服务（不含周末与法定节假日）；灰色为休息日；琥珀色「付」为支付节点（首月预付为开始服务日前 {commerce.monthlyFirstPrepayLeadDays} 天，此后每月 {commerce.monthlyPrepayDay} 日 {String(commerce.billingCutoffHour).padStart(2, "0")}:00 前；遇周末或节假日提前至前一个工作日）。
             </p>
           </div>
           <OrderMonthlyServiceCalendar order={order} />
@@ -178,17 +253,24 @@ export function StageTimeline({
       ) : null}
       {isDailyOrder && isClientView ? (
         <p className="rounded-xl border border-violet-200/80 bg-violet-50/50 px-4 py-3 text-xs leading-relaxed text-violet-900">
-          {DAILY_BILLING_RULE}
+          {formatDailyBillingRule(commerce)}
         </p>
       ) : null}
-      {previewOnly && isClientView ? (
+      {isMonthlyOrder && isClientView ? (
+        <p className="rounded-xl border border-amber-200/80 bg-amber-50/50 px-4 py-3 text-xs leading-relaxed text-amber-950">
+          {formatMonthlyBillingRule(commerce)}
+        </p>
+      ) : null}
+      {previewOnly && isClientView && !isScanAwaitingDesignerQuote(order) ? (
         <p className="text-xs text-ink-40">
-          电子合同尚未签订，此处仅预览付款比例，不展示金额。双方签约后方可转发支付链接。
+          {isMonthlyOrder
+            ? "电子合同尚未签订，此处预览按月预付节点（首月提前 3 天，此后每月 25 日预付下月）。双方签约后方可转发支付链接。"
+            : "电子合同尚未签订，此处仅预览付款比例，不展示金额。双方签约后方可转发支付链接。"}
         </p>
       ) : null}
       {amountsReady && !contractSigned && isClientView ? (
         <p className="text-xs text-ink-40">
-          报价已锁定，阶段金额按确认方案计算。双方完成电子签约后方可支付或转发支付链接。
+          报价已锁定，阶段金额按确认方案计算。各方确认费用并完成电子签约后，支付按钮将变为可扫码支付。
         </p>
       ) : null}
       {visibleStages.map((stage, i) => {
@@ -211,6 +293,45 @@ export function StageTimeline({
           isClientView && getDesigner ?
             resolveStagePaymentSplits(order, stage)
           : [];
+        const stageRevisionsEarly = (order.revisions ?? []).filter(
+          (r) => r.stageId === stage.id,
+        );
+        const pendingRevision = stageRevisionsEarly.some(
+          (r) => r.status === "pending",
+        );
+        const escrowEndsAt = resolveStageEscrowEndsAt(stage, commerce, {
+          requiresDeliverables: stageRequiresDeliverables(order, stage),
+        });
+        const escrowRemain = escrowEndsAt
+          ? formatEscrowRemaining(escrowEndsAt, nowMs)
+          : "";
+        const confirmEndsAt = resolveDeliverableConfirmDeadlineAt(
+          stage,
+          commerce,
+          { pendingRevision },
+        );
+        const confirmRemain = confirmEndsAt
+          ? formatEscrowRemaining(confirmEndsAt, nowMs, "即将自动确认")
+          : "";
+        const frozenLabel =
+          stage.status !== "frozen"
+            ? meta.label
+            : stage.deliverablesConfirmedAt
+              ? escrowRemain
+                ? `已托管 · 验收期 · ${escrowRemain}`
+                : "已托管 · 验收期"
+              : confirmRemain
+                ? `已托管 · 待确认 · ${confirmRemain}`
+                : "已托管";
+        const designerFrozenLabel = designerPayMeta
+          ? stage.status === "frozen" &&
+            stage.deliverablesConfirmedAt &&
+            escrowRemain
+            ? `${designerPayMeta.label} · 验收期 · ${escrowRemain}`
+            : stage.status === "frozen" && confirmRemain
+              ? `${designerPayMeta.label} · 待确认 · ${confirmRemain}`
+              : designerPayMeta.label
+          : "";
         const ownDeliverables =
           isDesignerView ?
             getDesignerOwnDeliverables(order, stage, currentDesignerId!)
@@ -222,28 +343,21 @@ export function StageTimeline({
           prior.status === "released" ||
           prior.status === "frozen" ||
           prior.status === "paid";
-        const stageRevisions = (order.revisions ?? []).filter(
-          (r) => r.stageId === stage.id,
-        );
-        const showPayCTA =
+        const stageRevisions = stageRevisionsEarly;
+        const showPayButton =
           perspective === "client" &&
           !isOrderCancelled(order) &&
           stage.status === "pending" &&
-          isContractFullySigned(order) &&
-          isActive;
-        const showForwardPayCTA =
+          !previewOnly;
+        const payEnabled = showPayButton && isStagePaymentUnlocked(order);
+        const showForwardPayButton =
           perspective === "admin" &&
           !isOrderCancelled(order) &&
           stage.status === "pending" &&
-          contractSigned &&
-          isActive;
-        const showForwardPayLocked =
-          perspective === "admin" &&
-          !isOrderCancelled(order) &&
-          stage.status === "pending" &&
-          !contractSigned &&
-          isActive;
-        const needsDeliverables = !isPrepaymentStage(order, stage);
+          !previewOnly;
+        const forwardPayEnabled = showForwardPayButton && contractSigned;
+        const needsDeliverables = stageRequiresDeliverables(order, stage);
+        const postPayDeliverables = allowsPostPaymentDeliverables(order, stage);
         const paymentDeadline =
           stage.status === "pending"
             ? getStagePaymentDeadline(order, stage)
@@ -253,17 +367,33 @@ export function StageTimeline({
           isClientView &&
           !isOrderCancelled(order) &&
           stage.status === "frozen" &&
-          (stage.deliverables?.length ?? 0) > 0 &&
+          Boolean(stage.deliverablesConfirmedAt) &&
           !!getDesigner;
         const showUploadCTA =
           needsDeliverables &&
           isDesignerView &&
           !isOrderCancelled(order) &&
-          ["in_progress", "in_revision"].includes(order.status) &&
-          ((isActive && (stage.status !== "pending" || revising)) ||
+          !previewOnly &&
+          (stage.status === "pending" ||
+            revising ||
+            (postPayDeliverables && !stage.deliverablesConfirmedAt)) &&
+          ["in_progress", "in_revision", "pending_review"].includes(
+            order.status,
+          ) &&
+          (isActive ||
             (stage.status === "pending" && i > 0 && priorHeld) ||
-            stage.status === "frozen" ||
-            stage.status === "paid");
+            revising ||
+            postPayDeliverables);
+        const deliverablePhase = resolveDeliverablePhase(stage, order.status);
+        const uploadKind = uploadKindForPhase(stage, order.status);
+        const currentKindFiles = ownDeliverables.filter(
+          (file) => resolveDeliverableKind(file) === uploadKind,
+        );
+        const canSkip = showUploadCTA && canSkipPreliminary(stage, order.status);
+        const uploadLabel = designerUploadLabel(deliverablePhase, {
+          revising,
+          appending: currentKindFiles.length > 0,
+        });
         const showWithdrawCTA =
           isDesignerView &&
           !isOrderCancelled(order) &&
@@ -305,7 +435,7 @@ export function StageTimeline({
                           designerPayMeta.tone,
                         )}
                       >
-                        {designerPayMeta.label}
+                        {designerFrozenLabel}
                       </span>
                     ) : previewOnly && !isPaid ? (
                       <span className="rounded-full bg-ink-20/40 px-2.5 py-0.5 text-xs font-medium text-ink">
@@ -318,7 +448,7 @@ export function StageTimeline({
                           designerPayMeta.tone,
                         )}
                       >
-                        {designerPayMeta.label}
+                        {designerFrozenLabel}
                       </span>
                     ) : (
                       <span
@@ -327,46 +457,48 @@ export function StageTimeline({
                           meta.tone,
                         )}
                       >
-                        {meta.label}
+                        {frozenLabel}
                       </span>
                     )}
-                    {!isMonthlyOrder && !previewOnly ? (
+                    {!isMonthlyOrder && (!previewOnly || previewStageAmounts) ? (
                       <Badge variant="outline">
                         占比 {Math.round(stage.ratio * 100)}%
                       </Badge>
                     ) : null}
-                    {!isDesignerView && isMonthlyOrder && i > 0 ? (
-                      <Badge variant="outline">月费</Badge>
+                    {!isDesignerView && isMonthlyOrder ? (
+                      <Badge variant="outline">
+                        {i === 0 ? "首月预付" : "下月预付"}
+                      </Badge>
                     ) : null}
                   </div>
-                  {previewOnly ? (
+                  {previewOnly && !previewStageAmounts ? (
                     <div className="text-2xl font-semibold tracking-tight text-ink">
                       {Math.round(stage.ratio * 100)}%
                     </div>
                   ) : (
-                    <div className="text-2xl font-semibold tracking-tight text-ink">
+                    <div className="flex flex-wrap items-baseline gap-2 text-2xl font-semibold tracking-tight text-ink">
                       {isDesignerView ?
                         formatCurrency(designerReceivable)
-                      : formatCurrency(stage.amount)}
+                      : formatCurrency(
+                          previewStageAmounts?.[i] ?? stage.amount,
+                        )}
+                      {isDesignerView ? (
+                        <span className="text-xs font-normal text-ink-50">
+                          我的实收
+                        </span>
+                      ) : previewOnly ? (
+                        <span className="text-xs font-normal text-ink-50">
+                          预估
+                        </span>
+                      ) : null}
                     </div>
                   )}
-                  {!needsDeliverables && isClientView && !previewOnly ? (
-                    <div className="text-xs text-ink-60">
-                      签约后支付即可开工，预付款无需上传或确认成果。
-                    </div>
-                  ) : null}
+                  <p className="text-xs leading-relaxed text-ink-60">
+                    {resolveStagePaymentCondition(order, stage, i, commerce)}
+                  </p>
                   {isDesignerView && !previewOnly && designerReceivable > 0 ? (
                     <div className="text-xs text-ink-60">
-                      {needsDeliverables &&
-                      isActive &&
-                      (stage.status === "pending" ||
-                        designerPayStatus === "client_pending")
-                        ? "本阶段请设计师上传成果或确认单(图片/PDF)。委托人可确认后支付。"
-                        : !needsDeliverables &&
-                            isActive &&
-                            stage.status === "pending"
-                          ? "本阶段为预付款，无需上传或确认成果。等待委托人支付后即可开工。"
-                          : "本专业基础服务费本阶段份额，不含平台管理费与税费"}
+                      本专业基础服务费本阶段份额，不含平台管理费与税费
                     </div>
                   ) : null}
                   {stage.paidAt ? (
@@ -379,14 +511,36 @@ export function StageTimeline({
                       结算时间 {formatDateTime(stage.releasedAt)}
                     </div>
                   ) : null}
-                  {needsDeliverables && stage.deliverablesConfirmedAt ? (
+                  {needsDeliverables && stage.preliminaryConfirmedAt ? (
                     <div className="text-xs text-ink-40">
-                      成果确认时间 {formatDateTime(stage.deliverablesConfirmedAt)}
+                      初步成果确认时间{" "}
+                      {formatDateTime(stage.preliminaryConfirmedAt)}
                     </div>
                   ) : null}
-                  {isMonthlyOrder && stage.dueAt && stage.status === "pending" && !paymentDeadline ? (
+                  {needsDeliverables &&
+                  stage.preliminarySkippedAt &&
+                  !stage.preliminaryConfirmedAt ? (
+                    <div className="text-xs text-ink-40">
+                      已跳过初步成果{" "}
+                      {formatDateTime(stage.preliminarySkippedAt)}
+                    </div>
+                  ) : null}
+                  {needsDeliverables && stage.deliverablesConfirmedAt ? (
+                    <div className="text-xs text-ink-40">
+                      最终成果确认时间 {formatDateTime(stage.deliverablesConfirmedAt)}
+                    </div>
+                  ) : null}
+                  {isDesignerView && showUploadCTA ? (
+                    <p className="text-xs leading-relaxed text-ink-60">
+                      {designerUploadHint(deliverablePhase, revising)}
+                    </p>
+                  ) : null}
+                  {isMonthlyOrder &&
+                  stage.dueAt &&
+                  stage.status === "pending" &&
+                  !paymentDeadline ? (
                     <div className="text-xs text-amber-700">
-                      {formatMonthlyDueHint(stage)}
+                      {formatMonthlyDueHint(stage, commerce)}
                     </div>
                   ) : null}
                   {paymentDeadline ? (
@@ -395,24 +549,16 @@ export function StageTimeline({
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {showPayCTA ? (
-                  <Button variant="brand" onClick={() => handlePay(stage)}>
-                    <CircleDollarSign className="h-4 w-4" /> 立即支付
-                  </Button>
-                ) : null}
-                {showForwardPayCTA ? (
+                {showForwardPayButton ? (
                   <Button
-                    variant="brand"
+                    variant={forwardPayEnabled ? "brand" : "soft"}
+                    disabled={!forwardPayEnabled}
+                    title={
+                      forwardPayEnabled
+                        ? undefined
+                        : "各方确认费用并完成电子签约后方可转发支付链接"
+                    }
                     onClick={() => setForwardPayStage(stage)}
-                  >
-                    <Share2 className="h-4 w-4" /> 转发支付链接
-                  </Button>
-                ) : null}
-                {showForwardPayLocked ? (
-                  <Button
-                    variant="brand"
-                    disabled
-                    title="签订电子合同后方可转发支付链接"
                   >
                     <Share2 className="h-4 w-4" /> 转发支付链接
                   </Button>
@@ -423,7 +569,31 @@ export function StageTimeline({
                     onClick={() => setUploadStage(stage)}
                   >
                     <Upload className="h-4 w-4" />
-                    {revising ? "上传返修成果" : "上传本阶段成果"}
+                    {uploadLabel}
+                  </Button>
+                ) : null}
+                {canSkip ? (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          "跳过初步成果后，将直接进入上传最终成果 / 确认单。确定跳过？",
+                        )
+                      ) {
+                        return;
+                      }
+                      if (onSkipPreliminary) {
+                        onSkipPreliminary(stage);
+                        return;
+                      }
+                      push({
+                        title: "已跳过初步成果",
+                        description: "请上传最终成果 / 确认单。",
+                      });
+                    }}
+                  >
+                    跳过，上传最终成果
                   </Button>
                 ) : null}
                 {showWithdrawCTA ? (
@@ -507,49 +677,40 @@ export function StageTimeline({
 
             {isDesignerView && ownDeliverables.length > 0 ? (
               <div className="border-t border-ink-20 bg-ink-20/20 p-5">
-                <div className="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-ink-60">
-                  <FileBox className="h-3.5 w-3.5" /> 我的本阶段成果
-                </div>
-                <div className="grid gap-2 md:grid-cols-2">
-                  {ownDeliverables.map((file) => (
-                    <div
-                      key={file.id}
-                      className="flex items-center gap-3 rounded-xl border border-ink-20 bg-white p-3"
-                    >
-                      {file.thumbnail ? (
-                        <img
-                          src={file.thumbnail}
-                          alt={file.name}
-                          className="h-12 w-12 rounded-lg object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-ink-20">
-                          <FileBox className="h-5 w-5 text-ink-60" />
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium text-ink">
-                          {file.name}
-                        </div>
-                        <div className="text-xs text-ink-60">
-                          {file.size} · {formatDateTime(file.uploadedAt)}
-                        </div>
-                      </div>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-ink-60">
+                    <FileBox className="h-3.5 w-3.5" /> 我的本阶段成果
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <DeliverablesForwardControls
+                      orderId={order.id}
+                      stageId={stage.id}
+                      title={`${order.code} · ${stage.name}`}
+                      enabled
+                      confirmable={false}
+                    />
+                    {showUploadCTA ? (
                       <Button
-                        variant="ghost"
+                        variant="outline"
                         size="sm"
-                        onClick={() =>
-                          push({
-                            title: "下载已开始",
-                            description: file.name,
-                          })
-                        }
+                        onClick={() => setUploadStage(stage)}
                       >
-                        <Download className="h-4 w-4" /> 下载
+                        <Upload className="h-3.5 w-3.5" />
+                        {uploadLabel}
                       </Button>
-                    </div>
-                  ))}
+                    ) : null}
+                  </div>
                 </div>
+                <DeliverableHistorySections
+                  files={ownDeliverables}
+                  getDesigner={getDesigner}
+                  unlocked
+                  onDelete={
+                    showUploadCTA && onDeleteDeliverable
+                      ? (file) => onDeleteDeliverable(stage, file)
+                      : undefined
+                  }
+                />
               </div>
             ) : null}
 
@@ -560,12 +721,30 @@ export function StageTimeline({
                 getDesigner={getDesigner}
                 getServiceProvider={getServiceProvider}
                 showFiles={needsDeliverables}
+                forceShow={Boolean(
+                  stage.preliminarySkippedAt || stage.preliminaryConfirmedAt,
+                )}
                 roles={
                   showClientAcceptance
                     ? ["auditor", "project_manager"]
                     : undefined
                 }
-                unlocked={stage.status === "released" || showClientAcceptance}
+                unlocked={
+                  stage.status === "released" ||
+                  stage.status === "frozen" ||
+                  stage.status === "paid" ||
+                  showClientAcceptance
+                }
+                onConfirm={
+                  perspective === "client" &&
+                  needsDeliverables &&
+                  !isOrderCancelled(order) &&
+                  (stage.status === "pending" ||
+                    (postPayDeliverables && !stage.deliverablesConfirmedAt)) &&
+                  onConfirmDeliverables
+                    ? () => onConfirmDeliverables(stage)
+                    : undefined
+                }
               />
             ) : null}
 
@@ -578,6 +757,7 @@ export function StageTimeline({
                 splits={stageSplits}
                 getDesigner={getDesigner}
                 getServiceProvider={getServiceProvider}
+                revealFullName={contractSigned}
               />
             ) : null}
 
@@ -592,9 +772,21 @@ export function StageTimeline({
                 currentDesignerId={currentDesignerId}
               />
             ) : null}
+
+            {showPayButton ? (
+              <div className="border-t border-ink-20 px-5 py-4">
+                <StagePayButton
+                  unlocked={payEnabled}
+                  className="w-full"
+                  onClick={() => handlePay(stage)}
+                />
+              </div>
+            ) : null}
           </Card>
         );
       })}
+
+      {footer}
 
       {forwardPayStage ? (
         <ForwardPaymentLinkDialog
@@ -614,6 +806,20 @@ export function StageTimeline({
         }}
         stage={uploadStage}
         revising={revising}
+        phase={
+          uploadStage
+            ? resolveDeliverablePhase(uploadStage, order.status)
+            : "preliminary"
+        }
+        appending={Boolean(
+          uploadStage &&
+            getDesignerOwnDeliverables(order, uploadStage, currentDesignerId ?? "")
+              .filter(
+                (file) =>
+                  resolveDeliverableKind(file) ===
+                  uploadKindForPhase(uploadStage, order.status),
+              ).length,
+        )}
         onConfirm={(files) => {
           if (!uploadStage) return;
           if (onUploadDeliverables) {

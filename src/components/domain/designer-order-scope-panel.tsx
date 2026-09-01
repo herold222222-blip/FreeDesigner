@@ -1,6 +1,6 @@
 "use client";
 
-import type { Designer, Order } from "@/lib/types";
+import type { DeliverableFile, Designer, Order } from "@/lib/types";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -17,6 +17,9 @@ import {
   trackLabel,
 } from "@/lib/designer-order-scope";
 import { resolveTrackLabels } from "@/lib/constants";
+import { DesignerName } from "@/components/domain/designer-name";
+import { isContractFullySigned } from "@/lib/order-lifecycle";
+import { resolveProjectDesignerName } from "@/lib/designer-contact-privacy";
 import {
   ChevronRight,
   FileBox,
@@ -30,13 +33,16 @@ export function DesignerOrderScopePanel({
   order,
   designerId,
   getDesigner,
+  onDeleteDeliverable,
 }: {
   order: Order;
   designerId: string;
   getDesigner: (id: string) => Designer | undefined;
+  onDeleteDeliverable?: (stageId: string, file: DeliverableFile) => void;
 }) {
   const myTracks = getDesignerTrackAssignments(order, designerId);
   const peerTracks = getPeerTrackAssignments(order, designerId);
+  const revealFullName = isContractFullySigned(order);
   const audits = getAuditsForDesignerTracks(order, designerId);
   const showPm = designerHasProjectManagement(order, designerId);
   const { data: serviceProviders } = useServiceProviders();
@@ -107,6 +113,13 @@ export function DesignerOrderScopePanel({
                       <DeliverableFileList
                         files={deliverables}
                         getDesigner={getDesigner}
+                        onDelete={
+                          stage &&
+                          stage.status === "pending" &&
+                          onDeleteDeliverable
+                            ? (file) => onDeleteDeliverable(stage.id, file)
+                            : undefined
+                        }
                       />
                     </div>
                   ) : null}
@@ -243,6 +256,9 @@ export function DesignerOrderScopePanel({
           <div className="flex flex-wrap gap-2">
             {peerTracks.map((a) => {
               const d = getDesigner(a.designerId);
+              const peerName = d
+                ? resolveProjectDesignerName(d.name, revealFullName)
+                : "—";
               return (
                 <div
                   key={a.id}
@@ -250,11 +266,20 @@ export function DesignerOrderScopePanel({
                 >
                   {d ? (
                     <Avatar className="h-6 w-6">
-                      <AvatarImage src={d.avatar} alt={d.name} />
-                      <AvatarFallback>{d.name.slice(0, 1)}</AvatarFallback>
+                      <AvatarImage src={d.avatar} alt={peerName} />
+                      <AvatarFallback>{peerName.slice(0, 1)}</AvatarFallback>
                     </Avatar>
                   ) : null}
-                  <span className="text-xs text-ink">{d?.name ?? "—"}</span>
+                  <span className="text-xs text-ink">
+                    {d ? (
+                      <DesignerName
+                        designer={d}
+                        revealFullName={revealFullName}
+                      />
+                    ) : (
+                      "—"
+                    )}
+                  </span>
                   <Badge variant="muted" className="text-[10px]">
                     {trackLabel(a)}
                   </Badge>

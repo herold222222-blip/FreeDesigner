@@ -27,8 +27,21 @@ import { expectedDateFieldLabel } from "@/lib/order-lifecycle";
 import { buildRegularEntrustDescription } from "@/lib/entrust-submit";
 import { landscapeTimeTrackFromL3 } from "@/lib/designer-rates";
 import { resolveTimeDifficultyDisplay } from "@/lib/landscape-area-difficulty";
-import { extractTimeQuoteLineInputsFromOrder, type RegularTimeQuoteLineInput } from "@/lib/regular-entrust-quote";
-import { Download, FileBox, Paperclip, Trash2 } from "lucide-react";
+import {
+  AREA_TRACK_META,
+  extractAreaQuoteInputFromOrder,
+  extractTimeQuoteLineInputsFromOrder,
+  withAreaHardscapeRemark,
+  type RegularAreaQuoteTrackInput,
+  type RegularTimeQuoteLineInput,
+} from "@/lib/regular-entrust-quote";
+import { StructureSheetsPicker } from "@/components/domain/structure-sheets-picker";
+import {
+  isStructureL3,
+  parsePositiveIntSheets,
+} from "@/lib/structure-sheets";
+import { FileBox, Paperclip, Trash2 } from "lucide-react";
+import { AttachmentFileActions } from "@/components/domain/order-attachments";
 import { useSessionStore } from "@/store/session-store";
 import {
   MAX_ATTACHMENT_LABEL,
@@ -49,6 +62,17 @@ export type MatchingOrderEditPayload = {
   taxCoefficient?: number;
   attachments?: BountyAttachment[];
   timeQuoteLines?: RegularTimeQuoteLineInput[];
+  areaQuote?: {
+    area: number;
+    projectType: string;
+    buildType: "new" | "renovation";
+    tracks: RegularAreaQuoteTrackInput[];
+    taxCoefficient?: number;
+    structure?: {
+      mode: "pending" | "estimate";
+      sheets?: number;
+    };
+  };
 };
 
 const FILE_ACCEPT =
@@ -80,6 +104,8 @@ export function MatchingOrderEditDialog({
   const isTimeQuoteFlow =
     hasLevelQuotes &&
     (order.billingMode === "daily" || order.billingMode === "monthly");
+  const isAreaQuoteFlow = hasLevelQuotes && order.billingMode === "area";
+  const isSystemQuoteFlow = isTimeQuoteFlow || isAreaQuoteFlow;
 
   const [title, setTitle] = useState(order.title);
   const [brief, setBrief] = useState("");
@@ -102,6 +128,11 @@ export function MatchingOrderEditDialog({
     String(order.quote?.taxCoefficient ?? 1),
   );
   const [lines, setLines] = useState<RegularTimeQuoteLineInput[]>([]);
+  const [areaTracks, setAreaTracks] = useState<RegularAreaQuoteTrackInput[]>([]);
+  const [includeStructure, setIncludeStructure] = useState(false);
+  const [structureMode, setStructureMode] = useState<"pending" | "estimate" | "">("");
+  const [structureSheets, setStructureSheets] = useState<number | "">("");
+  const [buildType, setBuildType] = useState<"new" | "renovation">("new");
   const [attachments, setAttachments] = useState<BountyAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
 
@@ -131,7 +162,29 @@ export function MatchingOrderEditDialog({
     setWithPM(!!order.withProjectManagement);
     setArea(order.projectAreaSqm != null ? String(order.projectAreaSqm) : "");
     setTaxCoefficient(String(order.quote?.taxCoefficient ?? 1));
-    setLines(extractTimeQuoteLineInputsFromOrder(order));
+    const timeLines = extractTimeQuoteLineInputsFromOrder(order);
+    setLines(timeLines);
+    const extractedArea = extractAreaQuoteInputFromOrder(order);
+    setAreaTracks(extractedArea?.tracks ?? []);
+    const timeStruct = timeLines.find((l) => isStructureL3(l.l3));
+    const struct = extractedArea?.structure;
+    setIncludeStructure(Boolean(struct || timeStruct));
+    setStructureMode(
+      struct?.mode ??
+        (timeStruct
+          ? timeStruct.quantityPending || !(timeStruct.quantity > 0)
+            ? "pending"
+            : "estimate"
+          : ""),
+    );
+    setStructureSheets(
+      struct?.sheets ??
+        (timeStruct && timeStruct.quantity > 0 ? timeStruct.quantity : ""),
+    );
+    setBuildType(
+      extractedArea?.buildType ??
+        (order.description?.includes("改扩建") ? "renovation" : "new"),
+    );
     setAttachments(order.attachments ?? []);
   }, [open, order, parsed]);
 
@@ -147,14 +200,28 @@ export function MatchingOrderEditDialog({
           .filter(Boolean),
       ) ?? [];
 
+  const structureReady =
+    !includeStructure ||
+    structureMode === "pending" ||
+    (structureMode === "estimate" && parsePositiveIntSheets(structureSheets) != null);
+
   const canSubmit =
     !!title.trim() &&
     !!brief.trim() &&
     !!projectType.trim() &&
     !!expectedDeliveryAt &&
     (isTimeQuoteFlow
-      ? lines.some((l) => l.quantity > 0)
-      : Math.round(Number(totalAmount)) > 0);
+      ? lines.some(
+          (l) =>
+            l.quantity > 0 ||
+            (isStructureL3(l.l3) && (l.quantityPending || l.quantity > 0)),
+        ) ||
+        lines.some((l) => isStructureL3(l.l3))
+      : isAreaQuoteFlow
+        ? structureReady &&
+          (areaTracks.length > 0 || includeStructure) &&
+          (areaTracks.length === 0 || Number(area) > 0)
+        : Math.round(Number(totalAmount)) > 0);
 
   const taxMeta =
     TAX_OPTIONS.find((t) => t.coefficient === Number(taxCoefficient)) ??
@@ -213,25 +280,62 @@ export function MatchingOrderEditDialog({
           committerName: committerName.trim() || undefined,
           billingMode: order.billingMode,
           area: Number(area) > 0 ? Number(area) : undefined,
+          tracks: isAreaQuoteFlow
+            ? areaTracks.map((row) =>
+                withAreaHardscapeRemark(
+                  AREA_TRACK_META[row.track].l3Label,
+                  row.track === "hardscape",
+                ),
+              )
+            : undefined,
+          areaTracks: isAreaQuoteFlow
+            ? areaTracks.map((row) => ({
+                label: withAreaHardscapeRemark(
+                  AREA_TRACK_META[row.track].l3Label,
+                  row.track === "hardscape",
+                ),
+                difficulty: row.difficulty,
+                difficultyLabel: row.difficultyLabel,
+              }))
+            : undefined,
           timeL2Labels: l2Labels,
-          timeL3Units: lines.map((row) => {
-            const diff = resolveTimeDifficultyDisplay({
-              track: landscapeTimeTrackFromL3(row.l3),
-              difficulty: row.difficulty,
-              difficultyLabel: row.difficultyLabel,
-              difficultyKey: row.difficultyKey,
-            });
-            return {
-              label: row.l3Label,
-              units: row.quantity,
-              unitLabel,
-              difficultyLabel: diff?.label ?? row.difficultyLabel,
-              difficulty: diff?.value ?? row.difficulty,
-              remark: diff?.remark,
-            };
-          }),
+          timeL3Units: isTimeQuoteFlow
+            ? lines.map((row) => {
+                if (isStructureL3(row.l3)) {
+                  const pending =
+                    Boolean(row.quantityPending) || !(row.quantity > 0);
+                  return {
+                    label: row.l3Label,
+                    units: pending ? 0 : row.quantity,
+                    unitLabel: "张",
+                    pending,
+                  };
+                }
+                const diff = resolveTimeDifficultyDisplay({
+                  track: landscapeTimeTrackFromL3(row.l3),
+                  difficulty: row.difficulty,
+                  difficultyLabel: row.difficultyLabel,
+                  difficultyKey: row.difficultyKey,
+                });
+                return {
+                  label: row.l3Label,
+                  units: row.quantity,
+                  unitLabel,
+                  difficultyLabel: diff?.label ?? row.difficultyLabel,
+                  difficulty: diff?.value ?? row.difficulty,
+                  remark: diff?.remark,
+                };
+              })
+            : undefined,
           withAudit,
           withPM,
+          buildType: isAreaQuoteFlow ? buildType : undefined,
+          structureLine:
+            isAreaQuoteFlow && includeStructure
+              ? structureMode === "pending"
+                ? "待系统评估"
+                : `${parsePositiveIntSheets(structureSheets) ?? 0} 张`
+              : undefined,
           taxLabel: taxMeta?.label,
         })
       : brief.trim();
@@ -240,7 +344,7 @@ export function MatchingOrderEditDialog({
       title: title.trim(),
       description,
       projectType: projectType.trim(),
-      totalAmount: isTimeQuoteFlow
+      totalAmount: isSystemQuoteFlow
         ? Math.max(1, Math.round(order.totalAmount) || 1)
         : Math.round(Number(totalAmount)),
       expectedDeliveryAt,
@@ -253,7 +357,43 @@ export function MatchingOrderEditDialog({
           : undefined,
       taxCoefficient: Number(taxCoefficient) || undefined,
       attachments,
-      timeQuoteLines: isTimeQuoteFlow ? lines.filter((l) => l.quantity > 0) : undefined,
+      timeQuoteLines: isTimeQuoteFlow
+        ? lines
+            .filter(
+              (l) =>
+                l.quantity > 0 ||
+                (isStructureL3(l.l3) && (l.quantityPending || l.quantity >= 0)),
+            )
+            .map((l) =>
+              isStructureL3(l.l3)
+                ? {
+                    ...l,
+                    quantity:
+                      l.quantityPending || !(l.quantity > 0) ? 0 : l.quantity,
+                    quantityPending: Boolean(l.quantityPending) || !(l.quantity > 0),
+                  }
+                : l,
+            )
+        : undefined,
+      areaQuote:
+        isAreaQuoteFlow && (areaTracks.length > 0 || includeStructure)
+          ? {
+              area: Number(area) > 0 ? Number(area) : 0,
+              projectType: projectType.trim(),
+              buildType,
+              tracks: areaTracks,
+              taxCoefficient: Number(taxCoefficient) || undefined,
+              structure: includeStructure
+                ? {
+                    mode: structureMode === "estimate" ? "estimate" : "pending",
+                    sheets:
+                      structureMode === "estimate"
+                        ? parsePositiveIntSheets(structureSheets) ?? undefined
+                        : undefined,
+                  }
+                : undefined,
+            }
+          : undefined,
     });
   };
 
@@ -263,7 +403,7 @@ export function MatchingOrderEditDialog({
         <DialogHeader>
           <DialogTitle>修改委托信息</DialogTitle>
           <DialogDescription>
-            {isTimeQuoteFlow
+            {isSystemQuoteFlow
               ? "以下为委托人已提交的详细资料与附件。保存后将按最新内容重新生成等级报价卡；确认后方可开放委托人选卡。"
               : "以下为委托人已提交的详细资料与附件，保存后按最新内容更新费用。"}
           </DialogDescription>
@@ -400,20 +540,48 @@ export function MatchingOrderEditDialog({
           </div>
 
           {order.billingMode === "area" ? (
-            <div>
-              <Label htmlFor="match-order-area">项目面积（㎡）</Label>
-              <Input
-                id="match-order-area"
-                type="number"
-                min={1}
-                value={area}
-                onChange={(e) => setArea(e.target.value)}
-                className="mt-2"
-              />
+            <div className="space-y-3">
+              <div>
+                <Label htmlFor="match-order-area">项目面积（㎡）</Label>
+                <Input
+                  id="match-order-area"
+                  type="number"
+                  min={1}
+                  value={area}
+                  onChange={(e) => setArea(e.target.value)}
+                  className="mt-2"
+                />
+              </div>
+              {isAreaQuoteFlow ? (
+                <div>
+                  <Label>建造类型</Label>
+                  <div className="mt-2 flex gap-2">
+                    {(
+                      [
+                        { v: "new" as const, l: "新建（100%）" },
+                        { v: "renovation" as const, l: "改扩建（110%）" },
+                      ] as const
+                    ).map((b) => (
+                      <button
+                        key={b.v}
+                        type="button"
+                        onClick={() => setBuildType(b.v)}
+                        className={
+                          buildType === b.v
+                            ? "rounded-full border border-ink bg-ink px-3 py-1.5 text-xs text-white"
+                            : "rounded-full border border-ink-20 px-3 py-1.5 text-xs text-ink-60"
+                        }
+                      >
+                        {b.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
-          {!isTimeQuoteFlow ? (
+          {!isSystemQuoteFlow ? (
             <div>
               <Label htmlFor="match-order-budget">预算金额（元）</Label>
               <Input
@@ -428,18 +596,89 @@ export function MatchingOrderEditDialog({
             </div>
           ) : null}
 
+          {isAreaQuoteFlow ? (
+            <StructureSheetsPicker
+              enabled={includeStructure}
+              onEnabledChange={(next) => {
+                setIncludeStructure(next);
+                if (!next) {
+                  setStructureMode("");
+                  setStructureSheets("");
+                }
+              }}
+              mode={structureMode}
+              onModeChange={setStructureMode}
+              sheets={structureSheets}
+              onSheetsChange={setStructureSheets}
+            />
+          ) : null}
+
+          {isAreaQuoteFlow && areaTracks.length > 0 ? (
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-ink">三级专业难度</div>
+              <div className="space-y-2">
+                {areaTracks.map((row, i) => (
+                  <div
+                    key={`${row.track}-${i}`}
+                    className="grid gap-2 rounded-xl border border-ink-20 bg-ink-20/10 px-3 py-2.5 sm:grid-cols-[1fr_120px]"
+                  >
+                    <div className="min-w-0 text-sm font-medium text-ink">
+                      {withAreaHardscapeRemark(
+                        AREA_TRACK_META[row.track].l3Label,
+                        row.track === "hardscape",
+                      )}
+                      {row.difficultyLabel ? (
+                        <div className="mt-0.5 text-[11px] font-normal text-ink-40">
+                          {row.difficultyLabel}{" "}
+                          {row.difficulty
+                            ? `${Math.round(row.difficulty * 100)}%`
+                            : ""}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div>
+                      <Label className="text-[11px] text-ink-40">难度系数</Label>
+                      <Input
+                        type="number"
+                        min={0.1}
+                        step={0.1}
+                        value={row.difficulty ?? 1}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          setAreaTracks((prev) =>
+                            prev.map((x, j) =>
+                              j === i ? { ...x, difficulty: n } : x,
+                            ),
+                          );
+                        }}
+                        className="mt-1 h-9"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           {isTimeQuoteFlow && lines.length > 0 ? (
             <div className="space-y-2">
               <div className="text-sm font-medium text-ink">三级专业工时</div>
               <div className="space-y-2">
-                {lines.map((row, i) => (
+                {lines.map((row, i) => {
+                  const struct = isStructureL3(row.l3);
+                  return (
                   <div
                     key={`${row.l3}-${i}`}
                     className="grid gap-2 rounded-xl border border-ink-20 bg-ink-20/10 px-3 py-2.5 sm:grid-cols-[1fr_120px_120px]"
                   >
                     <div className="min-w-0 text-sm font-medium text-ink">
                       {row.l3Label}
-                      {row.difficultyLabel ? (
+                      {struct ? (
+                        <div className="mt-0.5 text-[11px] font-normal text-ink-40">
+                          按张计价 · 450 元/张
+                          {row.quantityPending ? " · 待系统评估" : ""}
+                        </div>
+                      ) : row.difficultyLabel ? (
                         <div className="mt-0.5 text-[11px] font-normal text-ink-40">
                           难度{row.difficultyLabel}{" "}
                           {row.difficulty
@@ -450,24 +689,40 @@ export function MatchingOrderEditDialog({
                     </div>
                     <div>
                       <Label className="text-[11px] text-ink-40">
-                        数量（{unitLabel}）
+                        数量（{struct ? "张" : unitLabel}）
                       </Label>
                       <Input
                         type="number"
-                        min={order.billingMode === "daily" ? 0.5 : 1}
-                        step={order.billingMode === "daily" ? 0.5 : 1}
-                        value={row.quantity}
+                        min={struct ? 1 : order.billingMode === "daily" ? 0.5 : 1}
+                        step={struct ? 1 : order.billingMode === "daily" ? 0.5 : 1}
+                        value={struct && row.quantityPending ? "" : row.quantity}
+                        placeholder={struct && row.quantityPending ? "待评估" : undefined}
                         onChange={(e) => {
                           const n = Number(e.target.value);
                           setLines((prev) =>
                             prev.map((x, j) =>
-                              j === i ? { ...x, quantity: n } : x,
+                              j === i
+                                ? {
+                                    ...x,
+                                    quantity: n,
+                                    quantityPending: struct
+                                      ? !(n > 0)
+                                      : x.quantityPending,
+                                  }
+                                : x,
                             ),
                           );
                         }}
                         className="mt-1 h-9"
                       />
                     </div>
+                    {struct ? (
+                      <div className="text-[11px] text-ink-40">
+                        {row.quantity > 0
+                          ? `费用 ¥${(row.quantity * 450).toLocaleString("zh-CN")}`
+                          : "填写张数后按 450 元/张计入"}
+                      </div>
+                    ) : (
                     <div>
                       <Label className="text-[11px] text-ink-40">难度系数</Label>
                       <Input
@@ -486,8 +741,10 @@ export function MatchingOrderEditDialog({
                         className="mt-1 h-9"
                       />
                     </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : null}
@@ -561,11 +818,11 @@ export function MatchingOrderEditDialog({
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
                       {a.url ? (
-                        <Button size="sm" variant="ghost" asChild>
-                          <a href={a.url} download={a.name}>
-                            <Download className="h-3.5 w-3.5" />
-                          </a>
-                        </Button>
+                        <AttachmentFileActions
+                          url={a.url}
+                          name={a.name}
+                          iconOnly
+                        />
                       ) : null}
                       <Button
                         size="sm"
@@ -599,7 +856,7 @@ export function MatchingOrderEditDialog({
           >
             {saving
               ? "保存中..."
-              : isTimeQuoteFlow
+              : isSystemQuoteFlow
                 ? "保存并更新费用"
                 : "保存修改"}
           </Button>

@@ -5,7 +5,9 @@ import {
   CLIENT_LEVEL_META,
   DESIGNER_LEVEL_META,
   REGION_TIER_META,
+  resolveTaxCoefficientLabel,
 } from "@/lib/constants";
+import { usePlatformPricingStore } from "@/store/platform-pricing-store";
 import { CLIENT_QUOTE_LEVELS, getQuoteOrderTotal } from "@/lib/regular-entrust-quote";
 import { formatCurrency } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -22,6 +24,7 @@ export function LevelQuoteCards({
   selectable?: boolean;
   onToggle?: (level: DesignerLevel) => void;
 }) {
+  const taxOptions = usePlatformPricingStore((s) => s.config.taxOptions);
   const byLevel = new Map<DesignerLevel, OrderQuote>();
   for (const q of quotes) {
     byLevel.set(q.assumptions.designerLevel, q);
@@ -94,6 +97,10 @@ export function LevelQuoteCards({
               <CoeffRow
                 label="税率"
                 value={`×${quote.taxCoefficient.toFixed(2)}`}
+                tip={resolveTaxCoefficientLabel(
+                  quote.taxCoefficient,
+                  taxOptions,
+                )}
               />
             </dl>
 

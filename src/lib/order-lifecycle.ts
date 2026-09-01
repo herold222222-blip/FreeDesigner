@@ -18,7 +18,7 @@ export function isOrderDeletable(
 
 /** 最后阶段成果已确认，且全部费用已支付 */
 export function orderFulfillmentFinished(
-  order: Pick<Order, "stages" | "status">,
+  order: Pick<Order, "stages" | "status" | "billingMode">,
 ): boolean {
   if (order.status === "cancelled" || order.status === "terminated") {
     return false;
@@ -46,6 +46,29 @@ export function normalizeCompletedStatus(order: Order): boolean {
   return true;
 }
 
+/** 进入待签约时生成合同编号，便于打开合同页手写签署 */
+export function assignContractIdIfMissing(order: Order): boolean {
+  if (order.contractId?.trim()) return false;
+  order.contractId = `CT-${Date.now().toString(36).toUpperCase()}`;
+  return true;
+}
+
+export function contractPageHref(order: Pick<Order, "id" | "contractId">) {
+  const id = order.contractId?.trim() || order.id;
+  return `/contracts/${id}`;
+}
+
+/** 本人已签或双方已签完后，才展示「在线查阅合同」 */
+export function canViewSignedContract(
+  order: Pick<Order, "clientSignedContract" | "designerSignedContract">,
+  party: "client" | "designer",
+) {
+  if (isContractFullySigned(order)) return true;
+  return party === "designer"
+    ? order.designerSignedContract === true
+    : order.clientSignedContract === true;
+}
+
 /** 双方均已签署电子合同 */
 export function isContractFullySigned(
   order: Pick<Order, "clientSignedContract" | "designerSignedContract">,
@@ -64,16 +87,22 @@ export function resolveDisplayOrderStatus(
     | "designerSignedContract"
     | "clientReviewed"
     | "stages"
+    | "billingMode"
   >,
 ): OrderStatus {
+  if (order.status === "cancelled" || order.status === "terminated") {
+    return order.status;
+  }
   if (
-    order.status !== "cancelled" &&
-    order.status !== "terminated" &&
     order.clientReviewed &&
     Array.isArray(order.stages) &&
     orderFulfillmentFinished(order)
   ) {
     return "completed";
+  }
+  /** 旧流程可能先标成已完成，但评价未提交时仍不算结案 */
+  if (order.status === "completed" && !order.clientReviewed) {
+    return "in_progress";
   }
   if (order.status === "pending_contract" && isContractFullySigned(order)) {
     return "in_progress";
@@ -122,6 +151,13 @@ export function canPayOrderStages(order: Order): boolean {
     "pending_review",
     "in_revision",
   ].includes(order.status);
+}
+
+/** 各方确认费用并完成电子签约后，阶段支付按钮才可点击扫码 */
+export function isStagePaymentUnlocked(
+  order: Pick<Order, "status" | "clientSignedContract" | "designerSignedContract">,
+): boolean {
+  return isContractFullySigned(order) && !isOrderCancelled(order);
 }
 
 /** 全部阶段已验收，等待委托人「最终服务完成」 */

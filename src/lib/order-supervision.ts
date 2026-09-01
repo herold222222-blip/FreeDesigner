@@ -2,6 +2,7 @@ import { isContractFullySigned } from "@/lib/order-lifecycle";
 import { isAwaitingClientReviewOrder } from "@/lib/client-review";
 import type { Order } from "@/lib/types";
 import type { ScanOrder } from "@/lib/scan-order";
+import { isSelfOrderPendingClaim } from "@/lib/self-order-share";
 
 /** 订单监管状态（三端共用语义，标签按角色不同） */
 export type OrderSupervisionStatus =
@@ -81,6 +82,9 @@ export function isDesignerAwaitingConfirmOrder(
 ): boolean {
   if (!designerId) return false;
   if (order.status === "pending_schedule") {
+    if (isSelfOrderPendingClaim(order)) {
+      return order.designerId === designerId;
+    }
     return (
       order.designerId === designerId ||
       myTrackAssignments(order, designerId).length > 0
@@ -213,22 +217,23 @@ export function isInRevisionSupervisionOrder(order: Order): boolean {
   return order.status === "in_revision";
 }
 
-/** 【进行中】：双方已签约且履约中，不含待支付 / 待成果确认 / 返修 / 待签约 */
+/** 【进行中】：双方已签约且履约中，同时包含待成果确认 / 返修中 / 待支付 */
 export function isInProgressSupervisionOrder(order: Order): boolean {
   if (
     order.status === "completed" ||
     order.status === "cancelled" ||
-    order.status === "terminated" ||
-    order.status === "pending_review" ||
-    order.status === "in_revision"
+    order.status === "terminated"
   ) {
     return false;
   }
+  if (isAwaitingReviewOrder(order) || isInRevisionSupervisionOrder(order)) {
+    return true;
+  }
+  if (isAwaitingClientPaymentOrder(order)) return true;
   if (!isContractFullySigned(order)) return false;
   if (isAwaitingClientSignOrder(order) || isAwaitingDesignerSignOrder(order)) {
     return false;
   }
-  if (isAwaitingClientPaymentOrder(order)) return false;
   return true;
 }
 
@@ -276,15 +281,15 @@ export function designerAllSortRank(order: Order, designerId: string): number {
   return 8;
 }
 
+/** 订单监管进入 / 刷新：按待办优先级落第一个有单的状态 */
 export const ADMIN_DEFAULT_TAB_PRIORITY: OrderSupervisionStatus[] = [
   "awaiting_match",
-  "matching",
-  "pending_payment",
-  "pending_client_sign",
   "pending_designer_sign",
-  "pending_review",
-  "pending_client_review",
+  "pending_client_sign",
   "in_revision",
+  "pending_payment",
+  "pending_review",
+  "matching",
   "in_progress",
   "all",
 ];
@@ -343,7 +348,7 @@ export function scanMatchesSupervision(
     case "pending_payment":
       return scan.status === "pending_prepay";
     case "in_progress":
-      return scan.status === "in_service";
+      return scan.status === "in_service" || scan.status === "pending_prepay";
     default:
       return false;
   }

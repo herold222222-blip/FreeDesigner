@@ -208,6 +208,7 @@ export function BountyFiltersPanel({
             <option value="all">全部状态</option>
             <option value="open">开放报名</option>
             <option value="in_review">审核中</option>
+            <option value="awarded">已选定设计师</option>
           </select>
         </ToolbarField>
 

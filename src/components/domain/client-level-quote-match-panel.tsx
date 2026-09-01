@@ -22,6 +22,8 @@ import { designerHasL3 } from "@/lib/bounty-tracks";
 import { trackPoolTitle } from "@/lib/client-quote-match";
 import { needsCsQuoteConfirm } from "@/lib/order-supervision";
 import { LevelQuoteCards } from "@/components/domain/level-quote-cards";
+import { DesignerName } from "@/components/domain/designer-name";
+import { maskDesignerPublicName } from "@/lib/designer-contact-privacy";
 
 export function ClientLevelQuoteMatchPanel({
   order,
@@ -215,6 +217,25 @@ export function ClientLevelQuoteMatchPanel({
     order.status === "matching" &&
     !offerPending;
 
+  if (awaitingCs) {
+    return (
+      <Card className="space-y-3 p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+              <Sparkles className="h-4 w-4 text-brand" />
+              等待客服确认
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-ink-60">
+              已收到您填写的项目委托信息。客服核对需求并确认后，将显示等级报价卡，届时即可选卡匹配设计师。
+            </p>
+          </div>
+          <Badge variant="amber">待客服确认</Badge>
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <Card className="space-y-4 p-6">
@@ -225,16 +246,12 @@ export function ClientLevelQuoteMatchPanel({
               等级报价卡
             </div>
             <p className="mt-1 text-xs text-ink-60">
-              {awaitingCs
-                ? "系统按见习 / 中级 / 高级 / 特级四档测算费用，当前仅为参考。客服确认需求后，即可选卡匹配设计师。"
-                : order.csQuoteConfirmedAt
-                  ? "客服已更新报价。可单选或多选后匹配设计师；匹配后将按委托的每个三级专业分别给出备选，请逐一确认人选。"
-                  : "系统按见习 / 中级 / 高级 / 特级四档测算费用。可单选或多选后匹配设计师；匹配后将按委托的每个三级专业分别给出备选，请逐一确认人选。"}
+              {order.csQuoteConfirmedAt
+                ? "客服已更新报价。可单选或多选后匹配设计师；匹配后将按委托的每个三级专业分别给出备选，请逐一确认人选。"
+                : "系统按见习 / 中级 / 高级 / 特级四档测算费用。可单选或多选后匹配设计师；匹配后将按委托的每个三级专业分别给出备选，请逐一确认人选。"}
             </p>
           </div>
-          {awaitingCs ? (
-            <Badge variant="amber">待客服确认</Badge>
-          ) : order.status === "pending_quote" ? (
+          {order.status === "pending_quote" ? (
             <Badge variant="amber">待选卡匹配</Badge>
           ) : waitingOffer ? (
             <Badge variant="blue">待设计师确认</Badge>
@@ -252,11 +269,11 @@ export function ClientLevelQuoteMatchPanel({
           onToggle={toggleLevel}
         />
 
-        {canSelectCards || awaitingCs ? (
+        {canSelectCards ? (
           <div className="space-y-2">
             <Button
               variant="brand"
-              disabled={awaitingCs || !selectedLevels.length || busy}
+              disabled={!selectedLevels.length || busy}
               onClick={handleMatch}
             >
               <Users className="h-4 w-4" />
@@ -266,11 +283,6 @@ export function ClientLevelQuoteMatchPanel({
                   ? "重新匹配设计师"
                   : "匹配设计师"}
             </Button>
-            {awaitingCs ? (
-              <p className="text-xs leading-relaxed text-ink-60">
-                目前我们已经收到您的委托需求，目前的报价卡仅为参考，需要客服根据您的需求进行二次确认后方可匹配设计师。
-              </p>
-            ) : null}
           </div>
         ) : null}
       </Card>
@@ -303,7 +315,7 @@ export function ClientLevelQuoteMatchPanel({
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-ink">
-                        {trackPoolTitle(pool)}
+                        {trackPoolTitle(pool, order.billingMode)}
                       </div>
                       {pool.quantityHint ? (
                         <div className="mt-0.5 text-[11px] text-ink-40">
@@ -347,14 +359,17 @@ export function ClientLevelQuoteMatchPanel({
                               className="flex w-full items-start gap-3 text-left"
                             >
                               <Avatar className="h-10 w-10 shrink-0">
-                                <AvatarImage src={d.avatar} alt={d.name} />
+                                <AvatarImage
+                                  src={d.avatar}
+                                  alt={maskDesignerPublicName(d.name)}
+                                />
                                 <AvatarFallback>
-                                  {d.name.slice(0, 1)}
+                                  {maskDesignerPublicName(d.name).slice(0, 1)}
                                 </AvatarFallback>
                               </Avatar>
                               <div className="min-w-0 flex-1">
                                 <div className="truncate text-sm font-medium text-ink">
-                                  {d.name}
+                                  <DesignerName designer={d} />
                                 </div>
                                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-40">
                                   {d.code ? <span>{d.code}</span> : null}
@@ -463,14 +478,17 @@ export function ClientLevelQuoteMatchPanel({
                             className="flex w-full items-start gap-3 text-left"
                           >
                             <Avatar className="h-10 w-10 shrink-0">
-                              <AvatarImage src={d.avatar} alt={d.name} />
+                              <AvatarImage
+                                src={d.avatar}
+                                alt={maskDesignerPublicName(d.name)}
+                              />
                               <AvatarFallback>
-                                {d.name.slice(0, 1)}
+                                {maskDesignerPublicName(d.name).slice(0, 1)}
                               </AvatarFallback>
                             </Avatar>
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-sm font-medium text-ink">
-                                {d.name}
+                                <DesignerName designer={d} />
                               </div>
                               <div className="mt-0.5 text-[11px] text-ink-40">
                                 {d.code ? `${d.code} · ` : ""}
@@ -547,19 +565,22 @@ export function ClientLevelQuoteMatchPanel({
                   >
                     <div className="min-w-0 flex-1">
                       <div className="text-[11px] text-ink-40">
-                        {trackPoolTitle(pool)}
+                        {trackPoolTitle(pool, order.billingMode)}
                       </div>
                       <div className="mt-0.5 flex items-center gap-2 text-sm font-medium text-ink">
                         {d ? (
                           <>
                             <Avatar className="h-7 w-7">
-                              <AvatarImage src={d.avatar} alt={d.name} />
+                              <AvatarImage
+                                src={d.avatar}
+                                alt={maskDesignerPublicName(d.name)}
+                              />
                               <AvatarFallback>
-                                {d.name.slice(0, 1)}
+                                {maskDesignerPublicName(d.name).slice(0, 1)}
                               </AvatarFallback>
                             </Avatar>
                             <span>
-                              {d.name}
+                              <DesignerName designer={d} />
                               {d.code ? ` · ${d.code}` : ""}
                             </span>
                           </>
@@ -584,11 +605,16 @@ export function ClientLevelQuoteMatchPanel({
               return (
                 <div className="flex items-center gap-3 rounded-xl border border-blue-200/80 bg-white/80 px-3 py-2.5">
                   <Avatar className="h-9 w-9">
-                    <AvatarImage src={d.avatar} alt={d.name} />
-                    <AvatarFallback>{d.name.slice(0, 1)}</AvatarFallback>
+                    <AvatarImage
+                      src={d.avatar}
+                      alt={maskDesignerPublicName(d.name)}
+                    />
+                    <AvatarFallback>
+                      {maskDesignerPublicName(d.name).slice(0, 1)}
+                    </AvatarFallback>
                   </Avatar>
                   <div className="text-sm font-medium text-ink">
-                    {d.name}
+                    <DesignerName designer={d} />
                     {d.code ? ` · ${d.code}` : ""}
                   </div>
                 </div>

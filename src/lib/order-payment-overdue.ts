@@ -1,5 +1,5 @@
 import { isContractFullySigned, isOrderCancelled } from "@/lib/order-lifecycle";
-import { isPrepaymentStage } from "@/lib/order-payment-stages";
+import { isPrepaymentStage, stageRequiresDeliverables } from "@/lib/order-payment-stages";
 import { isAwaitingClientPaymentOrder } from "@/lib/order-supervision";
 import { monthlyPaymentDueAtIso, monthlyFirstPrepayDueDate, resolveMonthlyServicePeriod } from "@/lib/monthly-billing";
 import { getDailySettlementDueAt } from "@/lib/time-billing";
@@ -175,7 +175,7 @@ export function getActivePaymentStageId(
       if (hit) return hit.id;
     }
     const frozen = stages.find(
-      (s) => s.status === "frozen" && !isPrepaymentStage(order, s),
+      (s) => s.status === "frozen" && stageRequiresDeliverables(order, s),
     );
     if (frozen) return frozen.id;
   }
@@ -188,14 +188,15 @@ export function getActivePaymentStageId(
       (s) =>
         s.status === "frozen" &&
         (s.deliverables?.length ?? 0) > 0 &&
-        !isPrepaymentStage(order, s),
+        stageRequiresDeliverables(order, s),
     );
     if (awaitingConfirm) return awaitingConfirm.id;
 
     const held = stages.find(
       (s) =>
         (s.status === "frozen" || s.status === "paid") &&
-        !isPrepaymentStage(order, s),
+        stageRequiresDeliverables(order, s) &&
+        !s.deliverablesConfirmedAt,
     );
     if (held) return held.id;
   }
@@ -209,7 +210,7 @@ export function getActivePaymentStageId(
   }
 
   const allHeld = stages.length > 0 && stages.every(isSettledOrHeld);
-  const reviewStages = stages.filter((s) => !isPrepaymentStage(order, s));
+  const reviewStages = stages.filter((s) => stageRequiresDeliverables(order, s));
   const lastReview = reviewStages.at(-1);
   if (allHeld && (!lastReview || lastReview.deliverablesConfirmedAt)) {
     return null;
@@ -268,15 +269,16 @@ function resolveContractDue(
   }
 
   if (isDaily) {
-    const fromService = getDailySettlementDueAt(order);
-    const fromConfirm = stage.deliverablesConfirmedAt
-      ? addCalendarDays(stage.deliverablesConfirmedAt, DAILY_TAIL_CALENDAR_DAYS)
-      : null;
-    const dueAt = laterIso(fromService, fromConfirm);
+    if (!stage.deliverablesConfirmedAt) return null;
+    const dueAt = getDailySettlementDueAt(
+      order,
+      null,
+      stage.deliverablesConfirmedAt,
+    );
     if (!dueAt) return null;
     return {
       dueAt,
-      ruleLabel: "合同约定：服务期结束或成果确认后 3 日内付清尾款",
+      ruleLabel: "合同约定：委托人确认服务成果后 3 日内付清尾款",
     };
   }
 

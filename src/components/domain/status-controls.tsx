@@ -11,6 +11,8 @@ import {
 import type { Designer, WorkloadStatus } from "@/lib/types";
 import { ActivityDot } from "./activity-dot";
 import { useSessionStore } from "@/store/session-store";
+import { updateDesignerProfileRequest } from "@/lib/api-client";
+import { invalidateApiPath } from "@/lib/use-data";
 import {
   designerCanAcceptOrders,
   portfolioReadinessHint,
@@ -21,13 +23,41 @@ import Link from "next/link";
 export function StatusControls({ designer }: { designer: Designer }) {
   const canAcceptOrders = designerCanAcceptOrders(designer);
   const readinessHint = portfolioReadinessHint(designer);
-  const [online, setOnline] = useState(
-    designer.onlineStatus === "online" && canAcceptOrders,
-  );
+  const online = true;
   const [workload, setWorkload] = useState<WorkloadStatus>(designer.workloadStatus);
   const [travel, setTravel] = useState(designer.isOpenToTravel);
   const [hand, setHand] = useState(designer.supportsHandDrawing);
+  const [savingKey, setSavingKey] = useState<"travel" | "hand" | null>(null);
   const push = useSessionStore((s) => s.pushNotification);
+
+  const persistServiceFlag = async (
+    key: "travel" | "hand",
+    next: boolean,
+    apply: (v: boolean) => void,
+    patch: { isOpenToTravel?: boolean; supportsHandDrawing?: boolean },
+    titleOn: string,
+    titleOff: string,
+  ) => {
+    if (savingKey) return;
+    const previous = key === "travel" ? travel : hand;
+    apply(next);
+    setSavingKey(key);
+    try {
+      await updateDesignerProfileRequest(designer.id, patch);
+      invalidateApiPath(`/api/designers/${designer.id}`);
+      invalidateApiPath("/api/designers");
+      push({ title: next ? titleOn : titleOff, variant: next ? "success" : "default" });
+    } catch (e) {
+      apply(previous);
+      push({
+        title: "状态未保存",
+        description: e instanceof Error ? e.message : "请稍后再试",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingKey(null);
+    }
+  };
 
   const updateWorkload = (status: WorkloadStatus) => {
     setWorkload(status);
@@ -73,34 +103,13 @@ export function StatusControls({ designer }: { designer: Designer }) {
             <div>
               <div className="text-sm font-medium text-ink">在线状态</div>
               <div className="text-xs text-ink-60">
-                在线时优先曝光于设计师列表顶部
+                登录后自动在线，下线后仍保持 2 小时
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-ink-60">
-              {online ? "在线" : "离线"}
-            </span>
-            <Switch
-              checked={online}
-              disabled={!canAcceptOrders && !online}
-              onCheckedChange={(v) => {
-                if (v && !canAcceptOrders) {
-                  push({
-                    title: "请先上传项目类型案例",
-                    description: readinessHint,
-                    variant: "destructive",
-                  });
-                  return;
-                }
-                setOnline(v);
-                push({
-                  title: v ? "已上线 · 开放接单" : "已离线",
-                  variant: v ? "success" : "default",
-                });
-              }}
-            />
-          </div>
+          <Badge variant={online ? "emerald" : "muted"}>
+            {online ? "在线" : "离线"}
+          </Badge>
         </div>
 
         <div className="rounded-xl border border-ink-20 p-4">
@@ -144,19 +153,33 @@ export function StatusControls({ designer }: { designer: Designer }) {
             icon={Plane}
             label="支持出差 / 上门"
             checked={travel}
-            onChange={(v) => {
-              setTravel(v);
-              push({ title: v ? "已开启出差服务" : "已关闭出差服务" });
-            }}
+            disabled={savingKey === "travel"}
+            onChange={(v) =>
+              persistServiceFlag(
+                "travel",
+                v,
+                setTravel,
+                { isOpenToTravel: v },
+                "已开启出差 / 上门",
+                "已关闭出差 / 上门",
+              )
+            }
           />
           <ToggleRow
             icon={PencilLine}
             label="支持改图"
             checked={hand}
-            onChange={(v) => {
-              setHand(v);
-              push({ title: v ? "已开启改图服务" : "已关闭改图服务" });
-            }}
+            disabled={savingKey === "hand"}
+            onChange={(v) =>
+              persistServiceFlag(
+                "hand",
+                v,
+                setHand,
+                { supportsHandDrawing: v },
+                "已开启改图服务",
+                "已关闭改图服务",
+              )
+            }
           />
         </div>
       </div>
@@ -168,11 +191,13 @@ function ToggleRow({
   icon: Icon,
   label,
   checked,
+  disabled,
   onChange,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   checked: boolean;
+  disabled?: boolean;
   onChange: (v: boolean) => void;
 }) {
   return (
@@ -184,6 +209,7 @@ function ToggleRow({
       <Switch
         className="shrink-0"
         checked={checked}
+        disabled={disabled}
         onCheckedChange={onChange}
       />
     </div>

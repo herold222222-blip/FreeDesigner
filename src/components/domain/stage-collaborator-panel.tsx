@@ -40,6 +40,9 @@ import {
 } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { isContractFullySigned } from "@/lib/order-lifecycle";
+import { DesignerName } from "@/components/domain/designer-name";
+import { resolveProjectDesignerName } from "@/lib/designer-contact-privacy";
 import { cn } from "@/lib/utils";
 import {
   Check,
@@ -160,6 +163,14 @@ function CollaboratorServiceCard({
   const meta = COLLABORATOR_STATUS_META[service.status];
   const primary = getDesigner(service.primaryDesignerId);
   const collaborator = getDesigner(service.collaboratorDesignerId);
+  const revealFullName =
+    mode === "admin" || isContractFullySigned(order);
+  const primaryLabel = primary
+    ? resolveProjectDesignerName(primary.name, revealFullName)
+    : "原设计师";
+  const collaboratorLabel = collaborator
+    ? resolveProjectDesignerName(collaborator.name, revealFullName)
+    : "配合设计师";
   const assignment = order.trackAssignments?.find(
     (a) => a.id === service.trackAssignmentId,
   );
@@ -186,7 +197,7 @@ function CollaboratorServiceCard({
     });
     onNotify({
       title: "配合确认单已提交",
-      description: `等待 ${primary?.name ?? "原设计师"} 确认 ¥${service.totalFee} 配合费。`,
+      description: `等待 ${primaryLabel} 确认 ¥${service.totalFee} 配合费。`,
       variant: "success",
     });
   };
@@ -199,7 +210,7 @@ function CollaboratorServiceCard({
     });
     onNotify({
       title: "配合费已确认生效",
-      description: `${collaborator?.name ?? "配合设计师"} ¥${service.totalFee} 将从本阶段 ${primary?.name ?? "原设计师"} 份额中扣除。`,
+      description: `${collaboratorLabel} ¥${service.totalFee} 将从本阶段 ${primaryLabel} 份额中扣除。`,
       variant: "success",
     });
   };
@@ -223,18 +234,21 @@ function CollaboratorServiceCard({
           {collaborator ? (
             <div className="flex items-center gap-2">
               <Avatar className="h-8 w-8">
-                <AvatarImage src={collaborator.avatar} alt={collaborator.name} />
-                <AvatarFallback>{collaborator.name.slice(0, 1)}</AvatarFallback>
+                <AvatarImage src={collaborator.avatar} alt={collaboratorLabel} />
+                <AvatarFallback>{collaboratorLabel.slice(0, 1)}</AvatarFallback>
               </Avatar>
               <div>
                 <div className="text-sm font-medium text-ink">
-                  {collaborator.name}
+                  <DesignerName
+                    designer={collaborator}
+                    revealFullName={revealFullName}
+                  />
                   <span className="ml-1.5 text-xs font-normal text-ink-60">
                     配合 · {trackLabel}
                   </span>
                 </div>
                 <div className="text-[11px] text-ink-60">
-                  协助 {primary?.name ?? "原设计师"}
+                  协助 {primaryLabel}
                 </div>
               </div>
             </div>
@@ -264,7 +278,7 @@ function CollaboratorServiceCard({
       {service.status === "confirmed" ? (
         <div className="mt-2 text-[11px] text-emerald-700">
           <Clock className="mr-1 inline h-3 w-3" />
-          已于 {formatDateTime(service.confirmedAt!)} 确认生效 · 从 {primary?.name}{" "}
+          已于 {formatDateTime(service.confirmedAt!)} 确认生效 · 从 {primaryLabel}{" "}
           本阶段份额中扣除 {formatCurrency(service.totalFee)}
         </div>
       ) : null}

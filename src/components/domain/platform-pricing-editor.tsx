@@ -1,11 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { AlertTriangle } from "lucide-react";
 import {
   CLIENT_LEVEL_META,
   DESIGNER_LEVEL_META,
@@ -22,6 +32,11 @@ import type {
 } from "@/lib/platform-pricing";
 import { cloneDefaultPricingConfig, normalizePricingConfig } from "@/lib/platform-pricing";
 import {
+  formatDailyBillingRule,
+  formatMonthlyBillingRule,
+  normalizeCommerceSettings,
+} from "@/lib/platform-commerce";
+import {
   CALCULATOR_QUOTE_REMARK_VARIANT_LABELS,
   type CalculatorQuoteRemarkVariant,
   type CalculatorQuoteRemarkVariantConfig,
@@ -34,7 +49,12 @@ import { savePlatformPricingRequest } from "@/lib/api-client";
 
 const TIME_TRACKS = Object.keys(LANDSCAPE_TIME_TRACK_LABELS) as (keyof typeof LANDSCAPE_TIME_TRACK_LABELS)[];
 
+function pricingSnapshot(cfg: PlatformPricingConfig) {
+  return JSON.stringify(normalizePricingConfig(cfg));
+}
+
 export function PlatformPricingEditor() {
+  const router = useRouter();
   const push = useSessionStore((s) => s.pushNotification);
   const { config, setConfig, resetConfig } = usePlatformPricingStore();
   const [draft, setDraft] = useState<PlatformPricingConfig>(() => normalizePricingConfig(config));
@@ -42,6 +62,14 @@ export function PlatformPricingEditor() {
   useEffect(() => {
     setDraft(normalizePricingConfig(config));
   }, [config]);
+
+  const dirty = useMemo(
+    () => pricingSnapshot(draft) !== pricingSnapshot(config),
+    [draft, config],
+  );
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const bypassLeaveRef = useRef(false);
 
   const [activeSpecialty, setActiveSpecialty] = useState<Specialty>("landscape");
 
@@ -56,7 +84,7 @@ export function PlatformPricingEditor() {
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
-    if (saving) return;
+    if (saving) return false;
     setSaving(true);
     try {
       const saved = await savePlatformPricingRequest(draft);
@@ -68,16 +96,67 @@ export function PlatformPricingEditor() {
         description: "已写入数据库，计算器与委托报价将按新参数生效。",
         variant: "success",
       });
+      return true;
     } catch (e) {
       push({
         title: "保存失败",
         description: e instanceof Error ? e.message : "请稍后再试",
         variant: "destructive",
       });
+      return false;
     } finally {
       setSaving(false);
     }
   };
+
+  const goPendingHref = () => {
+    const href = pendingHref;
+    setPendingHref(null);
+    setLeaveOpen(false);
+    if (href) router.push(href);
+  };
+
+  useEffect(() => {
+    if (!dirty) return;
+
+    const onClick = (event: MouseEvent) => {
+      if (bypassLeaveRef.current) return;
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as HTMLElement | null)?.closest("a[href]");
+      if (!anchor) return;
+      if (anchor.getAttribute("target") === "_blank") return;
+      if (anchor.hasAttribute("download")) return;
+      const raw = anchor.getAttribute("href");
+      if (!raw || raw.startsWith("#") || raw.startsWith("javascript:")) return;
+      let url: URL;
+      try {
+        url = new URL(raw, window.location.href);
+      } catch {
+        return;
+      }
+      if (url.origin !== window.location.origin) return;
+      const next = `${url.pathname}${url.search}`;
+      const current = `${window.location.pathname}${window.location.search}`;
+      if (next === current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPendingHref(`${url.pathname}${url.search}${url.hash}`);
+      setLeaveOpen(true);
+    };
+
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    document.addEventListener("click", onClick, true);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      document.removeEventListener("click", onClick, true);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [dirty]);
 
   const restore = async () => {
     if (saving) return;
@@ -118,7 +197,7 @@ export function PlatformPricingEditor() {
           <Button variant="outline" onClick={restore}>
             恢复默认
           </Button>
-          <Button variant="brand" onClick={save}>
+          <Button variant="brand" onClick={() => void save()}>
             保存配置
           </Button>
         </div>
@@ -168,10 +247,72 @@ export function PlatformPricingEditor() {
         <Button variant="outline" onClick={restore}>
           恢复默认
         </Button>
-        <Button variant="brand" onClick={save}>
+        <Button variant="brand" onClick={() => void save()}>
           保存配置
         </Button>
       </div>
+
+      <Dialog
+        open={leaveOpen}
+        onOpenChange={(next) => {
+          if (saving) return;
+          if (!next) {
+            setLeaveOpen(false);
+            setPendingHref(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-start gap-2.5">
+              <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-700">
+                <AlertTriangle className="h-4 w-4" />
+              </span>
+              <span className="pt-1">参数尚未保存</span>
+            </DialogTitle>
+            <DialogDescription className="pl-[2.625rem] text-sm leading-relaxed text-ink-60">
+              当前修改还没有保存。是否先保存再离开？不保存将丢失本次改动。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={saving}
+              onClick={() => {
+                setLeaveOpen(false);
+                setPendingHref(null);
+              }}
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={saving}
+              onClick={() => {
+                bypassLeaveRef.current = true;
+                goPendingHref();
+              }}
+            >
+              不保存
+            </Button>
+            <Button
+              type="button"
+              variant="brand"
+              disabled={saving}
+              onClick={async () => {
+                const ok = await save();
+                if (!ok) return;
+                bypassLeaveRef.current = true;
+                goPendingHref();
+              }}
+            >
+              {saving ? "保存中..." : "保存并离开"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -199,7 +340,11 @@ function SpecialtyParamsPlaceholder({
   );
 }
 
-type LandscapePricingStage = "construction_doc" | "scheme" | "quote_remarks";
+type LandscapePricingStage =
+  | "construction_doc"
+  | "scheme"
+  | "quote_remarks"
+  | "commerce";
 
 function LandscapePricingParamsContent({
   draft,
@@ -228,15 +373,18 @@ function LandscapePricingParamsContent({
         <TabsTrigger value="quote_remarks" className="rounded-lg px-4 py-2 text-sm">
           费用合计备注
         </TabsTrigger>
+        <TabsTrigger value="commerce" className="rounded-lg px-4 py-2 text-sm">
+          商务设置
+        </TabsTrigger>
       </TabsList>
 
       <TabsContent value="construction_doc" className="mt-0 space-y-6">
         <p className="text-xs text-ink-60">
-          以下为景观<strong className="text-ink">施工图</strong>板块取费规则，与当前公开计算器、常规委托景观报价一致。
+          以下为景观<strong className="text-ink">施工图</strong>板块取费规则，与当前公开计算器、常规委托景观报价一致。平台管理费与商务费请在「商务设置」中维护。
         </p>
       <Card className="p-6">
-        <SectionTitle title="平台服务费率" desc="按出图费或基础服务费的比例收取" />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <SectionTitle title="增值服务费率" desc="按出图费比例加购第三方审图与项目管理" />
+        <div className="grid gap-4 sm:grid-cols-2">
           <PercentRateField
             label="审图服务"
             value={draft.auditServiceRate}
@@ -246,17 +394,6 @@ function LandscapePricingParamsContent({
             label="项目管理"
             value={draft.projectManagementRate}
             onChange={(v) => setDraft((d) => ({ ...d, projectManagementRate: v }))}
-          />
-          <PercentRateField
-            label="平台管理费"
-            value={draft.platformManagementRate}
-            onChange={(v) => setDraft((d) => ({ ...d, platformManagementRate: v }))}
-          />
-          <PercentRateField
-            label="商务费"
-            hint="相对出图费/服务费"
-            value={draft.businessFeeRate}
-            onChange={(v) => setDraft((d) => ({ ...d, businessFeeRate: v }))}
           />
         </div>
       </Card>
@@ -562,28 +699,8 @@ function LandscapePricingParamsContent({
       <TabsContent value="scheme" className="mt-0 space-y-6">
         <p className="text-xs text-ink-60">
           以下为景观<strong className="text-ink">方案设计费</strong>取费规则，与公开计算器「方案设计费计算器」一致。
-          平台管理费、商务费、改扩建系数、设计师/客户/地区/项目类型系数与「施工图设计费率参数」共用，修改任一分页保存后均生效。
+          平台管理费与商务费请在「商务设置」中维护；改扩建系数、设计师/客户/地区/项目类型系数与「施工图设计费率参数」共用。
         </p>
-
-        <Card className="p-6">
-          <SectionTitle
-            title="平台服务费率（方案共用）"
-            desc="方案出图费按相同比例计提平台管理费与商务费"
-          />
-          <div className="grid gap-4 sm:grid-cols-2">
-            <PercentRateField
-              label="平台管理费"
-              value={draft.platformManagementRate}
-              onChange={(v) => setDraft((d) => ({ ...d, platformManagementRate: v }))}
-            />
-            <PercentRateField
-              label="商务费"
-              hint="相对方案出图费"
-              value={draft.businessFeeRate}
-              onChange={(v) => setDraft((d) => ({ ...d, businessFeeRate: v }))}
-            />
-          </div>
-        </Card>
 
         <Card className="p-6">
           <SectionTitle
@@ -656,6 +773,13 @@ function LandscapePricingParamsContent({
         </Card>
       </TabsContent>
 
+      <TabsContent value="commerce" className="mt-0 space-y-6">
+        <CommerceSettingsEditor
+          draft={draft}
+          setDraft={setDraft}
+        />
+      </TabsContent>
+
       <TabsContent value="quote_remarks" className="mt-0 space-y-6">
         <p className="text-xs text-ink-60">
           费用计算器「费用合计」分页在付款阶段下方展示的备注文案。按计费范围分三套；第 2 条模板中可用{" "}
@@ -669,6 +793,158 @@ function LandscapePricingParamsContent({
         />
       </TabsContent>
     </Tabs>
+  );
+}
+
+function CommerceSettingsEditor({
+  draft,
+  setDraft,
+}: {
+  draft: PlatformPricingConfig;
+  setDraft: React.Dispatch<React.SetStateAction<PlatformPricingConfig>>;
+}) {
+  const commerce = normalizeCommerceSettings(draft.commerce);
+  const patchCommerce = (patch: Partial<PlatformPricingConfig["commerce"]>) =>
+    setDraft((d) => ({
+      ...d,
+      commerce: normalizeCommerceSettings({ ...d.commerce, ...patch }),
+    }));
+
+  return (
+    <>
+      <p className="text-xs text-ink-60">
+        平台级商务参数。平台管理费与商务费仅在此维护，施工图与方案报价共用；付款节点、托管与售后保存后对新订单与新支付生效。
+      </p>
+
+      <Card className="p-6">
+        <SectionTitle title="平台费率" desc="按出图费或基础服务费的比例计提" />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <PercentRateField
+            label="平台管理费率"
+            hint="相对出图费 / 基础服务费"
+            value={draft.platformManagementRate}
+            onChange={(v) => setDraft((d) => ({ ...d, platformManagementRate: v }))}
+          />
+          <PercentRateField
+            label="商务费率"
+            hint="相对出图费 / 基础服务费，计入平台管理费"
+            value={draft.businessFeeRate}
+            onChange={(v) => setDraft((d) => ({ ...d, businessFeeRate: v }))}
+          />
+        </div>
+      </Card>
+
+      <Card className="p-6">
+        <SectionTitle
+          title="按月项目付款"
+          desc="第一次提前若干天预付一个月，此后每月指定日预付下月，直至服务结束"
+        />
+        <div className="grid gap-4 sm:grid-cols-3">
+          <IntegerField
+            label="首月提前天数"
+            hint="开始服务日前"
+            value={commerce.monthlyFirstPrepayLeadDays}
+            min={1}
+            max={15}
+            suffix="天"
+            onChange={(v) => patchCommerce({ monthlyFirstPrepayLeadDays: v })}
+          />
+          <IntegerField
+            label="每月支付日"
+            hint="预付下一个月"
+            value={commerce.monthlyPrepayDay}
+            min={1}
+            max={28}
+            suffix="日"
+            onChange={(v) => patchCommerce({ monthlyPrepayDay: v })}
+          />
+          <IntegerField
+            label="截止钟点"
+            hint="遇休息日提前至前一工作日"
+            value={commerce.billingCutoffHour}
+            min={0}
+            max={23}
+            suffix="时"
+            onChange={(v) => patchCommerce({ billingCutoffHour: v })}
+          />
+        </div>
+        <p className="mt-4 rounded-xl border border-amber-200/80 bg-amber-50/50 px-4 py-3 text-xs leading-relaxed text-amber-950">
+          {formatMonthlyBillingRule(commerce)}
+        </p>
+      </Card>
+
+      <Card className="p-6">
+        <SectionTitle
+          title="按天项目付款"
+          desc="签约预付一定比例，委托人确认服务成果后若干日内付清尾款"
+        />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <PercentRateField
+            label="签约预付比例"
+            hint="其余为合同尾款"
+            value={commerce.dailyPrepayRatio}
+            onChange={(v) => patchCommerce({ dailyPrepayRatio: v })}
+          />
+          <IntegerField
+            label="尾款宽限天数"
+            hint="委托人确认成果之日起"
+            value={commerce.dailySettlementGraceDays}
+            min={1}
+            max={30}
+            suffix="天"
+            onChange={(v) => patchCommerce({ dailySettlementGraceDays: v })}
+          />
+        </div>
+        <p className="mt-4 rounded-xl border border-violet-200/80 bg-violet-50/50 px-4 py-3 text-xs leading-relaxed text-violet-900">
+          {formatDailyBillingRule(commerce)}
+        </p>
+      </Card>
+
+      <Card className="p-6">
+        <SectionTitle
+          title="托管与售后"
+          desc="委托人付款后的资金托管，以及验收 / 售后有效期"
+        />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <IntegerField
+            label="托管天数"
+            hint="付款后资金进入平台托管"
+            value={commerce.escrowDays}
+            min={1}
+            max={180}
+            suffix="天"
+            onChange={(v) => patchCommerce({ escrowDays: v })}
+          />
+          <IntegerField
+            label="成果确认天数"
+            hint="设计师提交最终成果后，委托人未确认则自动确认并开始验收期；返修后从重新提交起算"
+            value={commerce.deliverableConfirmDays}
+            min={1}
+            max={180}
+            suffix="天"
+            onChange={(v) => patchCommerce({ deliverableConfirmDays: v })}
+          />
+          <IntegerField
+            label="售后有效天数"
+            hint="确认最终成果后起算验收期，期满无异议自动解冻"
+            value={commerce.afterSalesDays}
+            min={1}
+            max={180}
+            suffix="天"
+            onChange={(v) => patchCommerce({ afterSalesDays: v })}
+          />
+          <IntegerField
+            label="评价有效天数"
+            hint="最后一笔费用支付后可评价设计师"
+            value={commerce.clientReviewDays}
+            min={1}
+            max={180}
+            suffix="天"
+            onChange={(v) => patchCommerce({ clientReviewDays: v })}
+          />
+        </div>
+      </Card>
+    </>
   );
 }
 
@@ -1051,6 +1327,47 @@ function PercentRateField({
           onChange={(e) => onChange(parsePercent(e.target.value))}
         />
         <span className="shrink-0 text-sm text-ink-40">%</span>
+      </div>
+    </div>
+  );
+}
+
+function IntegerField({
+  label,
+  hint,
+  value,
+  onChange,
+  min,
+  max,
+  suffix,
+}: {
+  label: string;
+  hint?: string;
+  value: number;
+  onChange: (v: number) => void;
+  min: number;
+  max: number;
+  suffix?: string;
+}) {
+  return (
+    <div>
+      <Label className="text-ink-60">{label}</Label>
+      {hint ? <p className="text-[10px] text-ink-40">{hint}</p> : null}
+      <div className="mt-2 inline-flex min-w-[5.75rem] items-center gap-1.5">
+        <Input
+          type="number"
+          step={1}
+          min={min}
+          max={max}
+          className="h-10 w-[4.5rem] min-w-[4.5rem] shrink-0 px-2 tabular-nums"
+          value={value}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            if (!Number.isFinite(n)) return;
+            onChange(Math.min(max, Math.max(min, Math.round(n))));
+          }}
+        />
+        {suffix ? <span className="shrink-0 text-sm text-ink-40">{suffix}</span> : null}
       </div>
     </div>
   );

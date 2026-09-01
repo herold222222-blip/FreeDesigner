@@ -1,7 +1,10 @@
 import { NextRequest } from "next/server";
 import { handle, ok, fail } from "@/lib/server/api";
 import { requireSession } from "@/lib/server/auth";
-import { submitStageDeliverables } from "@/lib/server/order-service";
+import {
+  deleteStageDeliverable,
+  submitStageDeliverables,
+} from "@/lib/server/order-service";
 import type { DeliverableFile } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +25,26 @@ export async function POST(
       params.stageId,
       session.identityId,
       body.files,
+    );
+    return ok(order);
+  });
+}
+
+/** 设计师删除尚未付款的本人成果 */
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string; stageId: string } },
+) {
+  return handle(async () => {
+    const session = await requireSession();
+    if (session.role !== "designer") return fail(403, "仅设计师可删除成果");
+    const fileId = req.nextUrl.searchParams.get("fileId")?.trim();
+    if (!fileId) return fail(400, "缺少成果文件");
+    const order = await deleteStageDeliverable(
+      params.id,
+      params.stageId,
+      session.identityId,
+      fileId,
     );
     return ok(order);
   });

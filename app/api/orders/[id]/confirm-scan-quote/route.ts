@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 /** 扫码下单：委托人确认费用与付款阶段 → 进入签约 */
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } },
 ) {
   return handle(async () => {
@@ -15,7 +15,20 @@ export async function POST(
     if (session.role !== "client") {
       return fail(403, "仅委托人可确认费用方案");
     }
-    const order = await confirmScanQuote(params.id, session.identityId);
+    const body = (await req.json().catch(() => ({}))) as {
+      totalAmount?: number;
+      stages?: { name: string; ratio: number; note?: string }[];
+    };
+    const order = await confirmScanQuote(
+      params.id,
+      session.identityId,
+      Number.isFinite(Number(body.totalAmount)) && Number(body.totalAmount) > 0
+        ? {
+            totalAmount: Number(body.totalAmount),
+            stages: Array.isArray(body.stages) ? body.stages : [],
+          }
+        : undefined,
+    );
     return ok(order);
   });
 }

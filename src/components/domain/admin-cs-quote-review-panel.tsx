@@ -8,6 +8,10 @@ import type { Designer, Order } from "@/lib/types";
 import { confirmCsQuoteRequest } from "@/lib/api-client";
 import { invalidateApiPath } from "@/lib/use-data";
 import { listOrderTrackDesignerCounts } from "@/lib/client-quote-match";
+import {
+  isRegularAreaHardscape,
+  withAreaHardscapeRemark,
+} from "@/lib/regular-entrust-quote";
 import { needsCsQuoteConfirm } from "@/lib/order-supervision";
 import { useSessionStore } from "@/store/session-store";
 import { CheckCircle2, Users } from "lucide-react";
@@ -84,7 +88,13 @@ export function AdminCsQuoteReviewPanel({
             >
               <div className="min-w-0">
                 <div className="text-sm font-medium text-ink">
-                  {track.l3Label || "项目服务"}
+                  {withAreaHardscapeRemark(
+                    track.l3Label || "项目服务",
+                    isRegularAreaHardscape({
+                      billingMode: order.billingMode,
+                      l3: track.l3,
+                    }),
+                  )}
                 </div>
                 {track.l2Label ? (
                   <div className="mt-0.5 text-[11px] text-ink-40">
@@ -93,7 +103,11 @@ export function AdminCsQuoteReviewPanel({
                   </div>
                 ) : null}
               </div>
-              <div className="flex shrink-0 items-center gap-1.5 text-sm tabular-nums text-ink">
+              <div
+                className={`flex shrink-0 items-center gap-1.5 text-sm tabular-nums ${
+                  track.eligibleCount > 0 ? "text-ink" : "text-ink-40"
+                }`}
+              >
                 <Users className="h-3.5 w-3.5 text-ink-40" />
                 <span className="font-semibold">{track.eligibleCount}</span>
                 <span className="text-xs text-ink-40">人</span>

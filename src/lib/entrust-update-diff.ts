@@ -1,6 +1,11 @@
 import { TAX_OPTIONS } from "@/lib/constants";
 import { parseRegularEntrustDescription } from "@/lib/entrust-description";
 import { extractTimeQuoteLineInputsFromOrder } from "@/lib/regular-entrust-quote";
+import {
+  getStructureSheetsFromOrder,
+  isStructureL3,
+  isStructureQuantityPending,
+} from "@/lib/structure-sheets";
 import type { Order } from "@/lib/types";
 
 function text(value: unknown): string {
@@ -157,16 +162,31 @@ export function describeEntrustUpdates(before: Order, after: Order): string[] {
     }
     if (!prev || !next) continue;
     if (prev.quantity !== next.quantity) {
+      const qtyUnit = isStructureL3(key) ? "张" : unit;
       pushChange(
-        `${label}工时`,
-        `${prev.quantity} ${unit}`,
-        `${next.quantity} ${unit}`,
+        isStructureL3(key) ? `${label}张数` : `${label}工时`,
+        `${prev.quantity} ${qtyUnit}`,
+        `${next.quantity} ${qtyUnit}`,
       );
     }
     const prevDiff = difficultyText(prev.difficultyLabel, prev.difficulty);
     const nextDiff = difficultyText(next.difficultyLabel, next.difficulty);
     if (prevDiff !== nextDiff) {
       pushChange(`${label}难度`, prevDiff, nextDiff);
+    }
+  }
+
+  if (before.billingMode === "area" || after.billingMode === "area") {
+    const beforeSheets = getStructureSheetsFromOrder(before);
+    const afterSheets = getStructureSheetsFromOrder(after);
+    const beforePending = isStructureQuantityPending(before);
+    const afterPending = isStructureQuantityPending(after);
+    if (beforeSheets !== afterSheets || beforePending !== afterPending) {
+      pushChange(
+        "景观结构张数",
+        beforePending || beforeSheets <= 0 ? "待系统评估" : `${beforeSheets} 张`,
+        afterPending || afterSheets <= 0 ? "待系统评估" : `${afterSheets} 张`,
+      );
     }
   }
 

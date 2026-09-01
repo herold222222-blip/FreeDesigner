@@ -21,11 +21,18 @@ export function ScanOrderQrDialog({
   designerName,
   triggerClassName,
   triggerVariant = "outline",
+  triggerLabel = "扫我下单",
+  triggerSize = "lg",
+  showEnterOrder = true,
 }: {
   designerId: string;
   designerName: string;
   triggerClassName?: string;
   triggerVariant?: "outline" | "brand";
+  triggerLabel?: string;
+  triggerSize?: "default" | "sm" | "lg";
+  /** 设计师工作台分享时可不展示「进入下单」，避免与「自己下单」重复 */
+  showEnterOrder?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const push = useSessionStore((s) => s.pushNotification);
@@ -50,10 +57,16 @@ export function ScanOrderQrDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next && !showEnterOrder) void copyLink();
+      }}
+    >
       <DialogTrigger asChild>
-        <Button variant={triggerVariant} size="lg" className={triggerClassName ?? "mt-2 w-full"}>
-          <QrCode className="h-4 w-4" /> 扫我下单
+        <Button variant={triggerVariant} size={triggerSize} className={triggerClassName ?? "mt-2 w-full"}>
+          <QrCode className="h-4 w-4" /> {triggerLabel}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-md">
@@ -80,12 +93,18 @@ export function ScanOrderQrDialog({
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Button variant="brand" className="flex-1" asChild>
-            <Link href={scanPath} onClick={() => setOpen(false)}>
-              <Share2 className="h-4 w-4" /> 进入下单
-            </Link>
-          </Button>
-          <Button variant="outline" className="flex-1" onClick={copyLink}>
+          {showEnterOrder ? (
+            <Button variant="brand" className="flex-1" asChild>
+              <Link href={scanPath} onClick={() => setOpen(false)}>
+                <Share2 className="h-4 w-4" /> 进入下单
+              </Link>
+            </Button>
+          ) : null}
+          <Button
+            variant={showEnterOrder ? "outline" : "brand"}
+            className="flex-1"
+            onClick={copyLink}
+          >
             <Copy className="h-4 w-4" /> 复制链接
           </Button>
         </div>

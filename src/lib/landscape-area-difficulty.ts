@@ -303,7 +303,7 @@ export function landscapeTimeDifficultyUI(
       return {
         kind: "fixed",
         value: 1,
-        note: "结构专业按时间计费暂无独立难度档位，系数固定 100%。",
+        note: "景观结构专业按张计价，450 元/张，无需难度系数。",
       };
   }
 }

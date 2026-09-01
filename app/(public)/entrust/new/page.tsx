@@ -43,16 +43,13 @@ import {
   reconcileLandscapeL3Selection,
 } from "@/lib/bounty-tracks";
 import { BountyTrackMultiSelect } from "@/components/domain/bounty-track-multi-select";
+import { LandscapeAreaDifficultyCards } from "@/components/domain/landscape-area-difficulty-cards";
 import {
   LANDSCAPE_TIME_TRACK_LABELS,
   landscapeTimeTrackFromL3,
   type LandscapeTimeRateTrack,
 } from "@/lib/designer-rates";
 import { bountyLocationFromTriple } from "@/components/domain/bounty-filters-panel";
-import {
-  CUSTOMER_SERVICE_CONTACTS,
-  formatCustomerServiceLine,
-} from "@/lib/customer-service";
 import {
   difficultyOptionKey,
   filterTimeDifficultyOptionsByServiceMode,
@@ -62,12 +59,17 @@ import {
   landscapeTimeDifficultyUI,
   resolveTimeDifficultyDisplay,
 } from "@/lib/landscape-area-difficulty";
-import type { BountyAttachment, Specialty } from "@/lib/types";
+import type {
+  BountyAttachment,
+  BountyTitleVisibility,
+  Specialty,
+} from "@/lib/types";
 import {
   ArrowLeft,
   Calculator,
   Calendar,
   CheckCircle2,
+  CircleDollarSign,
   ClipboardList,
   Coins,
   FileText,
@@ -91,6 +93,11 @@ import {
   buildRegularEntrustOrderBody,
 } from "@/lib/entrust-submit";
 import {
+  AREA_HARDSCAPE_NO_STRUCTURE_NOTE,
+  AREA_TRACK_META,
+  withAreaHardscapeRemark,
+} from "@/lib/regular-entrust-quote";
+import {
   canClientPublishEntrust,
   clientPublishBlockedMessage,
 } from "@/lib/client-publish-guard";
@@ -104,6 +111,44 @@ import {
   packBountySubjectFilters,
 } from "@/components/domain/bounty-subject-filters-editor";
 import { parseDesignerCodesInput } from "@/lib/designer-code";
+import { isBountyRewardValid } from "@/lib/bounty-manage";
+import {
+  BOUNTY_INVOICE_OPTIONS,
+  bountyTaxCoefficient,
+  type BountyInvoiceType,
+} from "@/lib/bounty-invoice";
+import { PaymentEscrowHint } from "@/components/domain/payment-escrow-hint";
+import { StructureSheetsPicker } from "@/components/domain/structure-sheets-picker";
+import {
+  STRUCTURE_L3,
+  formatStructureSheetsLabel,
+  parsePositiveIntSheets,
+} from "@/lib/structure-sheets";
+import { PlatformPaymentStagesPreview } from "@/components/domain/platform-payment-stages-preview";
+import { ScanPaymentStagesEditor } from "@/components/domain/scan-payment-stages-editor";
+import { resolveLandscapeAreaPaymentStages } from "@/lib/landscape-payment-stages";
+import {
+  formatDailyBillingRule,
+  formatMonthlyBillingRule,
+} from "@/lib/platform-commerce";
+import { paymentStagesValid } from "@/lib/scan-order";
+import { BountyDeadlineField } from "@/components/domain/bounty-deadline-field";
+import { BountyTitleVisibilityField } from "@/components/domain/bounty-title-visibility-field";
+import { BountyValidUntilField } from "@/components/domain/bounty-valid-until-field";
+import {
+  deadlineFromDraft,
+  emptyBountyDeadlineDraft,
+  emptyBountyValidUntilDraft,
+  isDeadlineDraftComplete,
+  isValidUntilDraftComplete,
+  normalizeBountyDeadline,
+  normalizeBountyValidUntil,
+  validUntilFromDraft,
+} from "@/lib/bounty-validity";
+import {
+  defaultBountyPaymentStageDrafts,
+  toBountyPaymentStages,
+} from "@/lib/bounty-payment-stages";
 import { PlatformTimeBillingStandardCard } from "@/components/domain/platform-time-billing-standard-card";
 import { GuestAccessGate } from "@/components/domain/guest-access-gate";
 
@@ -163,7 +208,7 @@ function NewEntrustInner() {
     !canClientPublishEntrust(client)
   ) {
     return (
-      <div className="container-page py-10">
+      <div className="container-page py-6 sm:py-10">
         <Link
           href="/client"
           className="mb-4 inline-flex items-center gap-1 text-sm text-ink-60 hover:text-ink"
@@ -185,7 +230,7 @@ function NewEntrustInner() {
   }
 
   return (
-    <div className="container-page py-10">
+    <div className="container-page py-6 sm:py-10">
       <Link
         href="/"
         className="mb-4 inline-flex items-center gap-1 text-sm text-ink-60 hover:text-ink"
@@ -197,7 +242,7 @@ function NewEntrustInner() {
         <Badge variant="muted" className="mb-2 gap-1">
           <Sparkles className="h-3 w-3 text-brand" /> v1.1 全新统一委托入口
         </Badge>
-        <h1 className="text-3xl font-semibold tracking-tight text-ink">
+        <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
           发布委托项目
         </h1>
         <p className="mt-2 max-w-3xl text-sm text-ink-60">
@@ -385,6 +430,9 @@ function RegularEntrustForm() {
 
   // 三级专业（按面积时，默认不勾选）
   const [tracks, setTracks] = useState<TrackKey[]>([]);
+  const [includeStructure, setIncludeStructure] = useState(false);
+  const [structureMode, setStructureMode] = useState<"pending" | "estimate" | "">("");
+  const [structureSheets, setStructureSheets] = useState<number | "">("");
   const [subjectFilters, setSubjectFilters] = useState(EMPTY_BOUNTY_SUBJECT_FILTERS);
   const [buildType, setBuildType] = useState<"new" | "renovation" | null>(null);
 
@@ -548,6 +596,12 @@ function RegularEntrustForm() {
     !!projectType.trim() &&
     !!expectedDeliveryAt;
 
+  const structureQtyComplete =
+    structureMode === "pending" ||
+    (structureMode === "estimate" && parsePositiveIntSheets(structureSheets) != null);
+  const areaStructureComplete =
+    !includeStructure || structureQtyComplete;
+
   const areaDifficultyComplete =
     billingMode !== "area" ||
     tracks.every((tk) => {
@@ -580,13 +634,22 @@ function RegularEntrustForm() {
     selectedL2.length > 0 &&
     !!tax &&
     (billingMode === "area"
-      ? typeof area === "number" && area > 0 && tracks.length > 0 && !!buildType && areaDifficultyComplete
+      ? areaStructureComplete &&
+        (tracks.length > 0 || includeStructure) &&
+        (tracks.length === 0 ||
+          (typeof area === "number" &&
+            area > 0 &&
+            !!buildType &&
+            areaDifficultyComplete))
       : timeL3.length > 0 &&
         timeDifficultyComplete &&
         timeL3.every((l3) => {
           const mode = timeQtyModeByL3[l3];
           if (mode === "pending") return true;
           if (mode === "estimate") {
+            if (l3 === STRUCTURE_L3) {
+              return parsePositiveIntSheets(structureSheets) != null;
+            }
             return billingMode === "daily"
               ? (daysByL3[l3] ?? 0) >= 0.5
               : (monthsByL3[l3] ?? 0) >= 1;
@@ -616,10 +679,16 @@ function RegularEntrustForm() {
         billingMode &&
         selectedL2.length > 0 &&
         (billingMode === "area"
-          ? !(typeof area === "number" && area > 0 && tracks.length > 0)
+          ? !(
+              (tracks.length > 0 && typeof area === "number" && area > 0) ||
+              includeStructure
+            )
           : timeL3.length === 0)
       ) {
         missing.push(billingMode === "area" ? "三级专业" : "三级专业工时");
+      }
+      if (billingMode === "area" && includeStructure && !areaStructureComplete) {
+        missing.push("结构张数");
       }
     }
     if (!descriptionComplete) missing.push("项目描述");
@@ -684,9 +753,13 @@ function RegularEntrustForm() {
     if (!billingMode) return "field-billing-mode";
     if (selectedL2.length === 0) return "field-l2";
     if (billingMode === "area") {
-      if (!(typeof area === "number" && area > 0)) return "field-area";
-      if (tracks.length === 0 || !areaDifficultyComplete) return "field-tracks";
-      if (!buildType) return "field-build-type";
+      if (tracks.length > 0 && !(typeof area === "number" && area > 0)) {
+        return "field-area";
+      }
+      if (tracks.length === 0 && !includeStructure) return "field-tracks";
+      if (tracks.length > 0 && !areaDifficultyComplete) return "field-tracks";
+      if (includeStructure && !areaStructureComplete) return "field-structure-sheets";
+      if (tracks.length > 0 && !buildType) return "field-build-type";
       if (!tax) return "field-tax";
     } else {
       if (timeL3.length === 0) return "field-l3";
@@ -694,6 +767,9 @@ function RegularEntrustForm() {
         const mode = timeQtyModeByL3[l3];
         if (mode === "pending") return false;
         if (mode === "estimate") {
+          if (l3 === STRUCTURE_L3) {
+            return parsePositiveIntSheets(structureSheets) == null;
+          }
           return billingMode === "daily"
             ? (daysByL3[l3] ?? 0) < 0.5
             : (monthsByL3[l3] ?? 0) < 1;
@@ -751,7 +827,7 @@ function RegularEntrustForm() {
     }
     if (!tax) return;
     if (!billingMode) return;
-    if (billingMode === "area" && !buildType) return;
+    if (billingMode === "area" && tracks.length > 0 && !buildType) return;
     if (role === "guest" || !identityId) {
       push({
         title: "请先登录",
@@ -771,13 +847,59 @@ function RegularEntrustForm() {
         committerName,
         billingMode,
         area: typeof area === "number" ? area : undefined,
-        tracks,
+        tracks:
+          billingMode === "area"
+            ? [
+                ...tracks.map((tk) =>
+                  withAreaHardscapeRemark(
+                    AREA_TRACK_META[tk].l3Label,
+                    tk === "hardscape",
+                  ),
+                ),
+                ...(includeStructure ? ["景观结构专业"] : []),
+              ]
+            : tracks,
+        areaTracks:
+          billingMode === "area"
+            ? tracks.map((tk) => {
+                const ui = landscapeAreaDifficultyUI(tk, landscapeDifficulty);
+                const selected = areaDifficulty[tk];
+                const label = withAreaHardscapeRemark(
+                  AREA_TRACK_META[tk].l3Label,
+                  tk === "hardscape",
+                );
+                if (ui.kind === "fixed") {
+                  return {
+                    label,
+                    difficulty: ui.value,
+                    difficultyLabel: "固定",
+                  };
+                }
+                const hit =
+                  ui.options.find((o) => o.value === selected) ?? ui.options[0];
+                return {
+                  label,
+                  difficulty: hit?.value ?? selected ?? 1,
+                  difficultyLabel: hit?.label,
+                };
+              })
+            : undefined,
         timeL2Labels: getL2Labels(specialty, selectedL2),
         timeL3Units:
           billingMode === "area"
             ? undefined
             : timeL3.map((l3) => {
                 const pending = timeQtyModeByL3[l3] === "pending";
+                if (l3 === STRUCTURE_L3) {
+                  return {
+                    label: getL3Label(specialty, l3),
+                    units: pending
+                      ? 0
+                      : (parsePositiveIntSheets(structureSheets) ?? 0),
+                    unitLabel: "张",
+                    pending,
+                  };
+                }
                 const track = landscapeTimeTrackFromL3(l3);
                 const diff = resolveTimeDifficultyDisplay({
                   track: track ?? undefined,
@@ -804,6 +926,13 @@ function RegularEntrustForm() {
         withAudit,
         withPM,
         buildType: billingMode === "area" ? buildType : undefined,
+        structureLine:
+          billingMode === "area" && includeStructure
+            ? formatStructureSheetsLabel(
+                parsePositiveIntSheets(structureSheets) ?? 0,
+                structureMode === "pending",
+              )
+            : undefined,
         taxLabel: tax.label,
       });
       const body = buildRegularEntrustOrderBody({
@@ -827,6 +956,16 @@ function RegularEntrustForm() {
             : timeL3.map((l3) => {
                 const track = landscapeTimeTrackFromL3(l3);
                 const pending = timeQtyModeByL3[l3] === "pending";
+                if (l3 === STRUCTURE_L3) {
+                  return {
+                    l3,
+                    l3Label: getL3Label(specialty, l3),
+                    quantity: pending
+                      ? 0
+                      : (parsePositiveIntSheets(structureSheets) ?? 0),
+                    quantityPending: pending,
+                  };
+                }
                 return {
                   l3,
                   l3Label: getL3Label(specialty, l3),
@@ -842,6 +981,45 @@ function RegularEntrustForm() {
                     : undefined,
                 };
               }),
+        areaQuote:
+          billingMode === "area" &&
+          (tracks.length > 0 || includeStructure) &&
+          (tracks.length === 0 || (typeof area === "number" && buildType))
+            ? {
+                area: typeof area === "number" ? area : 0,
+                projectType,
+                buildType: buildType ?? "new",
+                taxCoefficient: tax.coefficient,
+                structure: includeStructure
+                  ? {
+                      mode: structureMode === "estimate" ? "estimate" : "pending",
+                      sheets:
+                        structureMode === "estimate"
+                          ? parsePositiveIntSheets(structureSheets) ?? undefined
+                          : undefined,
+                    }
+                  : undefined,
+                tracks: tracks.map((tk) => {
+                  const ui = landscapeAreaDifficultyUI(tk, landscapeDifficulty);
+                  const selected = areaDifficulty[tk];
+                  if (ui.kind === "fixed") {
+                    return {
+                      track: tk,
+                      difficulty: ui.value,
+                      difficultyLabel: "固定",
+                    };
+                  }
+                  const hit =
+                    ui.options.find((o) => o.value === selected) ??
+                    ui.options[0];
+                  return {
+                    track: tk,
+                    difficulty: hit?.value ?? selected ?? 1,
+                    difficultyLabel: hit?.label,
+                  };
+                }),
+              }
+            : undefined,
       });
       const order = await createOrderRequest(body);
       setQuoteSubmitted(true);
@@ -1097,7 +1275,14 @@ function RegularEntrustForm() {
                                 onChange={() => toggleTrack(tk)}
                                 className="mt-0.5 h-4 w-4 shrink-0"
                               />
-                              <span>{spec.label}</span>
+                              <span>
+                                {spec.label}
+                                {tk === "hardscape" ? (
+                                  <span className="ml-1.5 text-[11px] font-normal text-ink-40">
+                                    {AREA_HARDSCAPE_NO_STRUCTURE_NOTE}
+                                  </span>
+                                ) : null}
+                              </span>
                             </label>
                             {tk === "hardscape" ? (
                               <p className="pl-6 text-[11px] leading-relaxed text-ink-60">
@@ -1105,37 +1290,6 @@ function RegularEntrustForm() {
                               </p>
                             ) : null}
                           </div>
-                          {checked && ui.kind === "select" ? (
-                            <div className="flex flex-shrink-0 flex-col items-start gap-1 sm:items-end">
-                              <div className="flex flex-wrap gap-1.5 sm:justify-end">
-                                {ui.options.map((opt) => (
-                                  <button
-                                    key={difficultyOptionKey(opt)}
-                                    type="button"
-                                    onClick={() =>
-                                      setAreaDifficulty((prev) => ({
-                                        ...prev,
-                                        [tk]: opt.value,
-                                      }))
-                                    }
-                                    className={cn(
-                                      "rounded-full border px-2.5 py-0.5 text-[11px] transition-colors",
-                                      areaDifficulty[tk] === opt.value
-                                        ? "border-brand bg-brand text-white"
-                                        : "border-ink-20 text-ink-60 hover:border-brand/60",
-                                    )}
-                                  >
-                                    {opt.label} {Math.round(opt.value * 100)}%
-                                  </button>
-                                ))}
-                              </div>
-                              {areaDifficulty[tk] == null ? (
-                                <span className="text-[10px] text-rose-500">
-                                  请选择难度系数
-                                </span>
-                              ) : null}
-                            </div>
-                          ) : null}
                           {checked && ui.kind === "fixed" ? (
                             <Badge
                               variant="brand"
@@ -1146,38 +1300,26 @@ function RegularEntrustForm() {
                           ) : null}
                         </div>
                         {checked && ui.kind === "select" ? (
-                          <div className="mt-3 border-t border-dashed border-ink-20/70 pt-3">
-                            <div className="mb-2 text-[10px] font-medium uppercase tracking-wider text-ink-40">
-                              {tk === "drainage"
+                          <LandscapeAreaDifficultyCards
+                            options={ui.options}
+                            selectedValue={areaDifficulty[tk]}
+                            onSelect={(opt) =>
+                              setAreaDifficulty((prev) => ({
+                                ...prev,
+                                [tk]: opt.value,
+                              }))
+                            }
+                            heading={
+                              tk === "drainage"
                                 ? "选项说明 · 给排水"
-                                : `难度说明 · ${spec.label.split("（")[0]?.trim()}`}
-                            </div>
-                            <div
-                              className={cn(
-                                "grid gap-2",
-                                ui.options.length === 2 ?
-                                  "sm:grid-cols-2"
-                                : "sm:grid-cols-2",
-                              )}
-                            >
-                              {ui.options.map((opt) => (
-                                <div
-                                  key={opt.value}
-                                  className={cn(
-                                    "rounded-lg border px-2.5 py-2 text-[11px] leading-snug",
-                                    areaDifficulty[tk] === opt.value
-                                      ? "border-brand/40 bg-brand/5"
-                                      : "border-ink-20/80 bg-white/60",
-                                  )}
-                                >
-                                  <span className="font-semibold text-ink">
-                                    {opt.label} · {Math.round(opt.value * 100)}%
-                                  </span>
-                                  <span className="mt-1 block text-ink-60">{opt.remark}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
+                                : `难度说明 · ${spec.label.split("（")[0]?.trim()}`
+                            }
+                            missingHint={
+                              areaDifficulty[tk] == null
+                                ? "请选择难度系数"
+                                : undefined
+                            }
+                          />
                         ) : null}
                         {checked && ui.kind === "fixed" ? (
                           <div className="mt-3 border-t border-dashed border-ink-20/70 pt-3">
@@ -1187,6 +1329,22 @@ function RegularEntrustForm() {
                       </div>
                     );
                   })}
+                  <div id="field-structure-sheets">
+                    <StructureSheetsPicker
+                      enabled={includeStructure}
+                      onEnabledChange={(next) => {
+                        setIncludeStructure(next);
+                        if (!next) {
+                          setStructureMode("");
+                          setStructureSheets("");
+                        }
+                      }}
+                      mode={structureMode}
+                      onModeChange={setStructureMode}
+                      sheets={structureSheets}
+                      onSheetsChange={setStructureSheets}
+                    />
+                  </div>
                 </div>
                 <p className="mt-3 rounded-xl bg-amber-50/80 p-2.5 text-[11px] leading-relaxed text-amber-900">
                   勾选园建并同时勾选任一其他三级专业时，自动套用园建协调附加系数{" "}
@@ -1290,14 +1448,8 @@ function RegularEntrustForm() {
                   value={timeL3}
                   showGroup={selectedL2.length > 1}
                   onChange={(next) => {
-                    const resolved =
-                      specialty === "landscape"
-                        ? reconcileLandscapeL3Selection(timeL3, next)
-                        : next;
-                    const conflict =
-                      specialty === "landscape"
-                        ? landscapeL3SelectionConflict(timeL3, next)
-                        : null;
+                    const resolved = reconcileLandscapeL3Selection(timeL3, next);
+                    const conflict = landscapeL3SelectionConflict(timeL3, next);
                     if (conflict) {
                       push({
                         title: "不可同时选择",
@@ -1309,6 +1461,7 @@ function RegularEntrustForm() {
                     setDaysByL3((prev) => {
                       const keep: Record<string, number> = {};
                       for (const l3 of resolved) {
+                        if (l3 === STRUCTURE_L3) continue;
                         keep[l3] = prev[l3] ?? 10;
                       }
                       return keep;
@@ -1316,6 +1469,7 @@ function RegularEntrustForm() {
                     setMonthsByL3((prev) => {
                       const keep: Record<string, number> = {};
                       for (const l3 of resolved) {
+                        if (l3 === STRUCTURE_L3) continue;
                         keep[l3] = prev[l3] ?? 1;
                       }
                       return keep;
@@ -1354,8 +1508,12 @@ function RegularEntrustForm() {
                           `${opt.group} · ${opt.label}`
                         : (opt?.label ?? getL3Label(specialty, l3));
                       const mode = timeQtyModeByL3[l3];
-                      const estimateLabel =
-                        billingMode === "daily" ? "预估天数" : "预估月数";
+                      const isStruct = l3 === STRUCTURE_L3;
+                      const estimateLabel = isStruct
+                        ? "预估张数"
+                        : billingMode === "daily"
+                          ? "预估天数"
+                          : "预估月数";
                       return (
                         <div
                           key={l3}
@@ -1380,6 +1538,12 @@ function RegularEntrustForm() {
                                     [l3]: m.v,
                                   }));
                                   if (m.v === "estimate") {
+                                    if (isStruct) {
+                                      if (parsePositiveIntSheets(structureSheets) == null) {
+                                        setStructureSheets(1);
+                                      }
+                                      return;
+                                    }
                                     if (billingMode === "daily") {
                                       setDaysByL3((prev) => ({
                                         ...prev,
@@ -1407,15 +1571,25 @@ function RegularEntrustForm() {
                               <div className="flex items-center gap-2">
                                 <Input
                                   type="number"
-                                  min={billingMode === "daily" ? 0.5 : 1}
-                                  step={billingMode === "daily" ? 0.5 : 1}
+                                  min={isStruct ? 1 : billingMode === "daily" ? 0.5 : 1}
+                                  step={isStruct ? 1 : billingMode === "daily" ? 0.5 : 1}
                                   className="h-9 w-28"
                                   value={
-                                    billingMode === "daily"
-                                      ? (daysByL3[l3] ?? "")
-                                      : (monthsByL3[l3] ?? "")
+                                    isStruct
+                                      ? structureSheets
+                                      : billingMode === "daily"
+                                        ? (daysByL3[l3] ?? "")
+                                        : (monthsByL3[l3] ?? "")
                                   }
                                   onChange={(e) => {
+                                    if (isStruct) {
+                                      setStructureSheets(
+                                        e.target.value === ""
+                                          ? ""
+                                          : Number(e.target.value),
+                                      );
+                                      return;
+                                    }
                                     const n = Number(e.target.value) || 0;
                                     if (billingMode === "daily") {
                                       setDaysByL3((prev) => ({
@@ -1431,7 +1605,11 @@ function RegularEntrustForm() {
                                   }}
                                 />
                                 <span className="text-xs text-ink-40">
-                                  {billingMode === "daily" ? "天" : "月"}
+                                  {isStruct
+                                    ? "张"
+                                    : billingMode === "daily"
+                                      ? "天"
+                                      : "月"}
                                 </span>
                               </div>
                             ) : null}
@@ -1441,12 +1619,11 @@ function RegularEntrustForm() {
                     })}
                   </div>
                   <p className="mt-1.5 text-[11px] text-ink-40">
+                    景观结构专业按张计价（450 元/张），须填写大于零的整数。
                     {billingMode === "daily"
-                      ? "每个专业最小 0.5 天"
-                      : "每个专业最小 1 月，多余按 月费/20 折算"}
-                    。委托人填写的
-                    {billingMode === "daily" ? "天数" : "月数"}
-                    仅为参考，以最终系统确认的数量为准。
+                      ? "其他专业最小 0.5 天"
+                      : "其他专业最小 1 月，多余按 月费/20 折算"}
+                    。委托人填写的数量仅为参考，以最终系统确认的数量为准。
                   </p>
                 </FieldFull>
               ) : null}
@@ -1475,59 +1652,20 @@ function RegularEntrustForm() {
                           heading
                           anchor={`field-time-difficulty-${tk}`}
                         >
-                          <div className="flex flex-wrap gap-1.5">
-                            {options.map((opt) => {
-                              const key = difficultyOptionKey(opt);
-                              return (
-                                <button
-                                  key={key}
-                                  type="button"
-                                  onClick={() =>
-                                    setTimeDifficultyByTrack((prev) => ({
-                                      ...prev,
-                                      [tk]: key,
-                                    }))
-                                  }
-                                  className={cn(
-                                    "rounded-full border px-3 py-1 text-[11px] transition-colors",
-                                    selected === key
-                                      ? "border-brand bg-brand text-white"
-                                      : "border-ink-20 text-ink-60 hover:border-brand/60",
-                                  )}
-                                >
-                                  {opt.label} {Math.round(opt.value * 100)}%
-                                </button>
-                              );
-                            })}
-                          </div>
-                          {selected == null ? (
-                            <p className="mt-1.5 text-[10px] text-rose-500">
-                              请选择难度系数
-                            </p>
-                          ) : null}
-                          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                            {options.map((opt) => {
-                              const key = difficultyOptionKey(opt);
-                              return (
-                                <div
-                                  key={key}
-                                  className={cn(
-                                    "rounded-lg border px-2.5 py-2 text-[11px] leading-snug",
-                                    selected === key
-                                      ? "border-brand/40 bg-brand/5"
-                                      : "border-ink-20/80 bg-white/60",
-                                  )}
-                                >
-                                  <span className="font-semibold text-ink">
-                                    {opt.label} · {Math.round(opt.value * 100)}%
-                                  </span>
-                                  <span className="mt-1 block text-ink-60">
-                                    {opt.remark}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
+                          <LandscapeAreaDifficultyCards
+                            options={options}
+                            selectedKey={selected}
+                            onSelect={(opt) =>
+                              setTimeDifficultyByTrack((prev) => ({
+                                ...prev,
+                                [tk]: difficultyOptionKey(opt),
+                              }))
+                            }
+                            heading="选项说明"
+                            missingHint={
+                              selected == null ? "请选择难度系数" : undefined
+                            }
+                          />
                         </FieldFull>
                       );
                     })
@@ -1686,6 +1824,49 @@ function RegularEntrustForm() {
           </div>
         </Card>
 
+        <Card className="p-6">
+          <SectionTitle icon={CircleDollarSign} title="付款阶段" />
+          {billingMode === "area" ? (
+            <PlatformPaymentStagesPreview
+              title="平台标准付款阶段"
+              description="按面积项目默认按平台规则分阶段付款；签约后可在订单中查看金额与进度。"
+              stages={resolveLandscapeAreaPaymentStages(selectedL2)}
+              className="border-dashed shadow-none"
+            />
+          ) : billingMode === "daily" ? (
+            <div className="space-y-3">
+              <p className="text-xs leading-relaxed text-ink-60">
+                {formatDailyBillingRule(pricingConfig.commerce)}
+              </p>
+              <PlatformPaymentStagesPreview
+                title="平台标准付款阶段"
+                stages={[
+                  {
+                    name: "预付款",
+                    ratio: pricingConfig.commerce.dailyPrepayRatio,
+                    note: "签约后预付，确认后开工",
+                  },
+                  {
+                    name: "合同尾款",
+                    ratio: 1 - pricingConfig.commerce.dailyPrepayRatio,
+                    note: "服务结束后付清",
+                  },
+                ]}
+                className="border-dashed shadow-none"
+              />
+            </div>
+          ) : billingMode === "monthly" ? (
+            <div className="space-y-3">
+              <PaymentEscrowHint />
+              <p className="text-xs leading-relaxed text-ink-60">
+                {formatMonthlyBillingRule(pricingConfig.commerce)}
+              </p>
+            </div>
+          ) : (
+            <PaymentEscrowHint />
+          )}
+        </Card>
+
         {quoteSubmitted ? (
           <Card className="space-y-4 p-6">
             <div className="flex items-start gap-3">
@@ -1695,41 +1876,16 @@ function RegularEntrustForm() {
               <div className="space-y-3 text-sm leading-relaxed text-ink-80">
                 <p className="font-semibold text-ink">感谢提交</p>
                 <p>
-                  {billingMode === "daily" || billingMode === "monthly"
-                    ? "系统已生成报价单，请前往订单详情确认；确认后将通知管理员分配设计师。"
-                    : "我们的客服会在 1 小时内跟您联系确认报价。另外您也可以直接拨打我们的服务电话："}
+                  系统已生成报价单，请前往订单详情确认；确认后将通知管理员分配设计师。
                 </p>
-                {billingMode === "area" ? (
-                  <ul className="space-y-2 text-xs text-ink-60">
-                    {CUSTOMER_SERVICE_CONTACTS.map((c) => (
-                      <li key={c.id}>
-                        <a
-                          href={`tel:4006801231,${c.extension}`}
-                          className="font-medium text-ink hover:text-brand"
-                        >
-                          {formatCustomerServiceLine(c)}
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
               </div>
             </div>
           </Card>
         ) : (
           <Card className="space-y-4 p-6">
-            <SectionTitle
-              icon={Coins}
-              title={
-                billingMode === "daily" || billingMode === "monthly"
-                  ? "系统报价"
-                  : "人工报价"
-              }
-            />
+            <SectionTitle icon={Coins} title="系统报价" />
             <p className="text-xs leading-relaxed text-ink-60">
-              {billingMode === "daily" || billingMode === "monthly"
-                ? "提交后系统将按您选择服务内容自动生成多个对应不同设计师等级的报价单；您确认报价后，会自动匹配设计师供选择。"
-                : "填写完整项目信息后提交，客服将根据您的需求核算报价并在 1 小时内联系确认，本页不显示实时报价。"}
+              提交后系统将按您选择服务内容自动生成多个对应不同设计师等级的报价单；您确认报价后，会自动匹配设计师供选择。
             </p>
             <Button
               variant="brand"
@@ -1739,11 +1895,7 @@ function RegularEntrustForm() {
               onClick={handleSubmitQuote}
             >
               <ClipboardList className="h-4 w-4" />{" "}
-              {submitting
-                ? "提交中..."
-                : billingMode === "daily" || billingMode === "monthly"
-                  ? "提交并生成报价"
-                  : "提交委托"}
+              {submitting ? "提交中..." : "提交并生成报价"}
             </Button>
             {submitHint ? (
               <div className="text-[11px] text-rose-500">{submitHint}</div>
@@ -1771,6 +1923,8 @@ function BountyEntrustForm() {
   const [submitting, setSubmitting] = useState(false);
 
   const [title, setTitle] = useState("");
+  const [titleVisibility, setTitleVisibility] =
+    useState<BountyTitleVisibility | null>(null);
   const [committerName, setCommitterName] = useState("");
   const [contactName, setContactName] = useState("");
   const [contactPhone, setContactPhone] = useState("");
@@ -1787,13 +1941,13 @@ function BountyEntrustForm() {
   const [specialty, setSpecialty] = useState<Specialty>("landscape");
   const [trackL2, setTrackL2] = useState<string[]>(["construction_doc"]);
   const [trackL3, setTrackL3] = useState<string[]>(["ls_drainage"]);
-  const [locationPublishMode, setLocationPublishMode] = useState<
-    "province" | "city"
-  >("city");
   const [projectType, setProjectType] = useState("");
   const [description, setDescription] = useState("");
   const [reward, setReward] = useState("");
-  const [deadline, setDeadline] = useState("");
+  const [invoiceType, setInvoiceType] = useState<BountyInvoiceType | null>(null);
+  const [paymentStages, setPaymentStages] = useState(defaultBountyPaymentStageDrafts);
+  const [deadlineDraft, setDeadlineDraft] = useState(emptyBountyDeadlineDraft);
+  const [validUntilDraft, setValidUntilDraft] = useState(emptyBountyValidUntilDraft);
   const [reqs, setReqs] = useState<string[]>(["有相关项目实战案例"]);
   const [reqInput, setReqInput] = useState("");
   const [attachments, setAttachments] = useState<BountyAttachment[]>([]);
@@ -1872,25 +2026,60 @@ function BountyEntrustForm() {
     [specialty, trackL2],
   );
 
-  const canSubmit =
-    title.trim() &&
-    contactName.trim() &&
-    contactPhone.trim() &&
-    description.trim() &&
-    deadline &&
-    Number.isFinite(rewardAmount) &&
-    rewardAmount >= 1000 &&
-    trackL2.length > 0 &&
-    trackL3.length > 0;
+  const [highlightField, setHighlightField] = useState<string | null>(null);
+
+  const firstIncompleteBountyFieldId = (): string | null => {
+    if (!title.trim() || !titleVisibility) return "field-bounty-title";
+    if (!contactName.trim()) return "field-bounty-contact-name";
+    if (!contactPhone.trim()) return "field-bounty-contact-phone";
+    if (!bountyAdminTriple.provinceCode || !bountyAdminTriple.cityCode) {
+      return "field-bounty-location";
+    }
+    if (!projectType.trim()) return "field-bounty-project-type";
+    if (trackL2.length === 0) return "field-bounty-l2";
+    if (trackL3.length === 0) return "field-bounty-l3";
+    if (!description.trim()) return "field-bounty-description";
+    if (!isBountyRewardValid(rewardAmount)) {
+      return "field-bounty-reward";
+    }
+    if (!invoiceType) return "field-bounty-invoice";
+    if (!paymentStagesValid(paymentStages)) return "field-bounty-payment-stages";
+    if (!isValidUntilDraftComplete(validUntilDraft)) {
+      return "field-bounty-valid-until";
+    }
+    if (!isDeadlineDraftComplete(deadlineDraft)) {
+      return "field-bounty-deadline";
+    }
+    return null;
+  };
+
+  const canSubmit = !firstIncompleteBountyFieldId();
+  const shownHighlight =
+    highlightField && highlightField === firstIncompleteBountyFieldId()
+      ? highlightField
+      : null;
+
+  const scrollToBountyField = (id: string) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const focusable = el.querySelector<HTMLElement>(
+      "input:not([type=hidden]):not([disabled]), textarea, select, button:not([disabled])",
+    );
+    focusable?.focus({ preventScroll: true });
+  };
 
   const handleSubmit = async () => {
-    if (!canSubmit || submitting) {
-      if (!canSubmit) {
-        push({
-          title: "请完善必填项（项目名称、联系人、电话、描述、悬赏金额、成果提交时间）",
-          variant: "destructive",
-        });
-      }
+    if (submitting) return;
+    const incomplete = firstIncompleteBountyFieldId();
+    if (incomplete || !titleVisibility) {
+      setHighlightField(incomplete ?? "field-bounty-title");
+      scrollToBountyField(incomplete ?? "field-bounty-title");
+      push({
+        title: "请完善必填项",
+        description: "已跳转到未填写的内容，补全后即可发布。",
+        variant: "destructive",
+      });
       return;
     }
     if (role === "guest" || !identityId) {
@@ -1902,22 +2091,41 @@ function BountyEntrustForm() {
       router.push("/login?redirect=/entrust/new?mode=bounty");
       return;
     }
-    const location = bountyLocationFromTriple(
-      bountyAdminTriple,
-      locationPublishMode,
+    const validUntilResult = normalizeBountyValidUntil(
+      validUntilFromDraft(validUntilDraft),
+      { requireFuture: true },
     );
+    if (!validUntilResult.ok) {
+      setHighlightField("field-bounty-valid-until");
+      scrollToBountyField("field-bounty-valid-until");
+      push({ title: validUntilResult.error, variant: "destructive" });
+      return;
+    }
+    const deadlineResult = normalizeBountyDeadline(deadlineFromDraft(deadlineDraft));
+    if (!deadlineResult.ok) {
+      setHighlightField("field-bounty-deadline");
+      scrollToBountyField("field-bounty-deadline");
+      push({ title: deadlineResult.error, variant: "destructive" });
+      return;
+    }
+    const location = bountyLocationFromTriple(bountyAdminTriple, "city");
     setSubmitting(true);
     try {
       const bounty = await createBountyRequest(
         buildBountyCreateBody({
           title,
+          titleVisibility,
           specialty,
           primaryTrack: { l1: specialty, l2: trackL2, l3: trackL3 },
           projectType,
           location,
           description,
           reward: rewardAmount,
-          deadline,
+          invoiceType: invoiceType!,
+          taxCoefficient: bountyTaxCoefficient(invoiceType!),
+          paymentStages: toBountyPaymentStages(paymentStages),
+          deadline: deadlineResult.value,
+          validUntil: validUntilResult.value,
           requirements: reqs,
           attachments,
           preferredDesignerCodes: parseDesignerCodesInput(preferredDesignerInput),
@@ -1927,9 +2135,12 @@ function BountyEntrustForm() {
           projectCity,
         }),
       );
+      const invitedCount = parseDesignerCodesInput(preferredDesignerInput).length;
       push({
         title: "悬赏委托发布成功",
-        description: `编号 ${bounty.code}，符合专业的设计师将能看到并报名。`,
+        description: invitedCount
+          ? `编号 ${bounty.code}，已向倾向的设计师发送邀请，请其报名参与。`
+          : `编号 ${bounty.code}。未填写倾向设计师时不会主动邀请；符合专业的设计师仍可在悬赏厅报名。`,
         variant: "success",
       });
       router.push(`/client/bounties/${bounty.id}`);
@@ -1950,12 +2161,25 @@ function BountyEntrustForm() {
         <Card className="p-6">
           <SectionTitle icon={FileText} title="项目基础信息" />
           <div className="grid gap-4 sm:grid-cols-2">
-            <FieldFull label="项目名称" required>
+            <FieldFull
+              label="项目名称"
+              required
+              anchor="field-bounty-title"
+              highlight={shownHighlight === "field-bounty-title"}
+            >
               <Input
                 placeholder="例如：苏州相城区 8 万㎡ 城市公园方案征集"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
               />
+              <div className="pt-1">
+                <BountyTitleVisibilityField
+                  value={titleVisibility}
+                  onChange={setTitleVisibility}
+                  title={title}
+                  primaryTrack={{ l1: specialty, l2: trackL2, l3: trackL3 }}
+                />
+              </div>
             </FieldFull>
             <Field label="委托方名称">
               <Input
@@ -1964,51 +2188,41 @@ function BountyEntrustForm() {
                 onChange={(e) => setCommitterName(e.target.value)}
               />
             </Field>
-            <Field label="联系人" required>
+            <Field
+              label="联系人"
+              required
+              anchor="field-bounty-contact-name"
+              highlight={shownHighlight === "field-bounty-contact-name"}
+            >
               <Input
                 placeholder="可与委托方一致或另行输入"
                 value={contactName}
                 onChange={(e) => setContactName(e.target.value)}
               />
             </Field>
-            <Field label="联系方式（手机号）" required>
+            <Field
+              label="联系方式（手机号）"
+              required
+              anchor="field-bounty-contact-phone"
+              highlight={shownHighlight === "field-bounty-contact-phone"}
+            >
               <Input
                 placeholder="将通过短信验证"
                 value={contactPhone}
                 onChange={(e) => setContactPhone(e.target.value)}
               />
             </Field>
-            <FieldFull label="项目所在地" required>
-              <div className="relative z-[5] space-y-3">
-                <div className="flex rounded-full border border-ink-20 p-0.5 text-xs w-fit">
-                  <button
-                    type="button"
-                    className={cn(
-                      "rounded-full px-3 py-1",
-                      locationPublishMode === "province"
-                        ? "bg-ink text-white"
-                        : "text-ink-60",
-                    )}
-                    onClick={() => setLocationPublishMode("province")}
-                  >
-                    仅公布到省份
-                  </button>
-                  <button
-                    type="button"
-                    className={cn(
-                      "rounded-full px-3 py-1",
-                      locationPublishMode === "city"
-                        ? "bg-ink text-white"
-                        : "text-ink-60",
-                    )}
-                    onClick={() => setLocationPublishMode("city")}
-                  >
-                    精确到城市
-                  </button>
-                </div>
+            <FieldFull
+              label="项目所在地"
+              required
+              anchor="field-bounty-location"
+              highlight={shownHighlight === "field-bounty-location"}
+            >
+              <div className="relative z-[5] space-y-1">
                 <AdministrativeRegionSelector
                   triple={bountyAdminTriple}
                   onTripleChange={setBountyAdminTriple}
+                  showRateCoefficient={false}
                 />
               </div>
             </FieldFull>
@@ -2016,6 +2230,7 @@ function BountyEntrustForm() {
               <PreferredDesignersField
                 value={preferredDesignerInput}
                 onChange={setPreferredDesignerInput}
+                purpose="invite"
               />
             </FieldFull>
           </div>
@@ -2050,8 +2265,16 @@ function BountyEntrustForm() {
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="项目类型">
-              <Select value={projectType} onValueChange={setProjectType}>
+            <Field
+              label="项目类型"
+              required
+              anchor="field-bounty-project-type"
+              highlight={shownHighlight === "field-bounty-project-type"}
+            >
+              <Select
+                value={projectType || undefined}
+                onValueChange={setProjectType}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="选择项目类型" />
                 </SelectTrigger>
@@ -2064,7 +2287,12 @@ function BountyEntrustForm() {
                 </SelectContent>
               </Select>
             </Field>
-            <FieldFull label="二级专业（可多选）" required>
+            <FieldFull
+              label="二级专业（可多选）"
+              required
+              anchor="field-bounty-l2"
+              highlight={shownHighlight === "field-bounty-l2"}
+            >
               <BountyTrackMultiSelect
                 options={l2Options.map((o) => ({ value: o.value, label: o.label }))}
                 value={trackL2}
@@ -2083,20 +2311,19 @@ function BountyEntrustForm() {
                 </p>
               ) : null}
             </FieldFull>
-            <FieldFull label="三级专业（可多选）" required>
+            <FieldFull
+              label="三级专业（可多选）"
+              required
+              anchor="field-bounty-l3"
+              highlight={shownHighlight === "field-bounty-l3"}
+            >
               <BountyTrackMultiSelect
                 options={l3Options}
                 value={trackL3}
                 showGroup={trackL2.length > 1}
                 onChange={(next) => {
-                  const resolved =
-                    specialty === "landscape"
-                      ? reconcileLandscapeL3Selection(trackL3, next)
-                      : next;
-                  const conflict =
-                    specialty === "landscape"
-                      ? landscapeL3SelectionConflict(trackL3, next)
-                      : null;
+                  const resolved = reconcileLandscapeL3Selection(trackL3, next);
+                  const conflict = landscapeL3SelectionConflict(trackL3, next);
                   if (conflict) {
                     push({
                       title: "不可同时选择",
@@ -2108,7 +2335,7 @@ function BountyEntrustForm() {
                 }}
               />
               <p className="mt-1.5 text-xs text-ink-40">
-                设计师报名时将选择其中一个三级专业承接。
+                设计师报名时将选择其中一个三级专业承接。「方案深化建模」与「方案深化建模 + 效果图」不可同时勾选；「方案深化建模 + 效果图」与「效果图（已有模型）」也不可同时勾选。
               </p>
             </FieldFull>
           </div>
@@ -2124,7 +2351,12 @@ function BountyEntrustForm() {
 
         <Card className="p-6">
           <SectionTitle icon={FileText} title="项目描述与服务要求" />
-          <FieldFull label="项目详细描述" required>
+          <FieldFull
+            label="项目详细描述"
+            required
+            anchor="field-bounty-description"
+            highlight={shownHighlight === "field-bounty-description"}
+          >
             <Textarea
               rows={5}
               placeholder="请描述项目背景、规模、设计深度、关键节点、汇报时间等"
@@ -2167,31 +2399,91 @@ function BountyEntrustForm() {
         </Card>
 
         <Card className="p-6">
-          <SectionTitle icon={Coins} title="悬赏预算与成果提交时间" />
+          <SectionTitle icon={Coins} title="悬赏预算、有效期与成果提交时间" />
           <div className="grid gap-4 sm:grid-cols-2">
-            <FieldFull label="悬赏金额（¥）" required>
+            <FieldFull
+              label="悬赏金额（¥）"
+              required
+              anchor="field-bounty-reward"
+              highlight={shownHighlight === "field-bounty-reward"}
+            >
               <Input
                 type="number"
-                step={1000}
-                min={1000}
+                step={1}
+                min={101}
                 placeholder="请填写悬赏金额"
                 value={reward}
                 onChange={(e) => setReward(e.target.value)}
               />
               <p className="mt-1.5 text-xs text-ink-40">
-                请自行填写确定费用（不少于 ¥1,000），选定设计师后转入平台托管。
+                请自行填写确定费用（须大于 ¥100），选定设计师后转入平台托管。
               </p>
             </FieldFull>
-            <Field label="成果提交时间" required>
-              <Input
-                type="date"
-                value={deadline}
-                onChange={(e) => setDeadline(e.target.value)}
-              />
+            <FieldFull
+              label="发票信息"
+              required
+              heading
+              anchor="field-bounty-invoice"
+              highlight={shownHighlight === "field-bounty-invoice"}
+            >
+              <div className="flex flex-wrap gap-2">
+                {BOUNTY_INVOICE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setInvoiceType(opt.value)}
+                    className={cn(
+                      "rounded-full border px-3 py-1.5 text-xs transition-colors",
+                      invoiceType === opt.value
+                        ? "border-ink bg-ink text-white"
+                        : "border-ink-20 text-ink-60 hover:border-ink/40",
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
               <p className="mt-1.5 text-xs text-ink-40">
-                设计师须在此日期前提交设计成果。
+                设计师看到的是扣除平台管理费与税金后的到手金额；专票税金为对应费率 + 1%，普票税金为 0。
               </p>
-            </Field>
+            </FieldFull>
+            <FieldFull
+              label="付款阶段"
+              required
+              anchor="field-bounty-payment-stages"
+              highlight={shownHighlight === "field-bounty-payment-stages"}
+            >
+              <p className="mb-3 text-xs text-ink-40">
+                默认一个阶段（全款）。可按定向委托方式增减阶段、调整比例与付款条件，比例合计须为 100%，每阶段备注必填。
+              </p>
+              <ScanPaymentStagesEditor
+                stages={paymentStages}
+                onChange={setPaymentStages}
+                totalAmount={Number.isFinite(rewardAmount) ? Math.max(0, rewardAmount) : 0}
+              />
+            </FieldFull>
+            <FieldFull
+              label="悬赏有效期"
+              required
+              anchor="field-bounty-valid-until"
+              highlight={shownHighlight === "field-bounty-valid-until"}
+            >
+              <BountyValidUntilField
+                value={validUntilDraft}
+                onChange={setValidUntilDraft}
+              />
+            </FieldFull>
+            <FieldFull
+              label="成果提交时间"
+              required
+              anchor="field-bounty-deadline"
+              highlight={shownHighlight === "field-bounty-deadline"}
+            >
+              <BountyDeadlineField
+                value={deadlineDraft}
+                onChange={setDeadlineDraft}
+              />
+            </FieldFull>
           </div>
         </Card>
 
@@ -2251,7 +2543,7 @@ function BountyEntrustForm() {
             悬赏预算预览
           </div>
           <div className="text-3xl font-bold tracking-tight text-amber-600">
-            {rewardAmount >= 1000 ? formatCurrency(rewardAmount) : "待填写"}
+            {isBountyRewardValid(rewardAmount) ? formatCurrency(rewardAmount) : "待填写"}
           </div>
           <p className="text-xs text-ink-60">选定设计师后金额转入平台托管</p>
 
@@ -2274,7 +2566,7 @@ function BountyEntrustForm() {
             variant="brand"
             size="lg"
             className="w-full sm:w-auto sm:min-w-[240px]"
-            disabled={!canSubmit || submitting}
+            disabled={submitting}
             onClick={handleSubmit}
           >
             <Megaphone className="h-4 w-4" />{" "}
@@ -2282,7 +2574,7 @@ function BountyEntrustForm() {
           </Button>
           {!canSubmit ? (
             <div className="text-[11px] text-rose-500">
-              请填写项目名称、联系人、电话、描述、悬赏金额（≥¥1,000）、成果提交时间
+              请填写项目名称、项目名称显示方式、联系人、电话、项目类型、描述、悬赏金额（须大于 ¥100）、发票信息、付款阶段（合计 100%，每阶段备注必填）、悬赏有效期、成果提交时间
             </div>
           ) : null}
         </Card>
@@ -2315,16 +2607,25 @@ function Field({
   required,
   heading,
   anchor,
+  highlight,
   children,
 }: {
   label: string;
   required?: boolean;
   heading?: boolean;
   anchor?: string;
+  highlight?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <div id={anchor} className="space-y-1.5 scroll-mt-24">
+    <div
+      id={anchor}
+      className={cn(
+        "space-y-1.5 scroll-mt-24 rounded-xl transition-shadow",
+        highlight &&
+          "bg-rose-50/80 p-2 ring-2 ring-rose-400 ring-offset-2",
+      )}
+    >
       <Label className={heading ? headingLabelClass : undefined}>
         {label}
         {required ? <span className="ml-1 text-rose-500">*</span> : null}
@@ -2339,16 +2640,25 @@ function FieldFull({
   required,
   heading,
   anchor,
+  highlight,
   children,
 }: {
   label: string;
   required?: boolean;
   heading?: boolean;
   anchor?: string;
+  highlight?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <div id={anchor} className="space-y-1.5 scroll-mt-24 sm:col-span-2">
+    <div
+      id={anchor}
+      className={cn(
+        "space-y-1.5 scroll-mt-24 rounded-xl transition-shadow sm:col-span-2",
+        highlight &&
+          "bg-rose-50/80 p-2 ring-2 ring-rose-400 ring-offset-2",
+      )}
+    >
       <Label className={heading ? headingLabelClass : undefined}>
         {label}
         {required ? <span className="ml-1 text-rose-500">*</span> : null}

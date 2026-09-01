@@ -17,6 +17,7 @@ import {
   type OrderSupervisionStatus,
 } from "@/lib/order-supervision";
 import { isAwaitingClientReviewOrder } from "@/lib/client-review";
+import { isSelfOrderPendingClaim } from "@/lib/self-order-share";
 
 export type DesignerOrderStatusFilter = OrderSupervisionStatus;
 
@@ -36,6 +37,26 @@ export const DESIGNER_PROJECT_STATUS_TABS: {
   { value: "completed", label: "已完成" },
   { value: "cancelled", label: "已取消" },
 ];
+
+/** 定向订单：指定设计师，无「匹配中」；待确认统一为「待确认匹配」 */
+export const DESIGNER_DIRECTED_STATUS_TABS: {
+  value: DesignerOrderStatusFilter;
+  label: string;
+}[] = DESIGNER_PROJECT_STATUS_TABS.filter((t) => t.value !== "matching");
+
+export const DESIGNER_DIRECTED_TAB_PRIORITY: DesignerOrderStatusFilter[] =
+  DESIGNER_DEFAULT_TAB_PRIORITY.filter((t) => t !== "matching");
+
+/** 悬赏订单：报名后只需委托人确认，无「待确认匹配」 */
+export const DESIGNER_BOUNTY_STATUS_TABS: {
+  value: DesignerOrderStatusFilter;
+  label: string;
+}[] = DESIGNER_PROJECT_STATUS_TABS.filter(
+  (t) => t.value !== "awaiting_confirm",
+).map((t) => (t.value === "matching" ? { ...t, label: "待委托人确认" } : t));
+
+export const DESIGNER_BOUNTY_TAB_PRIORITY: DesignerOrderStatusFilter[] =
+  DESIGNER_DEFAULT_TAB_PRIORITY.filter((t) => t !== "awaiting_confirm");
 
 export { DESIGNER_DEFAULT_TAB_PRIORITY };
 
@@ -91,7 +112,10 @@ export function orderMatchesDesignerStatus(
     case "pending_payment":
       return isAwaitingClientPaymentOrder(order);
     case "awaiting_confirm":
-      return isDesignerAwaitingConfirmOrder(order, designerId);
+      return (
+        isDesignerAwaitingConfirmOrder(order, designerId) ||
+        isSelfOrderPendingClaim(order)
+      );
     case "matching":
       return isDesignerMatchingOthersOrder(order, designerId);
     case "pending_client_sign":
@@ -117,6 +141,37 @@ export function orderMatchesDesignerStatus(
   }
 }
 
+function isPendingClientBountyConfirm(item: UnifiedProjectItem): boolean {
+  return (
+    item.status === "open" ||
+    item.status === "in_review" ||
+    item.status === "paused"
+  );
+}
+
+function bountyMatchesDesignerStatus(
+  item: UnifiedProjectItem,
+  status: DesignerOrderStatusFilter,
+): boolean {
+  const lost =
+    item.status === "closed" || (item.status === "awarded" && !item.bountyWon);
+  const awaitingClient =
+    isPendingClientBountyConfirm(item) ||
+    (item.status === "awarded" && Boolean(item.bountyWon));
+  switch (status) {
+    case "all":
+      return awaitingClient;
+    case "matching":
+      return awaitingClient;
+    case "cancelled":
+      return lost;
+    case "completed":
+      return item.status === "completed";
+    default:
+      return false;
+  }
+}
+
 export function filterItemsByDesignerStatus(
   items: UnifiedProjectItem[],
   status: DesignerOrderStatusFilter,
@@ -134,6 +189,9 @@ export function filterItemsByDesignerStatus(
     }
     if (item.kind === "scan" && item.scan) {
       return scanMatchesSupervision(item.scan, status, "designer");
+    }
+    if (item.kind === "bounty") {
+      return bountyMatchesDesignerStatus(item, status);
     }
     return false;
   });

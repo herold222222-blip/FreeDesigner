@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { handle, ok, fail } from "@/lib/server/api";
-import { getOrder, saveOrder } from "@/lib/server/repo";
+import { getBounty, getOrder, saveOrder } from "@/lib/server/repo";
 import { isStaffRole, requireSession } from "@/lib/server/auth";
 import {
   applyOrderTimeouts,
@@ -10,7 +10,11 @@ import {
   type MatchingOrderUpdateInput,
 } from "@/lib/server/order-service";
 import { designerIdForSameAccountAsClient } from "@/lib/server/inbox";
-import { orderInvolvesDesigner } from "@/lib/order-assign-tracks";
+import {
+  orderHasSpecialtyLevels,
+  orderInvolvesDesigner,
+} from "@/lib/order-assign-tracks";
+import { normalizeBountyTrack } from "@/lib/bounty-tracks";
 import { normalizePaymentStages } from "@/lib/order-payment-stages";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +30,13 @@ export async function GET(
     order = await applyOrderTimeouts(order);
     if (normalizePaymentStages(order)) {
       await saveOrder(order);
+    }
+    if (order.bountyId && !orderHasSpecialtyLevels(order.primaryTrack)) {
+      const bounty = await getBounty(order.bountyId);
+      if (bounty?.primaryTrack) {
+        order.primaryTrack = normalizeBountyTrack(bounty.primaryTrack);
+        await saveOrder(order);
+      }
     }
 
     if (session.role === "client" && order.clientId !== session.identityId) {

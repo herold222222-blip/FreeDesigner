@@ -43,9 +43,22 @@
     @apply border-border;
   }
 
+  html {
+    overflow-x: clip;
+  }
+
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
+    overflow-x: clip;
+    max-width: 100%;
+    overflow-wrap: break-word;
+  }
+
+  img,
+  video,
+  canvas {
+    max-width: 100%;
   }
 
   ::selection {
@@ -55,7 +68,7 @@
 
 @layer components {
   .container-page {
-    @apply mx-auto w-full max-w-[1280px] px-6;
+    @apply mx-auto w-full min-w-0 max-w-[1280px] px-4 sm:px-6;
   }
 
   .surface {
@@ -133,5 +146,19 @@
 
   .animate-accepting-dot {
     animation: accepting-dot 1.4s ease-in-out infinite;
+  }
+}
+
+/* 手机端：收紧卡片内边距，表单控件保持 16px 以免 iOS 自动放大 */
+@media (max-width: 639px) {
+  .rounded-2xl.p-8,
+  .rounded-2xl.p-6 {
+    padding: 1rem;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"]),
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

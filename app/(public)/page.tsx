@@ -8,6 +8,8 @@ import { PublishEntrustCta } from "@/components/domain/publish-entrust-cta";
 import { HomeHeroBrowseCta } from "@/components/domain/home-hero-browse-cta";
 import { MemberLink } from "@/components/domain/member-link";
 import { listDesigners, listBounties } from "@/lib/server/repo";
+import { getSessionUser } from "@/lib/server/auth";
+import { applyBountyListPublicPrivacy } from "@/lib/server/bounty-hall-privacy";
 import { SPECIALTIES } from "@/lib/constants";
 import {
   ArrowRight,
@@ -29,10 +31,13 @@ export default async function HomePage() {
   let allDesigners: Awaited<ReturnType<typeof listDesigners>> = [];
   let allBounties: Awaited<ReturnType<typeof listBounties>> = [];
   try {
-    [allDesigners, allBounties] = await Promise.all([
+    const session = await getSessionUser();
+    const [designers, bounties] = await Promise.all([
       listDesigners(),
       listBounties(),
     ]);
+    allDesigners = designers;
+    allBounties = await applyBountyListPublicPrivacy(bounties, session);
   } catch (err) {
     // Netlify 等环境若未配 DATABASE_URL / 表未初始化，避免整页 500
     console.error("[HomePage] failed to load designers/bounties", err);
@@ -53,14 +58,14 @@ export default async function HomePage() {
     <>
       <section className="gradient-hero overflow-x-clip">
         {/* 右下角悬浮卡片 absolute -bottom-6，需预留底部留白避免压到下一版块 */}
-        <div className="container-page pb-28 pt-20 lg:pb-36 lg:pt-28">
-          <div className="grid gap-12 lg:grid-cols-[1.2fr_1fr] lg:items-center">
-            <div className="space-y-7">
-              <Badge variant="outline" className="gap-1.5">
-                <Sparkles className="h-3 w-3 text-brand" />
+        <div className="container-page pb-24 pt-10 sm:pb-28 sm:pt-20 lg:pb-36 lg:pt-28">
+          <div className="grid min-w-0 gap-10 lg:grid-cols-[1.2fr_1fr] lg:items-center lg:gap-12">
+            <div className="min-w-0 space-y-5 sm:space-y-7">
+              <Badge variant="outline" className="h-auto max-w-full whitespace-normal py-1 leading-snug">
+                <Sparkles className="h-3 w-3 shrink-0 text-brand" />
                 建筑 · 景观 · 室内 · 效果图 · 造价 五大专业 一站式对接
               </Badge>
-              <h1 className="text-balance text-5xl font-semibold leading-[1.1] tracking-tight text-ink lg:text-6xl">
+              <h1 className="text-balance text-[1.75rem] font-semibold leading-[1.2] tracking-tight text-ink sm:text-5xl lg:text-6xl">
                 让对的设计师，
                 <br />
                 <span className="text-brand">遇见对的项目。</span>
@@ -81,24 +86,24 @@ export default async function HomePage() {
                 </PublishEntrustCta>
                 <HomeHeroBrowseCta />
               </div>
-              <div className="grid grid-cols-3 gap-6 border-t border-ink-20 pt-6 text-center md:max-w-md md:text-left">
+              <div className="grid grid-cols-3 gap-3 border-t border-ink-20 pt-6 text-center sm:gap-6 md:max-w-md md:text-left">
                 <div>
-                  <div className="text-2xl font-semibold tracking-tight text-ink">
+                  <div className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">
                     1,860+
                   </div>
-                  <div className="text-xs text-ink-60">入驻认证设计师</div>
+                  <div className="text-[11px] text-ink-60 sm:text-xs">入驻认证设计师</div>
                 </div>
                 <div>
-                  <div className="text-2xl font-semibold tracking-tight text-ink">
+                  <div className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">
                     24,300+
                   </div>
-                  <div className="text-xs text-ink-60">完成项目订单</div>
+                  <div className="text-[11px] text-ink-60 sm:text-xs">完成项目订单</div>
                 </div>
                 <div>
-                  <div className="text-2xl font-semibold tracking-tight text-ink">
+                  <div className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">
                     99.6%
                   </div>
-                  <div className="text-xs text-ink-60">合同履约率</div>
+                  <div className="text-[11px] text-ink-60 sm:text-xs">合同履约率</div>
                 </div>
               </div>
             </div>
@@ -135,13 +140,13 @@ export default async function HomePage() {
                   </div>
                 </div>
               </div>
-              <Card className="absolute -bottom-6 left-4 flex items-center gap-3 px-4 py-3 shadow-xl">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100">
+              <Card className="absolute -bottom-6 left-2 right-2 flex max-w-full items-start gap-3 px-3 py-3 shadow-xl sm:left-4 sm:right-auto sm:items-center sm:px-4">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100">
                   <ShieldCheck className="h-5 w-5 text-emerald-600" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <div className="text-xs text-ink-60">资金已托管</div>
-                  <div className="text-sm font-semibold text-ink">
+                  <div className="text-sm font-semibold leading-snug text-ink">
                     分阶段付款 · 平台监管，不满意退款
                   </div>
                 </div>
@@ -157,7 +162,7 @@ export default async function HomePage() {
             <Badge variant="muted" className="mb-3">
               专业服务
             </Badge>
-            <h2 className="text-3xl font-semibold tracking-tight text-ink">
+            <h2 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
               五大专业领域
             </h2>
             <p className="mt-2 text-sm text-ink-60">
@@ -195,12 +200,12 @@ export default async function HomePage() {
       </section>
 
       <section className="container-page pb-20 pt-10">
-        <div className="mb-8 flex items-end justify-between">
+        <div className="mb-8 flex flex-wrap items-end justify-between gap-3">
           <div>
             <Badge variant="muted" className="mb-3">
               悬赏大厅
             </Badge>
-            <h2 className="text-3xl font-semibold tracking-tight text-ink">
+            <h2 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
               正在招标的项目
             </h2>
           </div>
@@ -224,12 +229,12 @@ export default async function HomePage() {
       </section>
 
       <section className="container-page py-10">
-        <div className="mb-8 flex items-end justify-between">
+        <div className="mb-8 flex flex-wrap items-end justify-between gap-3">
           <div>
             <Badge variant="muted" className="mb-3">
               热门设计师
             </Badge>
-            <h2 className="text-3xl font-semibold tracking-tight text-ink">
+            <h2 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
               在线设计师 · 实时接单
             </h2>
             <p className="mt-2 text-sm text-ink-60">
@@ -250,12 +255,12 @@ export default async function HomePage() {
       </section>
 
       <section className="container-page py-10">
-        <div className="mb-8 flex items-end justify-between">
+        <div className="mb-8 flex flex-wrap items-end justify-between gap-3">
           <div>
             <Badge variant="muted" className="mb-3">
               v1.1 增值服务
             </Badge>
-            <h2 className="text-3xl font-semibold tracking-tight text-ink">
+            <h2 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
               一个平台 · 三层服务保障
             </h2>
             <p className="mt-2 text-sm text-ink-60">
@@ -310,7 +315,7 @@ export default async function HomePage() {
             <Badge variant="muted" className="mb-3">
               如何运作
             </Badge>
-            <h2 className="text-3xl font-semibold tracking-tight text-ink">
+            <h2 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
               四步走完一笔放心的设计合作
             </h2>
           </div>

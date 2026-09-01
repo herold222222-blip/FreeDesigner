@@ -8,7 +8,6 @@ import { StatusControls } from "@/components/domain/status-controls";
 import { useDesigner, useOrders } from "@/lib/use-data";
 import { useRoleStore } from "@/store/role-store";
 import {
-  ArrowRight,
   CalendarRange,
   CircleDollarSign,
   Eye,
@@ -21,7 +20,7 @@ import { useMemo } from "react";
 
 export default function DesignerDashboardPage() {
   const identityId = useRoleStore((s) => s.identityId);
-  const { data: designer, loading } = useDesigner(identityId);
+  const { data: designer } = useDesigner(identityId);
   const { data: orders } = useOrders();
 
   const myOrders = useMemo(
@@ -59,7 +58,7 @@ export default function DesignerDashboardPage() {
     [orders],
   );
 
-  if (loading || !designer) {
+  if (!designer) {
     return (
       <div className="py-20 text-center text-ink-60">正在加载工作台...</div>
     );
@@ -92,30 +91,13 @@ export default function DesignerDashboardPage() {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-ink">
-            {designer.name},你好 👋
-          </h2>
-          <p className="mt-1 text-sm text-ink-60">
-            累计收入 {formatCurrency(earned)} · 托管待结算 {formatCurrency(pending)}。
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button asChild variant="outline">
-            <Link href="/designer/directed-orders">
-              定向订单 <ArrowRight className="h-4 w-4" />
-            </Link>
-          </Button>
-          <Button asChild variant="outline">
-            <Link href="/bounties">
-              浏览悬赏 <ArrowRight className="h-4 w-4" />
-            </Link>
-          </Button>
-          <Button asChild variant="brand">
-            <Link href="/designer/wallet">立即提现</Link>
-          </Button>
-        </div>
+      <div>
+        <h2 className="text-2xl font-semibold tracking-tight text-ink">
+          {designer.name},你好 👋
+        </h2>
+        <p className="mt-1 text-sm text-ink-60">
+          累计收入 {formatCurrency(earned)} · 托管待结算 {formatCurrency(pending)}。
+        </p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

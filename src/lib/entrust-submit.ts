@@ -42,6 +42,12 @@ export function buildRegularEntrustDescription(input: {
   days?: number;
   months?: number;
   tracks?: string[];
+  /** 按面积：各三级专业难度（写入委托摘要） */
+  areaTracks?: Array<{
+    label: string;
+    difficultyLabel?: string;
+    difficulty?: number;
+  }>;
   trackKey?: string;
   /** 二级专业标签 */
   timeL2Labels?: string[];
@@ -58,6 +64,8 @@ export function buildRegularEntrustDescription(input: {
   withAudit?: boolean;
   withPM?: boolean;
   buildType?: "new" | "renovation" | null;
+  /** 景观结构专业：待系统评估 或 N 张 */
+  structureLine?: string;
   taxLabel?: string;
   serviceModeLabel?: string;
   closingLine?: string;
@@ -87,6 +95,18 @@ export function buildRegularEntrustDescription(input: {
           input.timeL2Labels?.length
             ? `二级专业：${input.timeL2Labels.join("、")}`
             : null,
+          ...(input.areaTracks ?? []).map((row) => {
+            const base = `· ${row.label}：${input.area} ㎡`;
+            if (!row.difficultyLabel && row.difficulty == null) return base;
+            return `${base} · ${formatTimeDifficultySuffix({
+              label: row.difficultyLabel ?? "",
+              value: row.difficulty ?? 1,
+              percent:
+                row.difficulty != null
+                  ? `${Math.round(row.difficulty * 100)}%`
+                  : "",
+            })}`;
+          }),
         ]
           .filter(Boolean)
           .join("\n")
@@ -98,6 +118,7 @@ export function buildRegularEntrustDescription(input: {
           ? `工时：${input.days ?? 0} 工日 · ${input.trackKey ?? "—"}`
           : `雇佣：${input.months ?? 0} 个月 · ${input.trackKey ?? "—"}`
       : null,
+    input.structureLine ? `· 景观结构专业：${input.structureLine}` : null,
     input.billingMode === "area" && input.buildType
       ? `建造类型：${input.buildType === "renovation" ? "改扩建（110%）" : "新建（100%）"}`
       : null,
@@ -130,7 +151,9 @@ export function buildRegularEntrustOrderBody(input: {
     l3Label: string;
     quantity: number;
     difficultyKey?: string;
+    quantityPending?: boolean;
   }>;
+  areaQuote?: CreateOrderBody["areaQuote"];
   expectedDeliveryAt?: string;
 }): CreateOrderBody {
   const budget =
@@ -160,18 +183,27 @@ export function buildRegularEntrustOrderBody(input: {
             lines: input.timeQuoteLines,
           }
         : undefined,
+    areaQuote:
+      input.billingMode === "area" && input.areaQuote
+        ? input.areaQuote
+        : undefined,
   };
 }
 
 export function buildBountyCreateBody(input: {
   title: string;
+  titleVisibility?: Bounty["titleVisibility"];
   specialty: Specialty;
   primaryTrack: Bounty["primaryTrack"];
   projectType?: string;
   location: BountyLocation;
   description: string;
   reward: number;
+  invoiceType?: Bounty["invoiceType"];
+  taxCoefficient?: number;
+  paymentStages?: Bounty["paymentStages"];
   deadline: string;
+  validUntil?: string | null;
   requirements: string[];
   attachments: Bounty["attachments"];
   preferredDesignerCodes?: string[];
@@ -183,15 +215,17 @@ export function buildBountyCreateBody(input: {
   const desc = [
     input.description.trim(),
     "",
+    "--- 委托联系信息 ---",
     `联系人：${input.contactName}`,
     `电话：${input.contactPhone}`,
     input.projectCity ? `项目城市：${input.projectCity}` : null,
   ]
-    .filter(Boolean)
+    .filter((line) => line !== null)
     .join("\n");
 
   return {
     title: input.title.trim(),
+    titleVisibility: input.titleVisibility ?? "masked",
     specialty: input.specialty,
     primaryTrack: input.primaryTrack,
     projectType: input.projectType,
@@ -199,7 +233,11 @@ export function buildBountyCreateBody(input: {
     description: desc,
     reward: input.reward,
     rewardModel: "fixed",
+    invoiceType: input.invoiceType,
+    taxCoefficient: input.taxCoefficient,
+    paymentStages: input.paymentStages,
     deadline: input.deadline,
+    validUntil: input.validUntil ?? null,
     requirements: input.requirements,
     attachments: input.attachments,
     preferredDesignerCodes: input.preferredDesignerCodes,

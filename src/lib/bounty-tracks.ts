@@ -83,21 +83,43 @@ export function reconcileLandscapeL2Selection(
   return next.filter((v) => v !== "preliminary");
 }
 
-/** 景观三级专业互斥对：园建 / 园建含结构；给排水 / 给排水+喷灌 */
-const LANDSCAPE_L3_EXCLUSIVE_PAIRS: Array<[string, string]> = [
-  ["ls_garden", "ls_garden_struct"],
-  ["ls_drainage", "ls_drainage_irrigation"],
+/** 三级专业互斥对 */
+const L3_EXCLUSIVE_PAIRS: Array<{ a: string; b: string; message: string }> = [
+  {
+    a: "scheme_model",
+    b: "scheme_model_render",
+    message:
+      "「方案深化建模」与「方案深化建模 + 效果图」不可同时选择，请二选一。",
+  },
+  {
+    a: "scheme_model_render",
+    b: "scheme_render_existing",
+    message:
+      "「方案深化建模 + 效果图」与「效果图（已有模型）」不可同时选择，请二选一。",
+  },
+  {
+    a: "ls_garden",
+    b: "ls_garden_struct",
+    message:
+      "「景观园建专业」与「景观园建专业（含简单结构）」不可同时选择，请二选一。",
+  },
+  {
+    a: "ls_drainage",
+    b: "ls_drainage_irrigation",
+    message:
+      "「景观给排水专业」与「景观给排水 + 自动喷灌」不可同时选择，请二选一。",
+  },
 ];
 
 /**
- * 景观三级专业互斥。若某对同时出现，保留本次新勾选的一项。
+ * 三级专业互斥。若某对同时出现，保留本次新勾选的一项。
  */
 export function reconcileLandscapeL3Selection(
   prev: string[],
   next: string[],
 ): string[] {
   let resolved = next;
-  for (const [a, b] of LANDSCAPE_L3_EXCLUSIVE_PAIRS) {
+  for (const { a, b } of L3_EXCLUSIVE_PAIRS) {
     const hasA = resolved.includes(a);
     const hasB = resolved.includes(b);
     if (!hasA || !hasB) continue;
@@ -114,13 +136,8 @@ export function landscapeL3SelectionConflict(
   prev: string[],
   next: string[],
 ): string | null {
-  for (const [a, b] of LANDSCAPE_L3_EXCLUSIVE_PAIRS) {
-    if (next.includes(a) && next.includes(b)) {
-      if (a === "ls_garden") {
-        return "「景观园建专业」与「景观园建专业（含简单结构）」不可同时选择，请二选一。";
-      }
-      return "「景观给排水专业」与「景观给排水 + 自动喷灌」不可同时选择，请二选一。";
-    }
+  for (const { a, b, message } of L3_EXCLUSIVE_PAIRS) {
+    if (next.includes(a) && next.includes(b)) return message;
   }
   void prev;
   return null;

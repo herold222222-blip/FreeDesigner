@@ -20,7 +20,10 @@ import {
   type AdminOrderStatusFilter,
   type AdminOrderTypeFilter,
 } from "@/lib/admin-order-filters";
-import { isInProgressSupervisionOrder, pickDefaultSupervisionTab } from "@/lib/order-supervision";
+import {
+  isInProgressSupervisionOrder,
+  pickDefaultSupervisionTab,
+} from "@/lib/order-supervision";
 import {
   countPaymentOverdueOrders,
   getOrderPaymentOverdueInfo,
@@ -101,11 +104,10 @@ function AdminOrdersInner() {
       countAdminOrdersByType(
         orders,
         query,
-        statusFilter,
         specialtyFilter,
         partyIndex,
       ),
-    [orders, query, statusFilter, specialtyFilter, partyIndex],
+    [orders, query, specialtyFilter, partyIndex],
   );
 
   const filteredOrders = useMemo(
@@ -154,6 +156,20 @@ function AdminOrdersInner() {
       ),
     );
   }, [searchParams, loading, statusCounts]);
+
+  const prevTypeFilter = useRef(typeFilter);
+  useEffect(() => {
+    if (prevTypeFilter.current === typeFilter) return;
+    prevTypeFilter.current = typeFilter;
+    if (searchParams.get("status")) return;
+    setStatusFilter(
+      pickDefaultSupervisionTab(
+        statusCounts,
+        ADMIN_DEFAULT_TAB_PRIORITY,
+        "all",
+      ),
+    );
+  }, [typeFilter, statusCounts, searchParams]);
 
   const inProgressCount = orders.filter((o) =>
     isInProgressSupervisionOrder(o),

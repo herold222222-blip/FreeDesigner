@@ -175,12 +175,12 @@ export function HeaderUserMenu({
             {name.slice(0, 1)}
           </AvatarFallback>
         </Avatar>
-        <span className="max-w-[12rem] truncate text-sm font-medium text-ink">
+        <span className="hidden max-w-[12rem] truncate text-sm font-medium text-ink sm:inline">
           {displayName}
         </span>
         <ChevronDown
           className={cn(
-            "h-3.5 w-3.5 text-ink-40 transition-transform",
+            "hidden h-3.5 w-3.5 text-ink-40 transition-transform sm:block",
             open && "rotate-180",
           )}
         />

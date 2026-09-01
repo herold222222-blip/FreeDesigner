@@ -1,15 +1,20 @@
+"use client";
+
 import type { Designer } from "@/lib/types";
 import {
   designerGenderLabel,
   resolveDesignerGender,
   type DesignerGender,
 } from "@/lib/designer-gender";
+import { useDesignerContactPrivacy } from "@/lib/use-designer-contact-privacy";
 import { cn } from "@/lib/utils";
 
 type DesignerNameProps = {
-  designer: Pick<Designer, "name" | "subjectType" | "gender">;
-  /** 对外展示用脱敏姓名（如 陈工），未传则使用 designer.name */
+  designer: Pick<Designer, "id" | "name" | "subjectType" | "gender">;
+  /** 对外展示用脱敏姓名（如 陈工），未传则按隐私规则自动脱敏 */
   displayName?: string;
+  /** 双方已最终签订合同：委托人对该设计师可见全名 */
+  revealFullName?: boolean;
   className?: string;
   nameClassName?: string;
   symbolClassName?: string;
@@ -60,12 +65,17 @@ function GenderSymbol({
 export function DesignerName({
   designer,
   displayName,
+  revealFullName = false,
   className,
   nameClassName,
   symbolClassName,
 }: DesignerNameProps) {
   const gender = resolveDesignerGender(designer);
-  const label = displayName ?? designer.name;
+  const privacy = useDesignerContactPrivacy(designer);
+  const label =
+    revealFullName || privacy.canViewFull
+      ? designer.name
+      : (displayName ?? privacy.displayName);
 
   return (
     <span className={cn("inline-flex min-w-0 items-center gap-1", className)}>

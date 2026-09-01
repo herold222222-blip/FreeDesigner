@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import {
   labelEntrustBillingMode,
   parseRegularEntrustDescription,
@@ -8,7 +9,12 @@ import {
   resolveTimeDifficultyDisplay,
   type TimeDifficultyDisplay,
 } from "@/lib/landscape-area-difficulty";
-import type { ClientLevel, OrderQuoteLine } from "@/lib/types";
+import type { BountyTrack, ClientLevel, OrderQuoteLine } from "@/lib/types";
+import { getTrackLabelParts } from "@/lib/bounty-filters";
+import {
+  maskPhonesInText,
+  resolveVisiblePhone,
+} from "@/lib/designer-contact-privacy";
 import { DEFAULT_CLIENT_LEVEL } from "@/lib/level-management";
 import { ClientLevelBadge } from "@/components/domain/level-badges";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -23,7 +29,80 @@ const BILLING_META_LABELS = new Set([
   "工时",
   "雇佣",
   "三级专业",
+  "服务方式",
+  "专业档位",
+  "计费单位",
+  "服务期",
+  "已选日期",
+  "折算明细",
+  "数量",
+  "单价",
+  "委托人填写费用",
+  "平台服务费",
 ]);
+
+const AREA_L3_MARKER = " · 三级专业：";
+
+function splitSpecialtyLabels(raw: string): string[] {
+  return raw
+    .split(/[、,，]/)
+    .map((s) => s.trim())
+    .filter((s) => s && s !== "—");
+}
+
+function extrasFromQuoteLines(quoteLines?: OrderQuoteLine[]): {
+  area?: string;
+  l3Labels: string[];
+} {
+  if (!quoteLines?.length) return { l3Labels: [] };
+  const sqm = quoteLines.find((l) => l.unit === "sqm");
+  const l3Labels = [
+    ...new Set(
+      quoteLines
+        .map((l) => (l.l3Label || l.trackLabel || "").trim())
+        .filter(Boolean),
+    ),
+  ];
+  return {
+    area: sqm ? `${sqm.quantity} ㎡` : undefined,
+    l3Labels,
+  };
+}
+
+/** 从计费摘要抽出面积 / 三级专业，并从计费卡片中去掉（改到专业需求展示） */
+function extractSpecialtyFromBilling(detailLines: string[]): {
+  area?: string;
+  l3Labels: string[];
+  remaining: string[];
+} {
+  let area: string | undefined;
+  const l3Labels: string[] = [];
+  const remaining: string[] = [];
+
+  for (const line of detailLines) {
+    if (line.startsWith("面积：")) {
+      const value = line.slice("面积：".length).trim();
+      const markerIdx = value.indexOf(AREA_L3_MARKER);
+      if (markerIdx >= 0) {
+        area = value.slice(0, markerIdx).trim() || undefined;
+        l3Labels.push(
+          ...splitSpecialtyLabels(value.slice(markerIdx + AREA_L3_MARKER.length)),
+        );
+      } else {
+        area = value || undefined;
+      }
+      continue;
+    }
+    if (line.startsWith("二级专业：")) continue;
+    if (line.startsWith("三级专业：")) {
+      l3Labels.push(...splitSpecialtyLabels(line.slice("三级专业：".length)));
+      continue;
+    }
+    remaining.push(line);
+  }
+
+  return { area, l3Labels: [...new Set(l3Labels)], remaining };
+}
 
 export function quoteLinesFromOrder(order: {
   quote?: { lines?: OrderQuoteLine[] } | null;
@@ -139,15 +218,74 @@ function BillingDetailRow({
   );
 }
 
+function SpecialtyDemandCard({
+  track,
+  area,
+  extraL3Labels = [],
+}: {
+  track?: BountyTrack;
+  area?: string;
+  extraL3Labels?: string[];
+}) {
+  const parts = track
+    ? getTrackLabelParts(track)
+    : { l1: "", l2List: [] as string[], l3List: [] as string[] };
+  const l3List = parts.l3List.length > 0 ? parts.l3List : extraL3Labels;
+  return (
+    <section className="rounded-xl border border-ink-20 bg-ink-20/15 p-4">
+      <div className="text-xs font-medium uppercase tracking-wider text-ink-40">
+        专业需求
+      </div>
+      <dl className="mt-3 space-y-2.5">
+        <div className="text-sm">
+          <dt className="text-[11px] text-ink-40">一级专业</dt>
+          <dd className="mt-0.5 font-medium text-ink">{parts.l1 || "—"}</dd>
+        </div>
+        <div className="text-sm">
+          <dt className="text-[11px] text-ink-40">二级专业</dt>
+          <dd className="mt-0.5 space-y-1 font-medium text-ink">
+            {parts.l2List.length > 0 ? (
+              parts.l2List.map((label) => <div key={label}>{label}</div>)
+            ) : (
+              <div>—</div>
+            )}
+          </dd>
+        </div>
+        <div className="text-sm">
+          <dt className="text-[11px] text-ink-40">三级专业</dt>
+          <dd className="mt-0.5 space-y-1 font-medium text-ink">
+            {l3List.length > 0 ? (
+              l3List.map((label) => <div key={label}>{label}</div>)
+            ) : (
+              <div>—</div>
+            )}
+          </dd>
+        </div>
+        {area ? (
+          <div className="text-sm">
+            <dt className="text-[11px] text-ink-40">面积</dt>
+            <dd className="mt-0.5 font-medium text-ink">{area}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </section>
+  );
+}
+
 export function OrderEntrustDescription({
   description,
   className,
   quoteLines,
+  primaryTrack,
   orderer,
+  afterNotes,
+  revealContactPhone = false,
 }: {
   description: string;
   className?: string;
   quoteLines?: OrderQuoteLine[];
+  /** 悬赏等：展示一 / 二 / 三级专业需求 */
+  primaryTrack?: BountyTrack;
   /** 管理员 / 超级管理员：展示下单账号信息 */
   orderer?: {
     name: string;
@@ -155,19 +293,50 @@ export function OrderEntrustDescription({
     phone?: string | null;
     level?: ClientLevel | null;
   } | null;
+  /** 项目备注下方插槽 */
+  afterNotes?: ReactNode;
+  /** 双方签完合同或管理员 / 本人可见完整电话 */
+  revealContactPhone?: boolean;
 }) {
   const parsed = parseRegularEntrustDescription(description);
+  const visibleDescription = revealContactPhone
+    ? description
+    : maskPhonesInText(description || "");
+  const contactPhone = resolveVisiblePhone(
+    parsed.contact?.contactPhone,
+    revealContactPhone,
+  );
+  const ordererPhone = resolveVisiblePhone(orderer?.phone, revealContactPhone);
+
+  const quoteExtras = extrasFromQuoteLines(quoteLines);
+  const billingExtras = parsed.billing
+    ? extractSpecialtyFromBilling(parsed.billing.detailLines)
+    : { area: undefined, l3Labels: [] as string[], remaining: [] as string[] };
+  const specialtyArea = billingExtras.area ?? quoteExtras.area;
+  const specialtyL3 =
+    billingExtras.l3Labels.length > 0
+      ? billingExtras.l3Labels
+      : quoteExtras.l3Labels;
+  const showSpecialtyCard =
+    Boolean(primaryTrack) || Boolean(specialtyArea) || specialtyL3.length > 0;
 
   if (!parsed.structured) {
     return (
-      <p
-        className={
-          className ??
-          "max-w-3xl whitespace-pre-wrap text-sm leading-relaxed text-ink-60"
-        }
-      >
-        {description || "—"}
-      </p>
+      <div className={className ?? "mt-4 space-y-4"}>
+        {showSpecialtyCard ? (
+          <div className="grid gap-3 md:grid-cols-2">
+            <SpecialtyDemandCard
+              track={primaryTrack}
+              area={specialtyArea}
+              extraL3Labels={specialtyL3}
+            />
+          </div>
+        ) : null}
+        <p className="max-w-3xl whitespace-pre-wrap text-sm leading-relaxed text-ink-60">
+          {visibleDescription || "—"}
+        </p>
+        {afterNotes}
+      </div>
     );
   }
 
@@ -188,11 +357,12 @@ export function OrderEntrustDescription({
                 value: parsed.contact.contactName,
               }
             : null,
-          parsed.contact.contactPhone
+          contactPhone
             ? {
                 icon: Phone,
                 label: "电话",
-                value: parsed.contact.contactPhone,
+                value: contactPhone.display,
+                href: contactPhone.href,
               }
             : null,
           parsed.contact.projectCity
@@ -244,12 +414,12 @@ export function OrderEntrustDescription({
                 <div className="min-w-0">
                   <dt className="text-[11px] text-ink-40">手机号码</dt>
                   <dd className="mt-0.5 break-words font-medium text-ink">
-                    {orderer.phone ? (
-                      <a href={`tel:${orderer.phone}`} className="hover:text-brand">
-                        {orderer.phone}
+                    {ordererPhone?.href ? (
+                      <a href={ordererPhone.href} className="hover:text-brand">
+                        {ordererPhone.display}
                       </a>
                     ) : (
-                      "—"
+                      ordererPhone?.display ?? "—"
                     )}
                   </dd>
                 </div>
@@ -287,11 +457,8 @@ export function OrderEntrustDescription({
                     <div className="min-w-0">
                       <dt className="text-[11px] text-ink-40">{row.label}</dt>
                       <dd className="mt-0.5 break-words font-medium text-ink">
-                        {row.label === "电话" ? (
-                          <a
-                            href={`tel:${row.value}`}
-                            className="hover:text-brand"
-                          >
+                        {row.label === "电话" && "href" in row && row.href ? (
+                          <a href={row.href} className="hover:text-brand">
                             {row.value}
                           </a>
                         ) : (
@@ -306,8 +473,21 @@ export function OrderEntrustDescription({
           </section>
         ) : null}
 
+        {showSpecialtyCard ? (
+          <SpecialtyDemandCard
+            track={primaryTrack}
+            area={specialtyArea}
+            extraL3Labels={specialtyL3}
+          />
+        ) : null}
+
         {parsed.billing ? (
-          <section className="rounded-xl border border-ink-20 bg-ink-20/15 p-4">
+          <section
+            className={cn(
+              "rounded-xl border border-ink-20 bg-ink-20/15 p-4",
+              orderer ? "md:col-span-3" : "md:col-span-2",
+            )}
+          >
             <div className="flex items-center gap-2">
               <Clock3 className="h-3.5 w-3.5 text-ink-40" />
               <div className="text-xs font-medium uppercase tracking-wider text-ink-40">
@@ -321,9 +501,9 @@ export function OrderEntrustDescription({
                   {labelEntrustBillingMode(parsed.billing.billingModeRaw)}
                 </span>
               </div>
-              {parsed.billing.detailLines.length > 0 ? (
+              {billingExtras.remaining.length > 0 ? (
                 <ul className="space-y-2 border-t border-ink-20/80 pt-2.5">
-                  {parsed.billing.detailLines.map((line) => (
+                  {billingExtras.remaining.map((line) => (
                     <BillingDetailRow
                       key={line}
                       line={line}
@@ -355,13 +535,19 @@ export function OrderEntrustDescription({
             项目备注
           </div>
           <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-ink">
-            {parsed.brief}
+            {revealContactPhone ? parsed.brief : maskPhonesInText(parsed.brief)}
           </p>
         </section>
       ) : null}
 
+      {afterNotes}
+
       {parsed.footerNote ? (
-        <p className="text-xs leading-relaxed text-ink-40">{parsed.footerNote}</p>
+        <p className="text-xs leading-relaxed text-ink-40">
+          {revealContactPhone
+            ? parsed.footerNote
+            : maskPhonesInText(parsed.footerNote)}
+        </p>
       ) : null}
     </div>
   );

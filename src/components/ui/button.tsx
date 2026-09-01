@@ -23,9 +23,9 @@ const buttonVariants = cva(
         soft: "bg-ink-20/40 text-ink hover:bg-ink-20/70",
       },
       size: {
-        default: "h-10 px-5",
-        sm: "h-9 px-4 text-xs",
-        lg: "h-12 px-7 text-base",
+        default: "h-10 min-w-0 px-4 sm:px-5",
+        sm: "h-9 px-3 text-xs sm:px-4",
+        lg: "h-11 min-w-0 px-4 text-sm sm:h-12 sm:px-7 sm:text-base",
         icon: "h-10 w-10",
       },
     },

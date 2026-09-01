@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { handle, ok, fail } from "@/lib/server/api";
 import { requireSession } from "@/lib/server/auth";
 import { getBounty, getDesigner, saveBounty } from "@/lib/server/repo";
-import { isSameAccountClientAndDesigner } from "@/lib/server/inbox";
+import { isSameAccountClientAndDesigner, notifyClientBountyApplication } from "@/lib/server/inbox";
 import {
   designerHasL3,
   normalizeBountyTrack,
@@ -12,6 +12,8 @@ import {
   designerCoversProjectType,
   projectTypeMismatchMessage,
 } from "@/lib/designer-portfolio-readiness";
+import { isBountyValidityExpired } from "@/lib/bounty-validity";
+import { applyBountyPublicPrivacyWithContract } from "@/lib/server/bounty-hall-privacy";
 import type { BountyApplicant } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +30,9 @@ export async function POST(
     const bounty = await getBounty(params.id);
     if (!bounty) return fail(404, "悬赏不存在");
     if (bounty.status !== "open") return fail(409, "该悬赏已停止报名");
+    if (isBountyValidityExpired(bounty.validUntil)) {
+      return fail(409, "该悬赏已过有效期，无法报名");
+    }
     if (bounty.applicants.some((a) => a.designerId === session.identityId)) {
       return fail(409, "你已报名该悬赏");
     }
@@ -69,6 +74,14 @@ export async function POST(
     };
     bounty.applicants = [...bounty.applicants, applicant];
     await saveBounty(bounty);
-    return ok(bounty);
+    await notifyClientBountyApplication({
+      publisherId: bounty.publisherId,
+      bountyId: bounty.id,
+      bountyTitle: bounty.title,
+      bountyCode: bounty.code,
+      designerName: designer.name,
+      applicantCount: bounty.applicants.length,
+    });
+    return ok(await applyBountyPublicPrivacyWithContract(bounty, session));
   });
 }

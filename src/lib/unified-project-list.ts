@@ -8,7 +8,18 @@ import {
   type BountyStatusFilter,
 } from "@/lib/bounty-manage";
 import { DESIGNER_ORDER_STATUS_LABEL } from "@/lib/designer-order-status-filter";
-import { resolveDisplayOrderStatus } from "@/lib/order-lifecycle";
+import { isContractFullySigned, resolveDisplayOrderStatus } from "@/lib/order-lifecycle";
+import { needsClientReview } from "@/lib/client-review";
+import {
+  isAwaitingClientPaymentOrder,
+  isAwaitingClientSignOrder,
+  isAwaitingDesignerSignOrder,
+  isAwaitingReviewOrder,
+  isInProgressSupervisionOrder,
+  isInRevisionSupervisionOrder,
+} from "@/lib/order-supervision";
+import { maskDesignerPublicName } from "@/lib/designer-contact-privacy";
+import { bountyDesignerTakeHomeFromBounty } from "@/lib/bounty-invoice";
 import type { Bounty, Order, OrderSource, OrderStatus, Specialty } from "@/lib/types";
 
 export type ProjectListCategory =
@@ -33,7 +44,7 @@ export const PROJECT_LIST_CATEGORY_TABS: {
   { value: "area", label: "常规面积" },
 ];
 
-/** 委托人平台订单页：不含悬赏、常规面积分类 */
+/** 委托人常规订单页：不含悬赏、常规面积分类 */
 export const CLIENT_PLATFORM_CATEGORY_TABS =
   PROJECT_LIST_CATEGORY_TABS.filter(
     (t) => t.value !== "bounty" && t.value !== "area",
@@ -41,7 +52,7 @@ export const CLIENT_PLATFORM_CATEGORY_TABS =
 
 export type PlatformSpecialtyFilter = Specialty | "all";
 
-/** 平台订单 · 一级专业筛选 */
+/** 常规订单 · 一级专业筛选 */
 export const PLATFORM_SPECIALTY_FILTER_TABS: {
   value: PlatformSpecialtyFilter;
   label: string;
@@ -51,13 +62,42 @@ export const PLATFORM_SPECIALTY_FILTER_TABS: {
 ];
 
 export function isPlatformOrderSource(order: Order): boolean {
-  const source = inferOrderSource(order);
-  return source !== "bounty";
+  return !isBountySourcedOrder(order);
 }
 
 export function isDirectedOrderSource(order: Order): boolean {
   const source = inferOrderSource(order);
   return source === "directed" || source === "scan";
+}
+
+export function isBountySourcedOrder(
+  order: Pick<Order, "bountyId" | "orderSource">,
+): boolean {
+  if (order.bountyId) return true;
+  return order.orderSource === "bounty";
+}
+
+/** 委托人打开订单详情：悬赏履约留在「我的悬赏」 */
+export function clientOrderDetailHref(
+  order: Pick<Order, "id" | "bountyId" | "orderSource">,
+): string {
+  if (isBountySourcedOrder(order) && order.bountyId) {
+    return `/client/bounties/${order.bountyId}`;
+  }
+  return `/client/orders/${order.id}`;
+}
+
+/** 委托人订单详情返回列表 */
+export function clientOrderListNav(
+  order: Pick<Order, "bountyId" | "orderSource">,
+): { href: string; label: string } {
+  if (isBountySourcedOrder(order) && order.bountyId) {
+    return { href: "/client/bounties", label: "返回我的悬赏" };
+  }
+  if (isDirectedOrderSource(order)) {
+    return { href: "/client/directed-orders", label: "返回定向下单" };
+  }
+  return { href: "/client/orders", label: "返回常规订单" };
 }
 
 export function isPlatformProjectItem(item: UnifiedProjectItem): boolean {
@@ -75,11 +115,13 @@ export function isDirectedProjectItem(item: UnifiedProjectItem): boolean {
   return false;
 }
 
-/** 设计师平台项目：悬赏报名与常规接单，不含主页定向下单与扫码下单 */
+/** 设计师平台项目：常规接单，不含悬赏、主页定向下单与扫码下单 */
 export function isDesignerPlatformProjectItem(item: UnifiedProjectItem): boolean {
-  if (item.kind === "bounty") return true;
-  if (item.kind === "scan" || item.kind === "draft") return false;
+  if (item.kind === "bounty" || item.kind === "scan" || item.kind === "draft") {
+    return false;
+  }
   if (item.order && isDirectedOrderSource(item.order)) return false;
+  if (item.order && isBountySourcedOrder(item.order)) return false;
   return item.kind === "order";
 }
 
@@ -93,6 +135,8 @@ export interface UnifiedProjectItem {
   status: string;
   statusLabel: string;
   totalAmount: number;
+  /** 设计师看悬赏时：实际到手金额（主金额为委托金额） */
+  takeHomeAmount?: number;
   createdAt: string;
   href: string;
   specialty?: Specialty;
@@ -101,6 +145,8 @@ export interface UnifiedProjectItem {
   tags: string[];
   order?: Order;
   scan?: import("@/lib/scan-order").ScanOrder;
+  alreadyApplied?: boolean;
+  bountyWon?: boolean;
 }
 
 function inferOrderSource(order: Order): OrderSource {
@@ -141,6 +187,14 @@ export function orderDisplayTags(order: Order): string[] {
 /** 通过 id 解析展示名称（设计师或委托人，id 前缀不同，统一查表） */
 export type NameResolver = (id?: string) => string | undefined;
 
+function clientFacingDesignerName(
+  name: string | undefined,
+  revealFullName: boolean,
+): string | undefined {
+  if (!name) return name;
+  return revealFullName ? name : maskDesignerPublicName(name);
+}
+
 function orderToItem(
   order: Order,
   perspective: "client" | "designer",
@@ -148,7 +202,10 @@ function orderToItem(
 ): UnifiedProjectItem {
   const counterpartyName =
     perspective === "client"
-      ? nameById(order.designerId)
+      ? clientFacingDesignerName(
+          nameById(order.designerId),
+          isContractFullySigned(order),
+        )
       : nameById(order.clientId);
   const displayStatus = resolveDisplayOrderStatus(order);
   return {
@@ -167,7 +224,7 @@ function orderToItem(
     createdAt: order.createdAt,
     href:
       perspective === "client"
-        ? `/client/orders/${order.id}`
+        ? clientOrderDetailHref(order)
         : `/designer/orders/${order.id}`,
     specialty: order.specialty,
     counterpartyName,
@@ -177,19 +234,53 @@ function orderToItem(
   };
 }
 
+function designerAppliedBountyStatusLabel(
+  bounty: Bounty,
+  designerId?: string,
+): string {
+  if (
+    bounty.status === "open" ||
+    bounty.status === "in_review" ||
+    bounty.status === "paused"
+  ) {
+    return "待委托人确认";
+  }
+  if (bounty.status === "awarded") {
+    return designerId && bounty.awardedDesignerId === designerId
+      ? "已中选"
+      : "未中选";
+  }
+  if (bounty.status === "completed") return "已完成";
+  if (bounty.status === "closed") return "已取消";
+  return bountyStatusLabel(bounty.status);
+}
+
 function bountyToItem(
   bounty: Bounty,
   perspective: "client" | "designer" = "client",
+  alreadyApplied = false,
+  designerId?: string,
+  order?: Order,
 ): UnifiedProjectItem {
   const trackLabels = getTrackLabelParts(bounty.primaryTrack);
+  const bountyWon = Boolean(
+    designerId && bounty.awardedDesignerId === designerId,
+  );
   return {
     id: bounty.id,
     kind: "bounty",
     title: bounty.title,
     code: bounty.code,
     status: bounty.status,
-    statusLabel: bountyStatusLabel(bounty.status),
+    statusLabel:
+      perspective === "designer" && alreadyApplied
+        ? designerAppliedBountyStatusLabel(bounty, designerId)
+        : bountyStatusLabel(bounty.status),
     totalAmount: bounty.reward,
+    takeHomeAmount:
+      perspective === "designer"
+        ? bountyDesignerTakeHomeFromBounty(bounty)
+        : undefined,
     createdAt: bounty.publishedAt,
     href:
       perspective === "client"
@@ -197,8 +288,12 @@ function bountyToItem(
         : `/bounties/${bounty.id}`,
     specialty: bounty.specialty,
     categories: ["bounty", "online"],
+    alreadyApplied,
+    bountyWon,
+    order,
     tags: [
       "悬赏",
+      alreadyApplied ? "已报名" : "",
       trackLabels.l2,
       trackLabels.l3,
       bounty.location.label,
@@ -213,7 +308,10 @@ function scanToItem(
 ): UnifiedProjectItem {
   const counterpartyName =
     perspective === "client"
-      ? nameById(scan.designerId)
+      ? clientFacingDesignerName(
+          nameById(scan.designerId),
+          scan.signedByClient && scan.signedByDesigner,
+        )
       : nameById(scan.clientId);
   const cats = new Set<Exclude<ProjectListCategory, "all">>();
   if (scan.pricingMode === "hourly") {
@@ -269,7 +367,7 @@ function draftToItem(
   }
   const statusLabel =
     draft.payload.status === "pending_schedule"
-      ? "待确认档期"
+      ? "待确认匹配"
       : draft.payload.status === "pending_contract"
         ? "待签约"
         : draft.payload.status === "rejected"
@@ -286,7 +384,7 @@ function draftToItem(
     totalAmount: draft.payload.totalAmount,
     createdAt: draft.createdAt,
     href: "/client/directed-orders",
-    counterpartyName: designerName,
+    counterpartyName: clientFacingDesignerName(designerName, false),
     categories: [...cats],
     tags: ["定向下单", draft.payload.billingMode === "monthly" ? "按月" : "按工时", draft.payload.serviceMode === "onsite" ? "线下" : "线上"],
   };
@@ -346,11 +444,11 @@ export interface BuildUnifiedListInput {
   }>;
   draftBounties?: Array<{ id: string; createdAt: string; payload: Record<string, unknown> }>;
   scanOrders?: ScanOrder[];
-  /** 委托人平台订单：排除悬赏、定向下单及悬赏转化订单 */
+  /** 委托人常规订单：排除悬赏、定向下单及悬赏转化订单 */
   platformOrdersOnly?: boolean;
   /** 委托人定向下单：仅定向委托与定向草稿 */
   directedOrdersOnly?: boolean;
-  /** 委托人我的悬赏：仅悬赏与悬赏草稿 */
+  /** 委托人我的悬赏 / 设计师已报名悬赏订单 */
   bountiesOnly?: boolean;
 }
 
@@ -361,9 +459,38 @@ export function buildUnifiedProjectList(input: BuildUnifiedListInput): UnifiedPr
   const nameById: NameResolver = input.nameById ?? (() => undefined);
   const items: UnifiedProjectItem[] = [];
 
+  if (input.perspective === "designer" && input.bountiesOnly) {
+    const awardedBountyIds = new Set<string>();
+    for (const o of orders) {
+      const mine =
+        o.designerId === identityId ||
+        (o.trackAssignments ?? []).some((a) => a.designerId === identityId);
+      if (!mine || !isBountySourcedOrder(o)) continue;
+      items.push(orderToItem(o, "designer", nameById));
+      if (o.bountyId) awardedBountyIds.add(o.bountyId);
+    }
+    for (const b of bounties) {
+      const applied = b.applicants.some((a) => a.designerId === identityId);
+      if (!applied) continue;
+      if (awardedBountyIds.has(b.id)) continue;
+      items.push(bountyToItem(b, "designer", true, identityId));
+    }
+    return items.sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+  }
+
   if (input.perspective === "client" && input.bountiesOnly) {
+    const orderById = new Map(orders.map((o) => [o.id, o]));
+    const orderByBountyId = new Map<string, Order>();
+    for (const o of orders) {
+      if (o.bountyId) orderByBountyId.set(o.bountyId, o);
+    }
     for (const b of bounties.filter((x) => x.publisherId === identityId)) {
-      items.push(bountyToItem(b, "client"));
+      const linked =
+        (b.orderId ? orderById.get(b.orderId) : undefined) ??
+        orderByBountyId.get(b.id);
+      items.push(bountyToItem(b, "client", false, undefined, linked));
     }
     for (const d of input.draftBounties ?? []) {
       items.push(draftBountyToItem(d));
@@ -415,7 +542,7 @@ export function buildUnifiedProjectList(input: BuildUnifiedListInput): UnifiedPr
     if (!input.directedOrdersOnly) {
       for (const b of bounties) {
         if (b.applicants.some((a) => a.designerId === identityId)) {
-          items.push(bountyToItem(b, "designer"));
+          items.push(bountyToItem(b, "designer", true, identityId));
         }
       }
     }
@@ -455,12 +582,65 @@ export function filterBySpecialty(
   return items.filter((i) => i.specialty === specialty);
 }
 
+function itemMatchesClientBountyStatus(
+  item: UnifiedProjectItem,
+  status: BountyStatusFilter,
+): boolean {
+  if (status === "all") return true;
+  if (item.kind === "draft") return false;
+
+  if (status === "open" || status === "in_review" || status === "paused") {
+    return item.status === status;
+  }
+
+  if (status === "cancelled") {
+    return (
+      item.status === "closed" ||
+      item.status === "cancelled" ||
+      item.order?.status === "cancelled"
+    );
+  }
+
+  const order = item.order;
+  if (order) {
+    switch (status) {
+      case "in_progress":
+        return (
+          isInProgressSupervisionOrder(order) && !needsClientReview(order)
+        );
+      case "pending_payment":
+        return isAwaitingClientPaymentOrder(order);
+      case "pending_client_sign":
+        return isAwaitingClientSignOrder(order);
+      case "pending_designer_sign":
+        return isAwaitingDesignerSignOrder(order);
+      case "pending_review":
+        return isAwaitingReviewOrder(order);
+      case "pending_client_review":
+        return needsClientReview(order);
+      case "in_revision":
+        return isInRevisionSupervisionOrder(order);
+      case "completed":
+        return order.status === "completed" && !needsClientReview(order);
+      default:
+        return false;
+    }
+  }
+
+  if (status === "pending_client_sign") {
+    return item.status === "awarded";
+  }
+  if (status === "completed") {
+    return item.status === "completed";
+  }
+  return false;
+}
+
 export function filterByBountyStatus(
   items: UnifiedProjectItem[],
   status: BountyStatusFilter,
 ): UnifiedProjectItem[] {
-  if (status === "all") return items;
-  return items.filter((i) => i.status === status);
+  return items.filter((item) => itemMatchesClientBountyStatus(item, status));
 }
 
 export function bountyStatusCounts(
@@ -469,12 +649,8 @@ export function bountyStatusCounts(
   const counts = Object.fromEntries(
     BOUNTY_STATUS_FILTER_TABS.map((t) => [t.value, 0]),
   ) as Record<BountyStatusFilter, number>;
-  counts.all = items.length;
-  for (const item of items) {
-    const key = item.status as BountyStatusFilter;
-    if (key !== "all" && key in counts) {
-      counts[key] += 1;
-    }
+  for (const tab of BOUNTY_STATUS_FILTER_TABS) {
+    counts[tab.value] = filterByBountyStatus(items, tab.value).length;
   }
   return counts;
 }

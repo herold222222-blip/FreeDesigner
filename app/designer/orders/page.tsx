@@ -13,7 +13,7 @@ export default function DesignerOrdersPage() {
           平台项目
         </h2>
         <p className="mt-1 text-sm text-ink-60">
-          悬赏报名、常规委托、按工时/按月等项目统一在此查看；指定设计师下单见「定向订单」。
+          常规委托、按工时/按月等项目在此查看；已报名悬赏见「悬赏订单」，指定设计师下单见「定向订单」。
         </p>
       </div>
 

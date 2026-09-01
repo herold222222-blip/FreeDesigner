@@ -1,7 +1,7 @@
 import { SPECIALTY_TRACKS, resolveTrackLabels } from "@/lib/constants";
-import { getL3Label } from "@/lib/bounty-tracks";
+import { getL3Label, normalizeBountyTrack } from "@/lib/bounty-tracks";
 import { parseRegularEntrustDescription } from "@/lib/entrust-description";
-import type { Order, Specialty } from "@/lib/types";
+import type { BountyTrack, Order, Specialty } from "@/lib/types";
 
 /** 管理员委派时按订单拆出的专业分支（通常为三级专业） */
 export interface OrderAssignTrack {
@@ -89,7 +89,8 @@ export function extractOrderAssignTracks(order: Order): OrderAssignTrack[] {
   if (order.quote?.lines?.length) {
     for (const line of order.quote.lines) {
       if (!line.l3) continue;
-      const unitLabel = line.unit === "month" ? "个月" : "工日";
+      const unitLabel =
+        line.unit === "month" ? "个月" : line.unit === "sqm" ? "㎡" : "工日";
       push(
         buildTrack(
           l1,
@@ -133,15 +134,65 @@ export function extractOrderAssignTracks(order: Order): OrderAssignTrack[] {
   return out;
 }
 
+/**
+ * 客服确认用：在订单已解析的二级专业下，列出全部三级专业。
+ * 报价未勾选的专业也保留，便于展示「0 人」。
+ */
+export function listAllL3TracksForOrder(order: Order): OrderAssignTrack[] {
+  const extracted = extractOrderAssignTracks(order);
+  const l1 = order.specialty;
+  const root = SPECIALTY_TRACKS.find((t) => t.value === l1);
+  if (!root) return extracted;
+
+  const l2Values = new Set(extracted.map((t) => t.l2).filter(Boolean));
+  if (l2Values.size === 0) {
+    for (const label of preferredL2LabelsFromDescription(order.description ?? "")) {
+      const node = root.l2.find((n) => n.label === label);
+      if (node) l2Values.add(node.value);
+    }
+  }
+  const l2Nodes = l2Values.size
+    ? root.l2.filter((n) => l2Values.has(n.value))
+    : root.l2;
+
+  const byL3 = new Map(extracted.map((t) => [t.l3, t]));
+  const out: OrderAssignTrack[] = [];
+  const seen = new Set<string>();
+  for (const l2 of l2Nodes) {
+    for (const l3 of l2.l3) {
+      const key = `${l2.value}:${l3.value}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const existing = byL3.get(l3.value);
+      if (existing && existing.l2 === l2.value) {
+        out.push(existing);
+        continue;
+      }
+      out.push({
+        key,
+        l1,
+        l2: l2.value,
+        l3: l3.value,
+        l2Label: l2.label,
+        l3Label: l3.label,
+        quantityHint:
+          existing?.l2 === l2.value ? existing.quantityHint : undefined,
+      });
+    }
+  }
+  return out;
+}
+
 function findL3ByLabel(l1: Specialty, label: string): string | null {
   const root = SPECIALTY_TRACKS.find((t) => t.value === l1);
   if (!root) return null;
+  const normalized = label.replace(/（不含结构图）/g, "").trim();
   for (const l2 of root.l2) {
-    const hit = l2.l3.find((x) => x.label === label);
+    const hit = l2.l3.find((x) => x.label === normalized || x.label === label);
     if (hit) return hit.value;
   }
   // 宽松：去掉空白后再比一次
-  const compact = label.replace(/\s/g, "");
+  const compact = normalized.replace(/\s/g, "");
   for (const l2 of root.l2) {
     const hit = l2.l3.find((x) => x.label.replace(/\s/g, "") === compact);
     if (hit) return hit.value;
@@ -162,4 +213,46 @@ export function orderInvolvesDesigner(order: Order, designerId: string) {
 export function formatAssignTrackLabel(l1: Specialty, l2: string, l3: string) {
   const labels = resolveTrackLabels(l1, l2, l3);
   return `${labels.l2Label} · ${labels.l3Label || getL3Label(l1, l3)}`;
+}
+
+export function orderHasSpecialtyLevels(track?: BountyTrack | null) {
+  if (!track) return false;
+  const normalized = normalizeBountyTrack(track);
+  return normalized.l2.length > 0 || normalized.l3.length > 0;
+}
+
+/** 订单详情「专业需求」卡片：一级 / 二级 / 三级 */
+export function bountyTrackFromOrder(order: Order): BountyTrack {
+  const stored = order.primaryTrack
+    ? normalizeBountyTrack(order.primaryTrack)
+    : null;
+  const l2 = new Set<string>(stored?.l2 ?? []);
+  const l3 = new Set<string>(stored?.l3 ?? []);
+  for (const track of extractOrderAssignTracks(order)) {
+    if (track.l2) l2.add(track.l2);
+    if (track.l3) l3.add(track.l3);
+  }
+  for (const a of order.trackAssignments ?? []) {
+    if (a.l2) l2.add(a.l2);
+    if (a.l3) l3.add(a.l3);
+  }
+  for (const line of order.quote?.lines ?? []) {
+    if (line.l3) l3.add(line.l3);
+  }
+  if (l2.size === 0) {
+    const root = SPECIALTY_TRACKS.find((t) => t.value === order.specialty);
+    if (root) {
+      for (const label of preferredL2LabelsFromDescription(
+        order.description ?? "",
+      )) {
+        const node = root.l2.find((n) => n.label === label);
+        if (node) l2.add(node.value);
+      }
+    }
+  }
+  return {
+    l1: stored?.l1 ?? order.specialty,
+    l2: [...l2],
+    l3: [...l3],
+  };
 }

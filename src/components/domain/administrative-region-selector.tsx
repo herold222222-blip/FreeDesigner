@@ -17,9 +17,13 @@ export { AREA_ROOTS, getDefaultAdministrativeTriple, resolveAdministrativeTriple
 
 interface AdministrativeRegionSelectorProps {
   triple: AdministrativeTriple;
-  /** 任一级别变更后为完整三元组（地级变更时会自动回填首个区县） */
+  /** 任一级别变更后的三元组；区县选填，省市变更后不自动回填 */
   onTripleChange: (next: AdministrativeTriple) => void;
   className?: string;
+  /** 常规委托展示梯队与区域费率系数；悬赏自填金额时关闭 */
+  showRateCoefficient?: boolean;
+  /** 覆盖底部说明 */
+  footerNote?: string;
 }
 
 /**
@@ -29,6 +33,8 @@ export function AdministrativeRegionSelector({
   triple,
   onTripleChange,
   className,
+  showRateCoefficient = true,
+  footerNote,
 }: AdministrativeRegionSelectorProps) {
   const provinceNode = AREA_ROOTS.find((x) => x.value === triple.provinceCode);
   const cityOptions = provinceNode?.children ?? [];
@@ -36,18 +42,16 @@ export function AdministrativeRegionSelector({
   const countyOptions = cityNode?.children ?? [];
 
   useEffect(() => {
+    if (!triple.countyCode) return;
     const p = AREA_ROOTS.find((x) => x.value === triple.provinceCode);
     const cy = p?.children.find((x) => x.value === triple.cityCode);
     const opts = cy?.children ?? [];
-
-    if (opts.length === 0) return;
-    const matches =
-      !!triple.countyCode && opts.some((x) => x.value === triple.countyCode);
-    if (!matches && opts[0]) {
+    const matches = opts.some((x) => x.value === triple.countyCode);
+    if (!matches) {
       onTripleChange({
         provinceCode: triple.provinceCode,
         cityCode: triple.cityCode,
-        countyCode: opts[0]!.value,
+        countyCode: null,
       });
     }
   }, [
@@ -75,8 +79,7 @@ export function AdministrativeRegionSelector({
     const c0 = p?.children?.[0];
     if (!p || !c0)
       return pushTriple(pCode, "", null);
-    const d0 = c0.children[0]?.value ?? null;
-    pushTriple(p.value, c0.value, d0);
+    pushTriple(p.value, c0.value, null);
   };
 
   const onCityPick = (cyCode: string, pOverride?: AdministrativeTriple) => {
@@ -85,10 +88,7 @@ export function AdministrativeRegionSelector({
     const cy = pnode?.children.find((x) => x.value === cyCode);
     if (!pnode || !cy)
       return pushTriple(base.provinceCode, cyCode, null);
-    const d0 =
-      cy.children.length ? cy.children[0]!.value
-      : null;
-    pushTriple(pnode.value, cy.value, d0);
+    pushTriple(pnode.value, cy.value, null);
   };
 
   const onCountyPick = (ctCode: string) => {
@@ -101,13 +101,13 @@ export function AdministrativeRegionSelector({
     resolution &&
     (resolution.tier === "tier6" ?
       (
-        <Badge variant="muted" className="shrink-0 text-[10px]">
+        <Badge variant="muted" className="max-w-full shrink text-[10px] whitespace-normal">
           {REGION_TIER_META.tier6.label}：所选地级市不在前五梯队明细名录中时，按文档归第六梯队 ·{" "}
           {Math.round(REGION_TIER_META.tier6.coefficient * 100)}%
         </Badge>
       )
     : (
-        <Badge variant="muted" className="shrink-0 text-[10px]">
+        <Badge variant="muted" className="max-w-full shrink text-[10px] whitespace-normal">
           文档 {REGION_TIER_META[resolution.tier].label} · 设计师区域系数{" "}
           {Math.round(REGION_TIER_META[resolution.tier].coefficient * 100)}%
         </Badge>
@@ -126,7 +126,7 @@ export function AdministrativeRegionSelector({
         <label className="space-y-1">
           <span className="text-[11px] text-ink-40">省 / 直辖市 / 自治区</span>
           <select
-            className="h-11 w-full rounded-xl border border-ink-20 bg-white px-2 text-xs sm:text-sm"
+            className="h-11 w-full rounded-xl border border-ink-20 bg-white px-2 text-base sm:text-sm"
             value={triple.provinceCode}
             onChange={(e) => onProvincePick(e.target.value)}
           >
@@ -144,7 +144,7 @@ export function AdministrativeRegionSelector({
           <span className="text-[11px] text-ink-40">地级市</span>
           <select
             disabled={!triple.provinceCode || cityOptions.length === 0}
-            className="h-11 w-full rounded-xl border border-ink-20 bg-white px-2 text-xs sm:text-sm disabled:opacity-50"
+            className="h-11 w-full rounded-xl border border-ink-20 bg-white px-2 text-base sm:text-sm disabled:opacity-50"
             value={triple.cityCode}
             onChange={(e) =>
               triple.provinceCode ?
@@ -161,10 +161,10 @@ export function AdministrativeRegionSelector({
           </select>
         </label>
         <label className="space-y-1">
-          <span className="text-[11px] text-ink-40">区县（县级）</span>
+          <span className="text-[11px] text-ink-40">区县（县级，选填）</span>
           <select
             disabled={!triple.cityCode || countyOptions.length === 0}
-            className="h-11 w-full rounded-xl border border-ink-20 bg-white px-2 text-xs sm:text-sm disabled:opacity-50"
+            className="h-11 w-full rounded-xl border border-ink-20 bg-white px-2 text-base sm:text-sm disabled:opacity-50"
             value={
               triple.countyCode !== null &&
               countyOptions.some((x) => x.value === triple.countyCode)
@@ -194,13 +194,23 @@ export function AdministrativeRegionSelector({
 
       <div className="flex flex-wrap items-center gap-2 rounded-xl bg-ink-20/30 px-3 py-2 text-[11px] text-ink-60">
         <span className="text-ink">已选：{displayLine}</span>
-        {tierBadge}
+        {showRateCoefficient ? tierBadge : null}
       </div>
 
       <p className="text-[11px] leading-relaxed text-ink-40">
-        项目所在地按民政部标准行政区划选择；梯队与设计师区域费率系数由所选
-        <span className="font-medium text-ink">地级市</span>
-        （或直辖市同名市）对照平台文档费率表判定，覆盖全国区县，不限于简短城市名单列表。
+        {footerNote ? (
+          footerNote
+        ) : showRateCoefficient ? (
+          <>
+            项目所在地按民政部标准行政区划选择；梯队与设计师区域费率系数由所选
+            <span className="font-medium text-ink">地级市</span>
+            （或直辖市同名市）对照平台文档费率表判定，覆盖全国区县，不限于简短城市名单列表。
+          </>
+        ) : (
+          <>
+            项目所在地按民政部标准行政区划选择，覆盖全国区县。悬赏金额由委托人自行填写，不按区域系数计价。
+          </>
+        )}
       </p>
     </div>
   );

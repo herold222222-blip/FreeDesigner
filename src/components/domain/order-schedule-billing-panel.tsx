@@ -24,10 +24,17 @@ import type { Order, PaymentStage } from "@/lib/types";
 import { isContractFullySigned, isOrderCancelled } from "@/lib/order-lifecycle";
 import { getActivePaymentStageId, getStagePaymentDeadline } from "@/lib/order-payment-overdue";
 import { PaymentDeadlineNote } from "@/components/domain/payment-deadline-note";
+import { PaymentEscrowHint } from "@/components/domain/payment-escrow-hint";
+import { StagePayButton } from "@/components/domain/stage-pay-button";
 import { resolveStagePaymentSplits } from "@/lib/stage-payment-splits";
 import {
-  DAILY_BILLING_RULE,
-  MONTHLY_BILLING_RULE_FULL,
+  formatDailyBillingRule,
+  formatEscrowRemaining,
+  formatMonthlyBillingRuleFull,
+  resolveStageEscrowEndsAt,
+} from "@/lib/platform-commerce";
+import { usePlatformPricingStore } from "@/store/platform-pricing-store";
+import {
   buildDailyPaymentItems,
   buildMonthlyPaymentItems,
   canRequestServiceExtension,
@@ -169,7 +176,7 @@ export function OrderServiceControlCard({
         )}
         {!isDesignerView && !contractSigned && !cancelled ? (
           <p className="text-xs text-ink-40">
-            双方完成电子签约后，方可支付、延长或终止服务。
+            各方确认费用并完成电子签约后，方可支付、延长或终止服务。
           </p>
         ) : null}
         <p className="text-xs leading-relaxed text-ink-60">
@@ -243,6 +250,7 @@ export function OrderScheduleBillingPanel({
   );
 
   const [pendingPayItem, setPendingPayItem] = useState<TimeBillingPaymentItem | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     if (designer) hydrateFromDesigner(designer);
@@ -253,17 +261,30 @@ export function OrderScheduleBillingPanel({
     [getEvents, designerId, order],
   );
 
+  const commerce = usePlatformPricingStore((s) => s.config.commerce);
   const isMonthly = order.billingMode === "monthly";
   const paymentItems = useMemo(
     () =>
       isMonthly
-        ? buildMonthlyPaymentItems(order)
-        : buildDailyPaymentItems(order),
-    [order, isMonthly],
+        ? buildMonthlyPaymentItems(order, commerce)
+        : buildDailyPaymentItems(order, commerce),
+    [order, isMonthly, commerce],
   );
+  const planTotal = useMemo(() => {
+    const sum = paymentItems.reduce((s, item) => s + item.amount, 0);
+    return sum > 0 ? sum : order.totalAmount;
+  }, [paymentItems, order.totalAmount]);
+
+  useEffect(() => {
+    if (!paymentItems.some((item) => item.status === "frozen")) return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, [paymentItems]);
 
   const monthlyFee = getMonthlyUnitFee(order);
-  const ruleText = isMonthly ? MONTHLY_BILLING_RULE_FULL : DAILY_BILLING_RULE;
+  const ruleText = isMonthly
+    ? formatMonthlyBillingRuleFull(commerce)
+    : formatDailyBillingRule(commerce);
   const cancelled = isOrderCancelled(order);
   const contractSigned = isContractFullySigned(order);
   const isDesignerView = perspective === "designer";
@@ -307,7 +328,7 @@ export function OrderScheduleBillingPanel({
           <div>
             <h3 className="text-sm font-semibold text-ink">按月工时日历</h3>
             <p className="mt-1 text-xs text-ink-60">
-              红色为工作日服务（不含周末与法定节假日）；灰色为休息日；琥珀色「付」为支付节点（首月预付为开始服务日前 3 天，此后每月 25 日 17:00 前；遇周末或节假日提前至前一个工作日）。
+              红色为工作日服务（不含周末与法定节假日）；灰色为休息日；琥珀色「付」为支付节点（首月预付为开始服务日前 {commerce.monthlyFirstPrepayLeadDays} 天，此后每月 {commerce.monthlyPrepayDay} 日 {String(commerce.billingCutoffHour).padStart(2, "0")}:00 前；遇周末或节假日提前至前一个工作日）。
             </p>
           </div>
           <OrderMonthlyServiceCalendar order={order} />
@@ -323,8 +344,12 @@ export function OrderScheduleBillingPanel({
       <div className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-ink">
           <Clock className="h-4 w-4 text-ink-60" />
-          付款安排
+          付款计划
+          <span className="ml-auto rounded-lg bg-rose-600 px-5 py-1.5 text-base font-semibold text-white tabular-nums">
+            总金额 {formatCurrency(planTotal)}
+          </span>
         </div>
+        <PaymentEscrowHint />
 
         <div className="space-y-3">
           {paymentItems.map((item) => {
@@ -334,12 +359,13 @@ export function OrderScheduleBillingPanel({
             const isActive = Boolean(
               item.stageId && activeStageId && item.stageId === activeStageId,
             );
-            const showPay =
+            const showPay = Boolean(
               !isDesignerView &&
-              onPayStage &&
-              item.stageId &&
-              isActive &&
-              (item.status === "pending" || item.status === "due");
+                onPayStage &&
+                item.stageId &&
+                (item.status === "pending" || item.status === "due"),
+            );
+            const payUnlocked = Boolean(showPay && actionsEnabled);
             const isBalance = isDaily && item.id === "final";
             const paymentDeadline = stage
               ? getStagePaymentDeadline(order, stage)
@@ -349,6 +375,13 @@ export function OrderScheduleBillingPanel({
                 ? resolveStagePaymentSplits(order, stage)
                 : [];
             const showParticipants = Boolean(stage && !isDesignerView);
+            const escrowEndsAt =
+              item.status === "frozen" && stage
+                ? resolveStageEscrowEndsAt(stage, commerce)
+                : null;
+            const escrowRemain = escrowEndsAt
+              ? formatEscrowRemaining(escrowEndsAt, nowMs)
+              : "";
 
             return (
               <div
@@ -369,21 +402,19 @@ export function OrderScheduleBillingPanel({
                       {isActive ? (
                         <Badge variant="brand">当前阶段</Badge>
                       ) : null}
-                      <Badge variant={meta.variant}>{meta.label}</Badge>
+                      <Badge variant={meta.variant}>
+                        {escrowRemain
+                          ? `${meta.label} · ${escrowRemain}`
+                          : meta.label}
+                      </Badge>
                     </div>
                     {item.hint ? (
-                      <p className="text-xs text-ink-60">{item.hint}</p>
+                      <p className="text-xs leading-relaxed text-ink-60">
+                        {item.hint}
+                      </p>
                     ) : null}
                     {paymentDeadline ? (
                       <PaymentDeadlineNote deadline={paymentDeadline} />
-                    ) : null}
-                    {isBalance &&
-                    stage &&
-                    stage.status === "pending" &&
-                    !stage.deliverablesConfirmedAt ? (
-                      <p className="text-xs text-ink-50">
-                        本阶段请设计师上传成果或确认单（图片 / PDF）。委托人可确认后支付。
-                      </p>
                     ) : null}
                   </div>
                   <div className="flex items-center gap-3">
@@ -391,14 +422,12 @@ export function OrderScheduleBillingPanel({
                       {formatCurrency(item.amount)}
                     </span>
                     {showPay ? (
-                      <Button
-                        variant="brand"
-                        size="sm"
-                        disabled={paying || !actionsEnabled}
+                      <StagePayButton
+                        unlocked={payUnlocked}
+                        busy={paying}
+                        label="支付"
                         onClick={() => handlePayClick(item)}
-                      >
-                        支付
-                      </Button>
+                      />
                     ) : item.status === "settled" ||
                       item.status === "frozen" ||
                       item.status === "paid" ? (

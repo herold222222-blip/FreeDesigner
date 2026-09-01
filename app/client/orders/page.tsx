@@ -55,18 +55,18 @@ function ClientOrdersInner() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-ink">
-            {focus ? CLIENT_ORDER_FOCUS_META[focus].label : "平台订单"}
+            {focus ? CLIENT_ORDER_FOCUS_META[focus].label : "常规订单"}
           </h2>
           <p className="mt-1 text-sm text-ink-60">
             {focus
               ? CLIENT_ORDER_FOCUS_META[focus].description
-              : "常规委托、悬赏转化等项目，可按类型与状态筛选（指定设计师下单见「定向下单」）。"}
+              : "查看全部常规委托项目，可按类型与状态筛选。悬赏项目见「我的悬赏」，指定设计师下单见「定向下单」。"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {focus ? (
             <Button asChild variant="outline" size="sm">
-              <Link href="/client/orders">查看全部平台订单</Link>
+              <Link href="/client/orders">查看全部常规订单</Link>
             </Button>
           ) : null}
           <Button asChild variant="brand">
